@@ -73,7 +73,7 @@ export function useWhatsApp() {
       }
     });
 
-    // Real-time incoming message
+    // Real-time incoming or outgoing message
     socketInstance.on('whatsapp:message', (newMsg: ReceivedMessage) => {
       setMessages((prev) => {
         if (prev.some((m) => m.id === newMsg.id)) {
@@ -81,8 +81,14 @@ export function useWhatsApp() {
         }
         return [newMsg, ...prev].slice(0, 100);
       });
-      const senderDisplay = newMsg.pushName ? `${newMsg.pushName} (${newMsg.number || 'desconhecido'})` : (newMsg.number || 'desconhecido');
-      addLog(`Nova mensagem de ${senderDisplay}`, 'success');
+
+      if (newMsg.direction === 'outgoing') {
+        const destDisplay = newMsg.pushName ? `${newMsg.pushName} (${newMsg.number || 'contato'})` : (newMsg.number ? `+${newMsg.number}` : 'destinatário');
+        addLog(`Mensagem enviada para ${destDisplay}`, 'success');
+      } else {
+        const senderDisplay = newMsg.pushName ? `${newMsg.pushName} (${newMsg.number || 'desconhecido'})` : (newMsg.number ? `+${newMsg.number}` : 'desconhecido');
+        addLog(`Nova mensagem de ${senderDisplay}`, 'success');
+      }
     });
 
     socketInstance.on('whatsapp:messages_list', (list: ReceivedMessage[]) => {
@@ -156,6 +162,37 @@ export function useWhatsApp() {
     }
   }, [addLog]);
 
+  const sendMessage = useCallback(
+    async (remoteJid: string, text: string): Promise<{ success: boolean; error?: string }> => {
+      if (!remoteJid || !text.trim()) {
+        return { success: false, error: 'Dados inválidos para envio' };
+      }
+
+      try {
+        const res = await fetch('/api/whatsapp/messages/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ remoteJid, text: text.trim() }),
+        });
+
+        const data = await res.json();
+        if (!data.success) {
+          addLog(`Erro no envio: ${data.error}`, 'error');
+          return { success: false, error: data.error };
+        }
+
+        return { success: true };
+      } catch (err: any) {
+        const errMsg = err?.message || 'Falha na requisição de envio';
+        addLog(`Falha na requisição de envio: ${errMsg}`, 'error');
+        return { success: false, error: errMsg };
+      }
+    },
+    [addLog]
+  );
+
   return {
     state,
     messages,
@@ -165,5 +202,6 @@ export function useWhatsApp() {
     logs,
     connect,
     disconnect,
+    sendMessage,
   };
 }

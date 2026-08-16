@@ -24,7 +24,10 @@ export interface ReceivedMessage {
   text: string;
   type: string;
   timestamp: number;
+  direction?: 'incoming' | 'outgoing';
 }
+
+export type ChatMessage = ReceivedMessage;
 
 export type NavigationTab =
   | 'dashboard'

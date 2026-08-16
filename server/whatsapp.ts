@@ -36,6 +36,7 @@ export interface ReceivedMessage {
   text: string;
   type: string;
   timestamp: number;
+  direction?: 'incoming' | 'outgoing';
 }
 
 const AUTH_DIR = process.env.AUTH_DIR || path.join(process.cwd(), 'data', 'auth');
@@ -110,6 +111,73 @@ class WhatsAppService {
 
   public getMessagesCount(): number {
     return this.messages.length;
+  }
+
+  public async sendTextMessage(
+    remoteJid: string,
+    text: string
+  ): Promise<{ success: boolean; message?: ReceivedMessage; error?: string }> {
+    if (!this.sock || this.currentStatus !== 'connected') {
+      return { success: false, error: 'WhatsApp não está conectado.' };
+    }
+
+    if (!remoteJid || typeof remoteJid !== 'string' || !remoteJid.trim()) {
+      return { success: false, error: 'Destinatário inválido.' };
+    }
+
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return { success: false, error: 'Mensagem não pode estar vazia.' };
+    }
+
+    const trimmedText = text.trim();
+    const targetJid = remoteJid.trim();
+    const rawNumber = targetJid.split('@')[0].split(':')[0];
+
+    // Log before sending: [WhatsApp] sending message to=5593...
+    console.log(`[WhatsApp] sending message to=${rawNumber || targetJid}`);
+
+    try {
+      // Look up previous pushName from conversation if available
+      const existingMsg = this.messages.find((m) => m.remoteJid === targetJid);
+      const targetPushName = existingMsg?.pushName || null;
+
+      // Real Baileys send using the connected socket
+      const sentResult = await this.sock.sendMessage(targetJid, {
+        text: trimmedText,
+      });
+
+      const messageId =
+        sentResult?.key?.id || `${Date.now()}_out_${Math.random().toString(36).substring(2, 7)}`;
+      const timestamp = Date.now();
+
+      const outgoingMessage: ReceivedMessage = {
+        id: messageId,
+        remoteJid: targetJid,
+        number: rawNumber || null,
+        pushName: targetPushName,
+        text: trimmedText,
+        type: 'text',
+        timestamp,
+        direction: 'outgoing',
+      };
+
+      // Add to in-memory list (limit to 100)
+      this.messages = [outgoingMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
+
+      // Log after sending: [WhatsApp] message sent to=5593... id=...
+      console.log(`[WhatsApp] message sent to=${rawNumber || targetJid} id=${messageId}`);
+
+      // Emit to frontend via Socket.IO
+      if (this.io) {
+        this.io.emit('whatsapp:message', outgoingMessage);
+      }
+
+      return { success: true, message: outgoingMessage };
+    } catch (err: any) {
+      const errorMsg = err?.message || 'Erro ao enviar mensagem pelo Baileys';
+      console.log(`[WhatsApp] send error to=${rawNumber || targetJid} reason=${errorMsg}`);
+      return { success: false, error: errorMsg };
+    }
   }
 
   private updateStatus(
@@ -284,6 +352,7 @@ class WhatsAppService {
           text,
           type: messageType,
           timestamp,
+          direction: 'incoming',
         };
 
         // Add to memory list (limit to 100)

@@ -30,7 +30,7 @@ import { PlaceholderView } from './components/PlaceholderView';
 import type { NavigationTab } from './types';
 
 export default function App() {
-  const { state, messages, messagesCount, socketConnected, loading, logs, connect, disconnect } = useWhatsApp();
+  const { state, messages, messagesCount, socketConnected, loading, logs, connect, disconnect, sendMessage } = useWhatsApp();
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -67,7 +67,7 @@ export default function App() {
             </button>
             <div className="hidden md:flex items-center gap-1 text-xs font-medium text-neutral-400">
               <span className="px-2.5 py-1 rounded-md bg-neutral-900 border border-neutral-800 text-neutral-300">
-                v1.2.0 • Etapa 2
+                v1.3.0 • Etapa 3
               </span>
             </div>
           </div>
@@ -195,12 +195,13 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 3: CONVERSAS (RECEBIMENTO REAL EM TEMPO REAL) */}
+          {/* TAB 3: CONVERSAS (RECEBIMENTO E ENVIO EM TEMPO REAL) */}
           {currentTab === 'conversas' && (
             <ConversasView
               messages={messages}
               state={state}
               socketConnected={socketConnected}
+              onSendMessage={sendMessage}
             />
           )}
 

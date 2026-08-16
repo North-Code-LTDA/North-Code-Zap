@@ -36,6 +36,37 @@ async function startServer() {
     res.json(whatsAppService.getMessages());
   });
 
+  app.post('/api/whatsapp/messages/send', async (req, res) => {
+    try {
+      const { remoteJid, text } = req.body || {};
+
+      if (!remoteJid || typeof remoteJid !== 'string' || !remoteJid.trim()) {
+        return res.status(400).json({ success: false, error: 'Destinatário inválido.' });
+      }
+
+      if (!text || typeof text !== 'string' || !text.trim()) {
+        return res.status(400).json({ success: false, error: 'Mensagem não pode estar vazia.' });
+      }
+
+      const currentState = whatsAppService.getState();
+      if (currentState.status !== 'connected') {
+        return res.status(400).json({ success: false, error: 'WhatsApp não está conectado.' });
+      }
+
+      const result = await whatsAppService.sendTextMessage(remoteJid, text);
+      if (!result.success) {
+        return res.status(500).json(result);
+      }
+
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || 'Erro interno ao processar envio de mensagem.',
+      });
+    }
+  });
+
   app.post('/api/whatsapp/connect', async (req, res) => {
     try {
       await whatsAppService.connect();
