@@ -1503,27 +1503,43 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                   <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
                     3. Mensagem & Personalização {formMedia && '(Opcional se houver imagem)'}
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => setFormMessage((prev) => `${prev} {nome}`)}
-                    className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded-lg border border-emerald-500/20 transition-colors"
-                  >
-                    <Sparkles className="w-3 h-3" />
-                    + Inserir {'{nome}'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormMessage((prev) => `${prev} {nome}`)}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded-lg border border-emerald-500/20 transition-colors"
+                      title="Inserir variável de nome"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      + {'{nome}'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormMessage((prev) => `${prev} {Oi|Olá|Bom dia}`)}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 px-2 py-1 rounded-lg border border-purple-500/20 transition-colors"
+                      title="Inserir Spintax"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      + Spintax
+                    </button>
+                  </div>
                 </div>
 
                 <textarea
                   rows={4}
                   placeholder={
                     formMedia
-                      ? 'Legenda opcional da imagem. Use {nome} para personalizar com o nome do cliente...'
-                      : 'Digite sua mensagem. Use {nome} para incluir o nome do destinatário automaticamente...'
+                      ? 'Legenda opcional da imagem. Use {nome} ou {Opção 1|Opção 2} para Spintax...'
+                      : 'Digite sua mensagem. Use {nome} ou {Opção 1|Opção 2} para Spintax...'
                   }
                   value={formMessage}
                   onChange={(e) => setFormMessage(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors font-sans"
                 />
+                
+                <p className="text-[11px] text-neutral-500 mt-1">
+                  Use <code className="text-purple-400 bg-purple-400/10 px-1 rounded">{"{Oi|Olá}"}</code> para gerar variações automáticas na mensagem (Spintax).
+                </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                   <div>

@@ -648,6 +648,7 @@ export class SchedulerService {
       )}`
     );
 
+    const executionSeed = `${schedule.id}_${Date.now()}`;
     const details: ScheduleExecutionDetail[] = [];
     let sentCount = 0;
     let failedCount = 0;
@@ -674,6 +675,7 @@ export class SchedulerService {
       }
 
       const target = schedule.targets[i];
+
       console.log(
         `[Scheduler] sending target=${target.label || target.jid} (${i + 1}/${
           schedule.targets.length
@@ -684,7 +686,8 @@ export class SchedulerService {
       const renderedMessage = renderMessageTemplate(
         schedule.message || '',
         target,
-        schedule.fallbackName || 'amigo(a)'
+        schedule.fallbackName || 'amigo(a)',
+        { seed: executionSeed }
       );
 
       // Emit progress
