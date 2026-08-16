@@ -334,7 +334,10 @@ export class SchedulerService {
 
   public delete(id: string): boolean {
     const targetSchedule = this.schedules.find((s) => s.id === id);
-    if (!targetSchedule) return false;
+    if (!targetSchedule) {
+      console.warn(`[Scheduler] delete failed schedule=${id} reason=not_found`);
+      return false;
+    }
 
     const mediaToClean = targetSchedule.media;
 
@@ -345,7 +348,11 @@ export class SchedulerService {
 
     // Cleanup associated uploaded media if no longer referenced
     if (mediaToClean?.source === 'upload' && mediaToClean.localPath) {
-      mediaService.deleteMediaIfUnreferenced(mediaToClean.localPath, this.schedules);
+      try {
+        mediaService.deleteMediaIfUnreferenced(mediaToClean.localPath, this.schedules);
+      } catch (mediaErr: any) {
+        console.warn(`[Scheduler] media cleanup error on delete schedule=${id}:`, mediaErr?.message);
+      }
     }
 
     return true;

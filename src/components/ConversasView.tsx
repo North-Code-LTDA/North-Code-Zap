@@ -162,7 +162,7 @@ export function ConversasView({
                 <MessageSquare className="w-4 h-4" />
               </div>
               <h1 className="text-xl font-bold text-white tracking-tight">
-                Conversas & Mensagens
+                Conversas e mensagens
               </h1>
             </div>
             <p className="text-xs text-neutral-400">
@@ -184,7 +184,7 @@ export function ConversasView({
 
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>TEMPO REAL</span>
+              <span>Tempo real</span>
             </div>
           </div>
         </div>

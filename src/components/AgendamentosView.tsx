@@ -43,6 +43,7 @@ import type {
 } from '../types';
 import { useSchedules } from '../hooks/useSchedules';
 import { renderMessageTemplate } from '../utils/template';
+import { Button } from './ui/Button';
 
 interface AgendamentosViewProps {
   whatsappState: WhatsAppAccountInfo;
@@ -87,6 +88,9 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     result: ScheduleLastResult;
   } | null>(null);
   const [previewMediaModal, setPreviewMediaModal] = useState<ScheduledMedia | null>(null);
+  const [scheduleToDelete, setScheduleToDelete] = useState<ScheduledMessage | null>(null);
+  const [deletingScheduleId, setDeletingScheduleId] = useState<string | null>(null);
+  const [deleteModalError, setDeleteModalError] = useState<string | null>(null);
 
   // Form Basic Info
   const [formName, setFormName] = useState('');
@@ -162,14 +166,14 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
   // Lock body scroll when any modal is open
   useEffect(() => {
-    if (isModalOpen || selectedResultDetails || previewMediaModal) {
+    if (isModalOpen || selectedResultDetails || previewMediaModal || scheduleToDelete) {
       const prevOverflow = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
       return () => {
         document.body.style.overflow = prevOverflow;
       };
     }
-  }, [isModalOpen, selectedResultDetails, previewMediaModal]);
+  }, [isModalOpen, selectedResultDetails, previewMediaModal, scheduleToDelete]);
 
   // Check if any selected target comes from import
   const hasImportedTargets = useMemo(() => {
@@ -528,6 +532,66 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     });
   };
 
+  // Bulk select all group members (deduplicating and filtering selectable & bot number)
+  const handleSelectAllGroupMembers = (group: WhatsAppGroup, members: GroupParticipant[]) => {
+    const selectables = members.filter((p) => {
+      if (!p.selectable) return false;
+      if (whatsappState.number) {
+        const botClean = whatsappState.number.replace(/\D/g, '');
+        const pNumberClean = p.number ? p.number.replace(/\D/g, '') : p.jid.replace(/\D/g, '');
+        if (botClean && pNumberClean.endsWith(botClean)) return false;
+      }
+      return true;
+    });
+
+    if (selectables.length === 0) return;
+
+    setFormTargets((prev) => {
+      const existingJids = new Set(prev.map((t) => t.jid));
+      const toAdd: ScheduledTarget[] = [];
+
+      for (const p of selectables) {
+        if (!existingJids.has(p.jid)) {
+          existingJids.add(p.jid);
+          toAdd.push({
+            type: 'person',
+            jid: p.jid,
+            label: `${p.name || `+${p.number}`} (${group.subject})`,
+            name: p.name || undefined,
+            source: 'group_member',
+          });
+        }
+      }
+
+      return [...prev, ...toAdd];
+    });
+  };
+
+  // Bulk deselect all group members
+  const handleDeselectAllGroupMembers = (members: GroupParticipant[]) => {
+    const memberJidsToRemove = new Set(members.map((p) => p.jid));
+    setFormTargets((prev) => prev.filter((t) => !memberJidsToRemove.has(t.jid)));
+  };
+
+  // Confirm and execute schedule deletion asynchronously
+  const handleConfirmDelete = async () => {
+    if (!scheduleToDelete) return;
+    setDeletingScheduleId(scheduleToDelete.id);
+    setDeleteModalError(null);
+    try {
+      const res = await deleteSchedule(scheduleToDelete.id);
+      if (!res.success) {
+        setDeleteModalError(res.error || 'Falha ao excluir o agendamento.');
+        return;
+      }
+      setScheduleToDelete(null);
+    } catch (err: any) {
+      setDeleteModalError(err?.message || 'Erro inesperado ao excluir o agendamento.');
+    } finally {
+      setDeletingScheduleId(null);
+    }
+  };
+
   // Add whole group target
   const handleToggleGroupTarget = (group: WhatsAppGroup) => {
     setFormTargets((prev) => {
@@ -851,20 +915,22 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
             <Calendar className="w-5 h-5 text-emerald-400" />
-            Agendamentos V3
+            Agendamentos
           </h2>
           <p className="text-sm text-neutral-400 mt-1">
-            Programação recorrente com suporte a múltiplos horários diários/semanais, envio de imagens e controle de ritmo.
+            Programação recorrente com suporte a múltiplos horários diários e semanais, envio de imagens e controle de ritmo.
           </p>
         </div>
 
-        <button
+        <Button
+          id="btn-new-schedule"
+          variant="primary"
           onClick={handleOpenNewModal}
-          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-neutral-950 font-bold text-sm transition-all shadow-lg shadow-emerald-500/10 shrink-0"
+          className="shrink-0"
         >
           <Plus className="w-4 h-4" />
-          Novo Agendamento
-        </button>
+          Novo agendamento
+        </Button>
       </div>
 
       {/* Real-time Execution Banner */}
@@ -951,13 +1017,14 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           <p className="text-neutral-400 text-sm max-w-sm mx-auto mt-1 mb-6">
             Crie disparos programados com mensagens de texto, imagens anexadas e múltiplos horários de repetição.
           </p>
-          <button
+          <Button
+            variant="secondary"
             onClick={handleOpenNewModal}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-sm font-medium transition-colors"
+            className="mt-2"
           >
             <Plus className="w-4 h-4" />
-            Criar Primeiro Agendamento
-          </button>
+            Criar primeiro agendamento
+          </Button>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1112,7 +1179,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
                     {schedule.scheduleType === 'weekly' && (
                       <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                        <span className="text-[11px] text-neutral-500">Dias & Horários:</span>
+                        <span className="text-[11px] text-neutral-500">Dias e horários:</span>
                         {weeklySlotsList.map((slot) => {
                           const dayObj = WEEK_DAYS.find((d) => d.id === slot.day);
                           return (
@@ -1159,63 +1226,65 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
                 {/* Card Action Buttons (Standardized UX: Primary Executar agora + Secondary actions) */}
                 <div className="flex items-center justify-between gap-2 pt-3 border-t border-neutral-800">
-                  <button
+                  <Button
                     id={`btn-run-now-${schedule.id}`}
+                    variant="primary-soft"
+                    size="sm"
                     onClick={() => runNow(schedule.id)}
                     disabled={isRunning || !isConnected}
-                    title="Disparar Agora"
-                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 text-emerald-400 border border-emerald-500/30 text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    isLoading={isRunning}
+                    title="Disparar agora"
                   >
-                    {isRunning ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Play className="w-3.5 h-3.5 fill-current" />
-                    )}
+                    {!isRunning && <Play className="w-3.5 h-3.5 fill-current" />}
                     Executar agora
-                  </button>
+                  </Button>
 
                   <div className="flex items-center gap-1.5">
                     {schedule.status === 'active' ? (
-                      <button
+                      <Button
+                        variant="secondary"
+                        size="icon-sm"
                         onClick={() => pauseSchedule(schedule.id)}
                         disabled={isRunning}
-                        title="Pausar Agendamento"
-                        className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition-colors"
+                        title="Pausar agendamento"
                       >
                         <Pause className="w-3.5 h-3.5" />
-                      </button>
+                      </Button>
                     ) : schedule.status === 'paused' ? (
-                      <button
+                      <Button
+                        variant="secondary"
+                        size="icon-sm"
                         onClick={() => resumeSchedule(schedule.id)}
                         disabled={isRunning}
-                        title="Retomar Agendamento"
-                        className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-emerald-400 text-xs transition-colors"
+                        title="Retomar agendamento"
+                        className="text-emerald-400"
                       >
                         <Play className="w-3.5 h-3.5 fill-current" />
-                      </button>
+                      </Button>
                     ) : null}
 
-                    <button
+                    <Button
+                      variant="secondary"
+                      size="icon-sm"
                       onClick={() => handleOpenEditModal(schedule)}
                       disabled={isRunning}
-                      title="Editar Agendamento"
-                      className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition-colors"
+                      title="Editar agendamento"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
-                    </button>
+                    </Button>
 
-                    <button
+                    <Button
+                      variant="danger"
+                      size="icon-sm"
                       onClick={() => {
-                        if (confirm(`Tem certeza que deseja excluir "${schedule.name}"?`)) {
-                          deleteSchedule(schedule.id);
-                        }
+                        setScheduleToDelete(schedule);
+                        setDeleteModalError(null);
                       }}
                       disabled={isRunning}
-                      title="Excluir Agendamento"
-                      className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs transition-colors"
+                      title="Excluir agendamento"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -1731,66 +1800,123 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                                 </div>
 
                                 {/* Expanded Group Participants */}
-                                {isExpanded && (
-                                  <div className="pt-2 border-t border-neutral-800/80 pl-6 space-y-1.5 max-h-40 overflow-y-auto scrollbar-hidden">
-                                    {isLoadingParticipants ? (
-                                      <div className="py-2 text-center text-[11px] text-neutral-500 flex items-center justify-center gap-1.5">
-                                        <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
-                                        Obtendo membros do grupo...
-                                      </div>
-                                    ) : participants.length === 0 ? (
-                                      <div className="text-[11px] text-neutral-500">
-                                        Nenhum participante legível retornado.
-                                      </div>
-                                    ) : (
-                                      participants.map((p) => {
-                                        const isMemberSelected = formTargets.some((t) => t.jid === p.jid);
+                                {isExpanded && (() => {
+                                  const selectableParticipants = participants.filter((p) => {
+                                    if (!p.selectable) return false;
+                                    if (whatsappState.number) {
+                                      const botClean = whatsappState.number.replace(/\D/g, '');
+                                      const pNumberClean = p.number ? p.number.replace(/\D/g, '') : p.jid.replace(/\D/g, '');
+                                      if (botClean && pNumberClean.endsWith(botClean)) return false;
+                                    }
+                                    return true;
+                                  });
 
-                                        return (
-                                          <div
-                                            key={p.jid}
-                                            onClick={() => {
-                                              if (p.selectable) {
-                                                handleToggleGroupParticipantTarget(p, group.subject);
-                                              }
-                                            }}
-                                            className={`flex items-center justify-between p-1.5 rounded-lg text-[11px] ${
-                                              !p.selectable
-                                                ? 'opacity-40 cursor-not-allowed bg-neutral-950/40 text-neutral-500'
-                                                : isMemberSelected
-                                                ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 cursor-pointer'
-                                                : 'hover:bg-neutral-800 text-neutral-300 cursor-pointer'
-                                            }`}
-                                          >
-                                            <div className="flex items-center gap-2 truncate">
-                                              <input
-                                                type="checkbox"
-                                                disabled={!p.selectable}
-                                                checked={isMemberSelected}
-                                                onChange={() => {}}
-                                                className="rounded border-neutral-700 bg-neutral-950 text-emerald-500 focus:ring-0"
-                                              />
-                                              <span className="truncate">{p.name || `+${p.number}`}</span>
-                                            </div>
+                                  const selectedMemberJids = new Set(formTargets.map((t) => t.jid));
+                                  const selectedCountInThisGroup = selectableParticipants.filter((p) =>
+                                    selectedMemberJids.has(p.jid)
+                                  ).length;
+                                  const isAllSelected =
+                                    selectableParticipants.length > 0 &&
+                                    selectedCountInThisGroup === selectableParticipants.length;
 
-                                            <div className="flex items-center gap-1 shrink-0">
-                                              {p.isAdmin && (
-                                                <span className="text-[9px] px-1.5 py-0.2 bg-amber-500/20 text-amber-400 rounded">
-                                                  Admin
-                                                </span>
-                                              )}
-                                              {!p.selectable && (
-                                                <span className="text-[9px] text-neutral-500">
-                                                  Telefone não resolvido
-                                                </span>
-                                              )}
-                                            </div>
+                                  return (
+                                    <div className="pt-2 border-t border-neutral-800/80 pl-4 sm:pl-6 space-y-2">
+                                      {/* Bulk Toolbar */}
+                                      {!isLoadingParticipants && selectableParticipants.length > 0 && (
+                                        <div className="flex items-center justify-between gap-2 py-1.5 px-2.5 bg-neutral-950/80 rounded-xl border border-neutral-800">
+                                          <div className="text-[11px] text-neutral-400 flex items-center gap-1.5 truncate">
+                                            <Users className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
+                                            <span>
+                                              {selectedCountInThisGroup} de {selectableParticipants.length} selecionados
+                                            </span>
                                           </div>
-                                        );
-                                      })
-                                    )}
-                                  </div>
-                                )}
+
+                                          <div className="flex items-center gap-1.5 shrink-0">
+                                            {isAllSelected ? (
+                                              <Button
+                                                type="button"
+                                                variant="secondary"
+                                                size="xs"
+                                                onClick={() => handleDeselectAllGroupMembers(participants)}
+                                              >
+                                                Desmarcar todos
+                                              </Button>
+                                            ) : (
+                                              <Button
+                                                type="button"
+                                                variant="primary-soft"
+                                                size="xs"
+                                                disabled={selectableParticipants.length === 0}
+                                                onClick={() => handleSelectAllGroupMembers(group, participants)}
+                                              >
+                                                Selecionar todos ({selectableParticipants.length})
+                                              </Button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      <div className="space-y-1.5 max-h-48 overflow-y-auto scrollbar-hidden">
+                                        {isLoadingParticipants ? (
+                                          <div className="py-3 text-center text-[11px] text-neutral-500 flex items-center justify-center gap-1.5">
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                                            Obtendo membros do grupo...
+                                          </div>
+                                        ) : participants.length === 0 ? (
+                                          <div className="text-[11px] text-neutral-500 py-2 text-center">
+                                            Nenhum participante legível retornado.
+                                          </div>
+                                        ) : (
+                                          participants.map((p) => {
+                                            const isMemberSelected = formTargets.some((t) => t.jid === p.jid);
+
+                                            return (
+                                              <div
+                                                key={p.jid}
+                                                onClick={() => {
+                                                  if (p.selectable) {
+                                                    handleToggleGroupParticipantTarget(p, group.subject);
+                                                  }
+                                                }}
+                                                className={`flex items-center justify-between p-2 rounded-xl text-[11px] transition-colors ${
+                                                  !p.selectable
+                                                    ? 'opacity-40 cursor-not-allowed bg-neutral-950/40 text-neutral-500'
+                                                    : isMemberSelected
+                                                    ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 cursor-pointer'
+                                                    : 'hover:bg-neutral-800 text-neutral-300 cursor-pointer'
+                                                }`}
+                                              >
+                                                <div className="flex items-center gap-2 truncate">
+                                                  <input
+                                                    type="checkbox"
+                                                    disabled={!p.selectable}
+                                                    checked={isMemberSelected}
+                                                    onChange={() => {}}
+                                                    className="rounded border-neutral-700 bg-neutral-950 text-emerald-500 focus:ring-0"
+                                                  />
+                                                  <span className="truncate">{p.name || `+${p.number}`}</span>
+                                                </div>
+
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                  {p.isAdmin && (
+                                                    <span className="text-[9px] px-1.5 py-0.2 bg-amber-500/20 text-amber-400 rounded">
+                                                      Admin
+                                                    </span>
+                                                  )}
+                                                  {!p.selectable && (
+                                                    <span className="text-[9px] text-neutral-500">
+                                                      Telefone não resolvido
+                                                    </span>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            );
+                                          })
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             );
                           })
@@ -2361,12 +2487,112 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
             </div>
 
             <div className="p-4 border-t border-neutral-800 shrink-0 flex justify-end">
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => setSelectedResultDetails(null)}
-                className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold"
               >
                 Fechar
-              </button>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Delete Confirmation Modal */}
+      {scheduleToDelete && (
+        <div
+          className="fixed inset-0 z-50 overflow-hidden p-4 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => {
+            if (!deletingScheduleId) {
+              setScheduleToDelete(null);
+              setDeleteModalError(null);
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 space-y-4">
+              {/* Header Icon + Title */}
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+                  <Trash2 className="w-6 h-6" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-base font-bold text-white">
+                    Excluir agendamento
+                  </h3>
+                  <p className="text-xs text-neutral-400 mt-1">
+                    Esta ação é irreversível e removerá permanentemente a programação e todos os disparos futuros.
+                  </p>
+                </div>
+              </div>
+
+              {/* Schedule Info Box */}
+              <div className="p-4 bg-neutral-950 rounded-2xl border border-neutral-800/80 space-y-2">
+                <span className="text-sm font-semibold text-white block truncate">
+                  {scheduleToDelete.name}
+                </span>
+                <div className="flex items-center gap-3 text-xs text-neutral-400 flex-wrap">
+                  <span className="flex items-center gap-1 text-neutral-300">
+                    <Users className="w-3.5 h-3.5 text-neutral-500" />
+                    {scheduleToDelete.targets.length} {scheduleToDelete.targets.length === 1 ? 'destinatário' : 'destinatários'}
+                  </span>
+                  <span className="text-neutral-500">•</span>
+                  <span>
+                    {scheduleToDelete.scheduleType === 'once'
+                      ? 'Envio único'
+                      : scheduleToDelete.scheduleType === 'daily'
+                      ? 'Repetição diária'
+                      : 'Repetição semanal'}
+                  </span>
+                  {scheduleToDelete.media && (
+                    <>
+                      <span className="text-neutral-500">•</span>
+                      <span className="text-purple-300">Com imagem</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Error Message Banner */}
+              {deleteModalError && (
+                <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center gap-2.5 text-xs text-rose-300">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{deleteModalError}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="p-4 bg-neutral-950/60 border-t border-neutral-800 flex items-center justify-end gap-2.5">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={deletingScheduleId !== null}
+                onClick={() => {
+                  setScheduleToDelete(null);
+                  setDeleteModalError(null);
+                }}
+              >
+                Cancelar
+              </Button>
+
+              <Button
+                id="btn-confirm-delete-schedule"
+                type="button"
+                variant="danger"
+                size="sm"
+                isLoading={deletingScheduleId !== null}
+                disabled={deletingScheduleId !== null}
+                onClick={handleConfirmDelete}
+              >
+                <Trash2 className="w-4 h-4" />
+                Excluir agendamento
+              </Button>
             </div>
           </div>
         </div>

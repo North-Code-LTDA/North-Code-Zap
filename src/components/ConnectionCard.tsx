@@ -52,7 +52,7 @@ export function ConnectionCard({
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
             <QrCode className="w-3.5 h-3.5" />
-            Aguardando Leitura
+            Aguardando leitura
           </span>
         );
       case 'authenticated':
@@ -90,7 +90,7 @@ export function ConnectionCard({
           </div>
           <div>
             <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-              WhatsApp Conexão
+              Conexão do WhatsApp
             </h2>
             <p className="text-xs text-neutral-400">
               Instância Baileys oficial com sincronização em tempo real

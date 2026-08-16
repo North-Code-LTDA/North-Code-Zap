@@ -265,13 +265,17 @@ async function startServer() {
   });
 
   app.delete('/api/schedules/:id', (req, res) => {
+    const scheduleId = req.params.id;
+    console.log(`[Scheduler] delete requested schedule=${scheduleId}`);
     try {
-      const deleted = schedulerService.delete(req.params.id);
+      const deleted = schedulerService.delete(scheduleId);
       if (!deleted) {
+        console.warn(`[Scheduler] delete failed schedule=${scheduleId} reason=not_found`);
         return res.status(404).json({ success: false, error: 'Agendamento não encontrado' });
       }
-      res.json({ success: true, message: 'Agendamento excluído' });
+      res.json({ success: true, message: 'Agendamento excluído com sucesso' });
     } catch (err: any) {
+      console.error(`[Scheduler] delete failed schedule=${scheduleId} reason=${err?.message || err}`);
       res.status(500).json({ success: false, error: err?.message || 'Falha ao excluir agendamento' });
     }
   });

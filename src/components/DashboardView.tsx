@@ -36,10 +36,10 @@ export function DashboardView({
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-neutral-800 border border-neutral-700 text-xs text-neutral-300 font-mono">
               <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              <span>North Code Zap • Painel de Controle</span>
+              <span>North Code Zap • Painel de controle</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
-              Visão Geral do Sistema
+              Visão geral do sistema
             </h1>
             <p className="text-sm text-neutral-400 max-w-xl leading-relaxed">
               Monitore o status da instância do WhatsApp em tempo real e acompanhe as mensagens recebidas na plataforma.
@@ -53,15 +53,15 @@ export function DashboardView({
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 transition cursor-pointer"
             >
               <Smartphone className="w-4 h-4 text-emerald-400" />
-              Gerenciar Conexão
+              Gerenciar conexão
             </button>
             <button
               id="dashboard-btn-conversas"
               onClick={() => onNavigate('conversas')}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-black shadow-lg shadow-emerald-500/20 transition cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-neutral-950 shadow-lg shadow-emerald-500/20 transition cursor-pointer"
             >
               <MessageSquare className="w-4 h-4" />
-              Ver Conversas
+              Ver conversas
             </button>
           </div>
         </div>
@@ -72,7 +72,7 @@ export function DashboardView({
         {/* Metric 1: WhatsApp Status */}
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 space-y-3 shadow-md relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-neutral-400">Status WhatsApp</span>
+            <span className="text-xs font-medium text-neutral-400">Status do WhatsApp</span>
             <div
               className={`w-9 h-9 rounded-lg flex items-center justify-center ${
                 isConnected
@@ -91,12 +91,12 @@ export function DashboardView({
                 }`}
               />
               <span className="text-xl font-bold text-white font-mono tracking-tight">
-                {isConnected ? 'CONECTADO' : 'DESCONECTADO'}
+                {isConnected ? 'Conectado' : 'Desconectado'}
               </span>
             </div>
             <p className="text-xs text-neutral-400 mt-1 truncate">
               {isConnected
-                ? `${state.name || 'Conta Conectada'} (${state.number ? `+${state.number}` : 'Ativo'})`
+                ? `${state.name || 'Conta conectada'} (${state.number ? `+${state.number}` : 'Ativo'})`
                 : 'Nenhum aparelho conectado'}
             </p>
           </div>
@@ -105,7 +105,7 @@ export function DashboardView({
         {/* Metric 2: Messages Count */}
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 space-y-3 shadow-md relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-neutral-400">Mensagens Recebidas</span>
+            <span className="text-xs font-medium text-neutral-400">Mensagens recebidas</span>
             <div className="w-9 h-9 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center justify-center">
               <MessageSquare className="w-5 h-5" />
             </div>
@@ -144,7 +144,7 @@ export function DashboardView({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <MessageSquare className="w-5 h-5 text-emerald-400" />
-            <h2 className="text-base font-bold text-white">Últimas Mensagens Recebidas</h2>
+            <h2 className="text-base font-bold text-white">Últimas mensagens recebidas</h2>
           </div>
           <button
             onClick={() => onNavigate('conversas')}
