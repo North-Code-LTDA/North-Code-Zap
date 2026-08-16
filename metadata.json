@@ -1,0 +1,6 @@
+{
+  "name": "North Code Zap",
+  "description": "Plataforma de automação para WhatsApp com conexão Baileys em tempo real",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
