@@ -25,20 +25,21 @@ const SCHEDULES_TMP_FILE = path.join(SCHEDULER_DIR, 'schedules.json.tmp');
 const SCHEDULE_GRACE_MINUTES = parseInt(process.env.SCHEDULE_GRACE_MINUTES || '30', 10);
 const MIN_SEND_INTERVAL_MS = parseInt(process.env.MIN_SEND_INTERVAL_MS || '1500', 10);
 const MAX_SEND_RETRIES = parseInt(process.env.MAX_SEND_RETRIES || '2', 10);
-const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Belem';
+const APP_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'America/Belem';
+process.env.TZ = APP_TIMEZONE;
 const LOOP_INTERVAL_MS = 10000; // 10 seconds check loop
 
 /**
  * Utility to sort and deduplicate HH:mm times
  */
 function normalizeTimeList(times: string[] | undefined): string[] {
-  if (!Array.isArray(times) || times.length === 0) return ['08:00'];
+  if (!Array.isArray(times) || times.length === 0) return [];
   const valid = times
     .map((t) => (t || '').trim())
     .filter((t) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t));
   const unique = Array.from(new Set(valid));
   unique.sort((a, b) => a.localeCompare(b));
-  return unique.length > 0 ? unique : ['08:00'];
+  return unique;
 }
 
 /**
@@ -56,10 +57,11 @@ function normalizeWeeklySlots(
         day: s.day,
         times: normalizeTimeList(s.times),
       }))
+      .filter(s => s.times.length > 0)
       .sort((a, b) => a.day - b.day);
   }
-
-  // Legacy fallback
+  
+  // Legacy fallback ONLY for older schedules
   if (Array.isArray(legacyDays) && legacyDays.length > 0) {
     const defaultTime = legacyTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(legacyTime) ? legacyTime : '08:00';
     return legacyDays.map((day) => ({
@@ -67,8 +69,8 @@ function normalizeWeeklySlots(
       times: [defaultTime],
     }));
   }
-
-  return [{ day: 1, times: ['08:00'] }];
+  
+  return [];
 }
 
 export class SchedulerService {
@@ -399,9 +401,8 @@ export class SchedulerService {
     }
 
     if (schedule.scheduleType === 'daily') {
-      const times = normalizeTimeList(
-        schedule.dailyTimes || (schedule.timeOfDay ? [schedule.timeOfDay] : ['08:00'])
-      );
+      const times = normalizeTimeList(schedule.dailyTimes);
+      if (times.length === 0) return null;
 
       // Check today's configured time slots in ascending order
       for (const timeStr of times) {
@@ -423,11 +424,8 @@ export class SchedulerService {
     }
 
     if (schedule.scheduleType === 'weekly') {
-      const slots = normalizeWeeklySlots(
-        schedule.weeklyTimeSlots,
-        schedule.weeklyDays,
-        schedule.timeOfDay
-      );
+      const slots = normalizeWeeklySlots(schedule.weeklyTimeSlots);
+      if (slots.length === 0) return null;
 
       // Check next 8 days (covering full upcoming week)
       for (let offset = 0; offset <= 8; offset++) {
@@ -449,12 +447,6 @@ export class SchedulerService {
           }
         }
       }
-
-      // Fallback
-      const fallback = new Date(fromDate);
-      fallback.setDate(fallback.getDate() + 7);
-      fallback.setHours(8, 0, 0, 0);
-      return fallback.toISOString();
     }
 
     return null;
@@ -470,43 +462,49 @@ export class SchedulerService {
 
     for (const schedule of this.schedules) {
       if (schedule.status === 'running') {
-        // Reset previously interrupted running status back to active
         schedule.status = 'active';
         modified = true;
       }
 
-      if (schedule.status === 'active' && schedule.nextRunAt) {
-        const dueTime = new Date(schedule.nextRunAt).getTime();
-        const delay = now - dueTime;
-
-        if (delay > 0) {
-          // It was due in the past
-          if (delay > graceMs) {
-            console.log(
-              `[Scheduler] schedule=${schedule.id} overdue by ${Math.round(
-                delay / 60000
-              )} mins (exceeds grace of ${SCHEDULE_GRACE_MINUTES} mins)`
-            );
-            if (schedule.scheduleType === 'once') {
-              schedule.status = 'error';
-              schedule.lastResult = {
-                totalTargets: schedule.targets.length,
-                sentCount: 0,
-                failedCount: schedule.targets.length,
-                skippedCount: schedule.targets.length,
-                executedAt: new Date().toISOString(),
-                details: schedule.targets.map((t) => ({
-                  targetJid: t.jid,
-                  targetLabel: t.label,
-                  status: 'skipped',
-                  error: 'Horário expirado durante reinicialização do servidor',
-                })),
-              };
-            } else {
-              // Advance recurring schedule to next occurrence
-              schedule.nextRunAt = this.calculateNextRunAt(schedule, new Date(now));
-            }
+      if (schedule.status === 'active') {
+        const correctNextRunAt = this.calculateNextRunAt(schedule, new Date(now));
+        
+        if (schedule.scheduleType !== 'once') {
+          if (schedule.nextRunAt !== correctNextRunAt) {
+            console.log(`[Scheduler] repaired nextRunAt schedule=${schedule.id} timezone=${APP_TIMEZONE} nextRunAt=${correctNextRunAt}`);
+            schedule.nextRunAt = correctNextRunAt;
             modified = true;
+          }
+        } else if (schedule.scheduledAt) {
+          const scheduledMs = new Date(schedule.scheduledAt).getTime();
+          if (scheduledMs > now) {
+             const newIso = new Date(scheduledMs).toISOString();
+             if (schedule.nextRunAt !== newIso) {
+               schedule.nextRunAt = newIso;
+               console.log(`[Scheduler] repaired nextRunAt schedule=${schedule.id} timezone=${APP_TIMEZONE} nextRunAt=${newIso}`);
+               modified = true;
+             }
+          } else if (schedule.nextRunAt) {
+             const delay = now - new Date(schedule.nextRunAt).getTime();
+             if (delay > graceMs) {
+                schedule.status = 'error';
+                schedule.lastResult = {
+                  totalTargets: schedule.targets.length,
+                  sentCount: 0,
+                  failedCount: schedule.targets.length,
+                  skippedCount: schedule.targets.length,
+                  executedAt: new Date().toISOString(),
+                  details: schedule.targets.map((t) => ({
+                    targetJid: t.jid,
+                    targetLabel: t.label,
+                    status: 'skipped',
+                    error: 'Horário expirado durante reinicialização do servidor',
+                  })),
+                };
+                schedule.nextRunAt = null;
+                console.log(`[Scheduler] marked once schedule=${schedule.id} as error (expired)`);
+                modified = true;
+             }
           }
         }
       }

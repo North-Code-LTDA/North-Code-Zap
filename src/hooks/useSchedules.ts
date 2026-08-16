@@ -23,6 +23,22 @@ export function useSchedules() {
   const [loadingSchedules, setLoadingSchedules] = useState<boolean>(true);
   const [currentProgress, setCurrentProgress] = useState<SchedulerProgressEvent | null>(null);
   const [executingScheduleId, setExecutingScheduleId] = useState<string | null>(null);
+  const [schedulerTimezone, setSchedulerTimezone] = useState<string>('America/Belem');
+
+  // Fetch scheduler config
+  const fetchConfig = useCallback(async () => {
+    try {
+      const res = await fetch('/api/scheduler/config');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.timezone) {
+          setSchedulerTimezone(data.timezone);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching scheduler config:', err);
+    }
+  }, []);
 
   // Fetch schedules
   const fetchSchedules = useCallback(async () => {
@@ -116,6 +132,7 @@ export function useSchedules() {
 
   // Socket.IO realtime integration
   useEffect(() => {
+    fetchConfig();
     fetchSchedules();
     fetchGroups();
     fetchContacts();
@@ -312,6 +329,7 @@ export function useSchedules() {
     loadingContacts,
     currentProgress,
     executingScheduleId,
+    schedulerTimezone,
     fetchSchedules,
     fetchGroups,
     fetchContacts,

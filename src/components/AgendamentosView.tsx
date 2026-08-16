@@ -79,6 +79,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     pauseSchedule,
     resumeSchedule,
     runNow,
+    schedulerTimezone,
   } = useSchedules();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -100,9 +101,10 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
   // Form Once Timing
   const [formDate, setFormDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().split('T')[0];
+    return new Intl.DateTimeFormat('en-CA', { 
+      timeZone: 'America/Belem', 
+      year: 'numeric', month: '2-digit', day: '2-digit' 
+    }).format(new Date());
   });
   const [formTime, setFormTime] = useState('08:00');
 
@@ -246,10 +248,25 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     if (schedule.scheduledAt) {
       const dt = new Date(schedule.scheduledAt);
       if (!isNaN(dt.getTime())) {
-        setFormDate(dt.toISOString().split('T')[0]);
-        setFormTime(
-          `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`
-        );
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone: schedulerTimezone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        }).formatToParts(dt);
+        
+        const dict = parts.reduce((acc, part) => {
+          acc[part.type] = part.value;
+          return acc;
+        }, {} as Record<string, string>);
+        
+        setFormDate(`${dict.year}-${dict.month}-${dict.day}`);
+        // Ensure time defaults to 24-hour hour and minute
+        const hour = dict.hour === '24' ? '00' : dict.hour;
+        setFormTime(`${hour}:${dict.minute}`);
       }
     }
 
@@ -794,12 +811,30 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
     if (formType === 'once') {
       const combined = `${formDate}T${formTime}:00`;
-      const dateObj = new Date(combined);
-      if (isNaN(dateObj.getTime())) {
-        setFormError('Data ou horário inválido.');
+      
+      // Validar se o horário está no futuro com base no fuso horário do scheduler
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: schedulerTimezone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      }).formatToParts(new Date());
+      
+      const dict = parts.reduce((acc, part) => {
+        acc[part.type] = part.value;
+        return acc;
+      }, {} as Record<string, string>);
+      
+      const hour = dict.hour === '24' ? '00' : dict.hour;
+      const currentTzString = `${dict.year}-${dict.month}-${dict.day}T${hour}:${dict.minute}:${dict.second}`;
+      
+      if (combined < currentTzString) {
+        setFormError('O horário do agendamento deve estar no futuro.');
         return;
       }
-      scheduledAt = dateObj.toISOString();
+      
+      // We pass the local time string directly to the backend.
+      // The backend uses process.env.TZ = APP_TIMEZONE to interpret it correctly.
+      scheduledAt = combined;
     } else if (formType === 'daily') {
       if (formDailyTimes.length === 0) {
         setFormError('Adicione pelo menos um horário diário de envio.');
@@ -831,7 +866,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           dailyTimes: payloadDailyTimes,
           weeklyTimeSlots: payloadWeeklySlots,
           weeklyDays: formWeeklyDays,
-          timeOfDay: formDailyTimes[0] || '08:00',
+          timeOfDay: formType === 'daily' ? (payloadDailyTimes?.[0] || '08:00') : formType === 'weekly' ? (payloadWeeklySlots?.[0]?.times?.[0] || '08:00') : '08:00',
           media: formMedia,
           targets: formTargets,
           deliveryOptions,
@@ -852,7 +887,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           dailyTimes: payloadDailyTimes,
           weeklyTimeSlots: payloadWeeklySlots,
           weeklyDays: formWeeklyDays,
-          timeOfDay: formDailyTimes[0] || '08:00',
+          timeOfDay: formType === 'daily' ? (payloadDailyTimes?.[0] || '08:00') : formType === 'weekly' ? (payloadWeeklySlots?.[0]?.times?.[0] || '08:00') : '08:00',
           media: formMedia,
           targets: formTargets,
           deliveryOptions,
@@ -1157,7 +1192,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                       {schedule.nextRunAt && schedule.status === 'active' && (
                         <span className="flex items-center gap-1 text-emerald-400 font-medium">
                           <Clock className="w-3 h-3" />
-                          Próximo: {new Date(schedule.nextRunAt).toLocaleString('pt-BR')}
+                          Próximo: {new Date(schedule.nextRunAt).toLocaleString('pt-BR', { timeZone: schedulerTimezone })}
                         </span>
                       )}
                     </div>
@@ -2063,10 +2098,15 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
               {/* 5. Frequência & Múltiplos Horários */}
               <div className="space-y-3 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
-                <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-emerald-400" />
-                  5. Frequência & Horários de Envio
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-emerald-400" />
+                    5. Frequência & Horários de Envio
+                  </label>
+                  <span className="text-[10px] text-neutral-500 font-mono px-2 py-0.5 bg-neutral-900 rounded-md border border-neutral-800">
+                    Fuso: {schedulerTimezone}
+                  </span>
+                </div>
 
                 {/* Frequency selector buttons */}
                 <div className="grid grid-cols-3 gap-2">

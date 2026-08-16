@@ -37,6 +37,9 @@ const upload = multer({
   },
 });
 
+const APP_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'America/Belem';
+process.env.TZ = APP_TIMEZONE;
+
 async function startServer() {
   const app = express();
   const server = http.createServer(app);
@@ -182,6 +185,10 @@ async function startServer() {
   });
 
   // Schedule API Routes
+  app.get('/api/scheduler/config', (req, res) => {
+    res.json({ timezone: process.env.TZ || 'America/Belem' });
+  });
+
   app.get('/api/schedules', (req, res) => {
     res.json(schedulerService.getAll());
   });
