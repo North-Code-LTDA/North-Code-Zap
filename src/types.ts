@@ -42,6 +42,38 @@ export interface ScheduledTarget {
   type: 'person' | 'group';
   jid: string;
   label: string;
+  name?: string;
+  source?: 'message' | 'history' | 'contact' | 'chat' | 'import' | 'manual' | 'group_member';
+}
+
+export interface KnownContact {
+  jid: string;
+  number: string | null;
+  name: string | null;
+  notifyName?: string | null;
+  source: 'message' | 'history' | 'contact' | 'chat' | 'import';
+  lastSeenAt?: string | null;
+}
+
+export interface GroupParticipant {
+  jid: string;
+  number: string | null;
+  name: string | null;
+  selectable: boolean;
+  isAdmin?: boolean;
+}
+
+export interface GroupParticipantsResponse {
+  groupJid: string;
+  groupName: string;
+  participants: GroupParticipant[];
+}
+
+export interface DeliveryOptions {
+  intervalBetweenMessagesMs: number; // e.g. 5000 ms
+  batchPauseEnabled: boolean;
+  batchSize: number; // e.g. 3
+  batchPauseMs: number; // e.g. 300000 ms (5 min)
 }
 
 export interface ScheduleExecutionDetail {
@@ -50,6 +82,7 @@ export interface ScheduleExecutionDetail {
   status: 'sent' | 'failed' | 'skipped';
   messageId?: string;
   sentAt?: string;
+  renderedPreview?: string;
   error?: string;
 }
 
@@ -72,6 +105,8 @@ export interface ScheduledMessage {
   nextRunAt: string | null; // ISO string or null
   weeklyDays?: number[]; // [0,1,2,3,4,5,6]
   timeOfDay?: string; // "08:00"
+  fallbackName?: string; // "amigo(a)"
+  deliveryOptions?: DeliveryOptions;
   status: ScheduleStatus;
   createdAt: string;
   updatedAt: string;
@@ -94,7 +129,9 @@ export interface SchedulerProgressEvent {
   totalTargets: number;
   targetLabel: string;
   targetJid: string;
-  status: 'sending' | 'sent' | 'failed';
+  status: 'sending' | 'sent' | 'failed' | 'batch_pause';
+  phase?: 'sending' | 'batch_pause';
+  resumeAt?: string | null;
   sentCount: number;
   failedCount: number;
 }

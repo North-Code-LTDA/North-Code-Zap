@@ -5,6 +5,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 import { whatsAppService } from './server/whatsapp.ts';
 import { schedulerService } from './server/scheduler.ts';
+import { contactsService } from './server/contacts.ts';
 
 async function startServer() {
   const app = express();
@@ -39,12 +40,31 @@ async function startServer() {
     res.json(whatsAppService.getMessages());
   });
 
+  app.get('/api/whatsapp/contacts', (req, res) => {
+    try {
+      const contacts = contactsService.getAll();
+      res.json(contacts);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Falha ao buscar contatos' });
+    }
+  });
+
   app.get('/api/whatsapp/groups', async (req, res) => {
     try {
       const groups = await whatsAppService.getGroups();
       res.json(groups);
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Falha ao buscar grupos' });
+    }
+  });
+
+  app.get('/api/whatsapp/groups/:jid/participants', async (req, res) => {
+    try {
+      const { jid } = req.params;
+      const data = await whatsAppService.getGroupParticipants(jid);
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Falha ao buscar participantes do grupo' });
     }
   });
 
@@ -104,8 +124,17 @@ async function startServer() {
 
   app.post('/api/schedules', (req, res) => {
     try {
-      const { name, message, targets, scheduleType, scheduledAt, weeklyDays, timeOfDay } =
-        req.body || {};
+      const {
+        name,
+        message,
+        targets,
+        scheduleType,
+        scheduledAt,
+        weeklyDays,
+        timeOfDay,
+        fallbackName,
+        deliveryOptions,
+      } = req.body || {};
 
       if (!name || typeof name !== 'string' || !name.trim()) {
         return res.status(400).json({ success: false, error: 'Nome do agendamento é obrigatório.' });
@@ -133,6 +162,8 @@ async function startServer() {
         scheduledAt: scheduledAt || new Date().toISOString(),
         weeklyDays,
         timeOfDay,
+        fallbackName,
+        deliveryOptions,
       });
 
       res.status(201).json({ success: true, schedule: newSchedule });

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Server as SocketIOServer } from 'socket.io';
 import { whatsAppService, type WhatsAppService } from './whatsapp';
+import { renderMessageTemplate } from '../src/utils/template';
 import type {
   ScheduledMessage,
   ScheduledTarget,
@@ -10,6 +11,7 @@ import type {
   ScheduleLastResult,
   ScheduleExecutionDetail,
   SchedulerProgressEvent,
+  DeliveryOptions,
 } from '../src/types';
 
 const SCHEDULER_DIR =
@@ -135,6 +137,8 @@ export class SchedulerService {
     scheduledAt: string;
     weeklyDays?: number[];
     timeOfDay?: string;
+    fallbackName?: string;
+    deliveryOptions?: DeliveryOptions;
   }): ScheduledMessage {
     const id = `sched_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const nowIso = new Date().toISOString();
@@ -149,6 +153,13 @@ export class SchedulerService {
       nextRunAt: null,
       weeklyDays: data.weeklyDays,
       timeOfDay: data.timeOfDay,
+      fallbackName: data.fallbackName ? data.fallbackName.trim() : 'amigo(a)',
+      deliveryOptions: data.deliveryOptions || {
+        intervalBetweenMessagesMs: 5000,
+        batchPauseEnabled: false,
+        batchSize: 5,
+        batchPauseMs: 300000,
+      },
       status: 'active',
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -179,6 +190,8 @@ export class SchedulerService {
       scheduledAt: string;
       weeklyDays: number[];
       timeOfDay: string;
+      fallbackName: string;
+      deliveryOptions: DeliveryOptions;
       status: ScheduleStatus;
     }>
   ): ScheduledMessage | null {
@@ -191,6 +204,10 @@ export class SchedulerService {
       ...data,
       name: data.name !== undefined ? data.name.trim() : current.name,
       message: data.message !== undefined ? data.message.trim() : current.message,
+      fallbackName:
+        data.fallbackName !== undefined ? data.fallbackName.trim() : current.fallbackName || 'amigo(a)',
+      deliveryOptions:
+        data.deliveryOptions !== undefined ? data.deliveryOptions : current.deliveryOptions,
       updatedAt: new Date().toISOString(),
     };
 
@@ -501,12 +518,38 @@ export class SchedulerService {
     let failedCount = 0;
     let skippedCount = 0;
 
+    const intervalMs = Math.max(
+      1000,
+      schedule.deliveryOptions?.intervalBetweenMessagesMs ?? MIN_SEND_INTERVAL_MS
+    );
+    const batchPauseEnabled = Boolean(schedule.deliveryOptions?.batchPauseEnabled);
+    const batchSize = Math.max(1, schedule.deliveryOptions?.batchSize || 5);
+    const batchPauseMs = Math.max(5000, schedule.deliveryOptions?.batchPauseMs || 300000);
+
     for (let i = 0; i < schedule.targets.length; i++) {
+      // Safety check: verify schedule has not been paused or cancelled
+      const currentSchedule = this.schedules.find((s) => s.id === schedule.id);
+      if (
+        !currentSchedule ||
+        currentSchedule.status === 'paused' ||
+        !this.processingSchedules.has(schedule.id)
+      ) {
+        console.log(`[Scheduler] execution interrupted for schedule=${schedule.id}`);
+        break;
+      }
+
       const target = schedule.targets[i];
       console.log(
         `[Scheduler] sending target=${target.label || target.jid} (${i + 1}/${
           schedule.targets.length
         })`
+      );
+
+      // Personalize message with template renderer
+      const renderedMessage = renderMessageTemplate(
+        schedule.message,
+        target,
+        schedule.fallbackName || 'amigo(a)'
       );
 
       // Emit progress
@@ -518,6 +561,7 @@ export class SchedulerService {
         targetLabel: target.label,
         targetJid: target.jid,
         status: 'sending',
+        phase: 'sending',
         sentCount,
         failedCount,
       };
@@ -536,6 +580,7 @@ export class SchedulerService {
           targetJid: target.jid,
           targetLabel: target.label,
           status: 'failed',
+          renderedPreview: renderedMessage,
           error: 'WhatsApp desconectado',
         });
         continue;
@@ -548,7 +593,7 @@ export class SchedulerService {
 
       for (let attempt = 1; attempt <= MAX_SEND_RETRIES; attempt++) {
         try {
-          const sendRes = await this.whatsapp.sendTextMessage(target.jid, schedule.message);
+          const sendRes = await this.whatsapp.sendTextMessage(target.jid, renderedMessage);
           if (sendRes.success) {
             attemptSuccess = true;
             messageId = sendRes.message?.id;
@@ -561,7 +606,7 @@ export class SchedulerService {
         }
 
         if (attempt < MAX_SEND_RETRIES) {
-          // Exponential / linear backoff (1000ms * attempt)
+          // Linear backoff
           await new Promise((res) => setTimeout(res, 1000 * attempt));
         }
       }
@@ -576,6 +621,7 @@ export class SchedulerService {
           targetLabel: target.label,
           status: 'sent',
           messageId,
+          renderedPreview: renderedMessage,
           sentAt: new Date().toISOString(),
         });
       } else {
@@ -587,6 +633,7 @@ export class SchedulerService {
           targetJid: target.jid,
           targetLabel: target.label,
           status: 'failed',
+          renderedPreview: renderedMessage,
           error: lastError,
         });
       }
@@ -596,14 +643,62 @@ export class SchedulerService {
         this.io.emit('scheduler:progress', {
           ...progressEvent,
           status: attemptSuccess ? 'sent' : 'failed',
+          phase: 'sending',
           sentCount,
           failedCount,
         });
       }
 
-      // Operational throttle delay between consecutive targets
+      // Throttle or Batch Pause before next target
       if (i < schedule.targets.length - 1) {
-        await new Promise((res) => setTimeout(res, MIN_SEND_INTERVAL_MS));
+        const itemsProcessed = i + 1;
+        const isBatchBoundary = itemsProcessed % batchSize === 0;
+
+        if (batchPauseEnabled && isBatchBoundary) {
+          const pauseUntil = Date.now() + batchPauseMs;
+          const resumeAt = new Date(pauseUntil).toISOString();
+          console.log(
+            `[Scheduler] batch pause of ${Math.round(batchPauseMs / 1000)}s after ${itemsProcessed} items for schedule=${schedule.id}`
+          );
+
+          if (this.io) {
+            this.io.emit('scheduler:progress', {
+              scheduleId: schedule.id,
+              scheduleName: schedule.name,
+              currentIndex: itemsProcessed,
+              totalTargets: schedule.targets.length,
+              targetLabel: target.label,
+              targetJid: target.jid,
+              status: 'batch_pause',
+              phase: 'batch_pause',
+              resumeAt,
+              sentCount,
+              failedCount,
+            });
+          }
+
+          // Loop until batch pause duration passes or schedule is paused/cancelled
+          while (Date.now() < pauseUntil) {
+            const currentCheck = this.schedules.find((s) => s.id === schedule.id);
+            if (
+              !currentCheck ||
+              currentCheck.status === 'paused' ||
+              !this.processingSchedules.has(schedule.id)
+            ) {
+              console.log(
+                `[Scheduler] cancelled during batch pause for schedule=${schedule.id}`
+              );
+              break;
+            }
+            const sleepTime = Math.min(1000, pauseUntil - Date.now());
+            if (sleepTime > 0) {
+              await new Promise((r) => setTimeout(r, sleepTime));
+            }
+          }
+        } else {
+          // Standard interval between individual messages
+          await new Promise((res) => setTimeout(res, intervalMs));
+        }
       }
     }
 

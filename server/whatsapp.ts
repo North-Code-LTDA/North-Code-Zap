@@ -9,43 +9,15 @@ import fs from 'fs';
 import path from 'path';
 import QRCode from 'qrcode';
 import type { Server as SocketIOServer } from 'socket.io';
-
-export type WhatsAppStatus =
-  | 'disconnected'
-  | 'connecting'
-  | 'qr'
-  | 'authenticated'
-  | 'connected'
-  | 'error';
-
-export interface WhatsAppAccountInfo {
-  name: string | null;
-  number: string | null;
-  jid: string | null;
-  status: WhatsAppStatus;
-  qrCode: string | null;
-  error?: string | null;
-  connectedAt?: string | null;
-}
-
-export interface WhatsAppGroup {
-  id: string;
-  subject: string;
-  participantsCount: number;
-  creation?: number;
-  owner?: string;
-}
-
-export interface ReceivedMessage {
-  id: string;
-  remoteJid: string;
-  number: string | null;
-  pushName: string | null;
-  text: string;
-  type: string;
-  timestamp: number;
-  direction?: 'incoming' | 'outgoing';
-}
+import { contactsService } from './contacts';
+import type {
+  GroupParticipant,
+  GroupParticipantsResponse,
+  WhatsAppStatus,
+  WhatsAppAccountInfo,
+  WhatsAppGroup,
+  ReceivedMessage,
+} from '../src/types';
 
 const AUTH_DIR = process.env.AUTH_DIR || path.join(process.cwd(), 'data', 'auth');
 const MAX_MESSAGES_IN_MEMORY = 100;
@@ -174,6 +146,17 @@ export class WhatsAppService {
       // Add to in-memory list (limit to 100)
       this.messages = [outgoingMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
 
+      // Save to contacts directory if private chat
+      if (!targetJid.endsWith('@g.us') && !targetJid.includes('@broadcast')) {
+        contactsService.upsertContact({
+          jid: targetJid,
+          number: rawNumber || null,
+          name: targetPushName,
+          source: 'message',
+          lastSeenAt: new Date().toISOString(),
+        });
+      }
+
       // Log after sending: [WhatsApp] message sent to=5593... id=...
       console.log(`[WhatsApp] message sent to=${rawNumber || targetJid} id=${messageId}`);
 
@@ -232,6 +215,104 @@ export class WhatsAppService {
       console.error('[WhatsApp] error fetching groups:', err?.message || err);
       return this.groupsListCache?.data || [];
     }
+  }
+
+  public async getGroupParticipants(groupJid: string): Promise<GroupParticipantsResponse> {
+    if (!this.sock || this.currentStatus !== 'connected') {
+      return {
+        groupJid,
+        groupName: 'Grupo',
+        participants: [],
+      };
+    }
+
+    const now = Date.now();
+    let groupMeta: any = null;
+
+    const cached = this.groupCache.get(groupJid);
+    if (cached && cached.expiresAt > now) {
+      groupMeta = cached.data;
+    } else {
+      try {
+        groupMeta = await this.sock.groupMetadata(groupJid);
+        this.groupCache.set(groupJid, {
+          data: groupMeta,
+          expiresAt: now + 300000, // 5 min TTL
+        });
+      } catch (err: any) {
+        console.error(`[WhatsApp] error fetching group metadata for ${groupJid}:`, err?.message || err);
+        return {
+          groupJid,
+          groupName: 'Grupo',
+          participants: [],
+        };
+      }
+    }
+
+    const groupName = groupMeta?.subject || 'Grupo';
+    const rawParticipants: any[] = Array.isArray(groupMeta?.participants) ? groupMeta.participants : [];
+    const selfJid = this.accountInfo.jid?.toLowerCase();
+
+    const participants: GroupParticipant[] = [];
+
+    for (const p of rawParticipants) {
+      const rawId: string = p.id || p.jid || '';
+      const isLid = rawId.endsWith('@lid');
+
+      let resolvedJid: string | null = null;
+      let number: string | null = null;
+      let selectable = true;
+      let name: string | null = null;
+
+      if (!isLid && rawId.endsWith('@s.whatsapp.net')) {
+        resolvedJid = rawId;
+        number = rawId.split('@')[0].split(':')[0];
+      } else if (p.phoneNumber && typeof p.phoneNumber === 'string') {
+        const cleanNum = p.phoneNumber.replace(/\D/g, '');
+        if (cleanNum.length >= 10) {
+          resolvedJid = `${cleanNum}@s.whatsapp.net`;
+          number = cleanNum;
+        }
+      }
+
+      if (!resolvedJid) {
+        // Telefone não resolvido (e.g. only @lid)
+        selectable = false;
+        name = 'Telefone não resolvido';
+        resolvedJid = rawId || 'unknown@lid';
+      } else {
+        // If it's the connected account itself
+        if (selfJid && (resolvedJid.toLowerCase() === selfJid || selfJid.includes(number || '---'))) {
+          name = `${this.accountInfo.name || 'Você'} (Você)`;
+        } else {
+          // Look up in contactsService
+          const known = contactsService.getContact(resolvedJid);
+          name = p.name || p.notify || known?.name || `+${number}`;
+          if (name && !name.startsWith('+')) {
+            contactsService.upsertContact({
+              jid: resolvedJid,
+              number,
+              name,
+              source: 'contact',
+            });
+          }
+        }
+      }
+
+      participants.push({
+        jid: resolvedJid,
+        number,
+        name,
+        selectable,
+        isAdmin: p.admin === 'admin' || p.admin === 'superadmin',
+      });
+    }
+
+    return {
+      groupJid,
+      groupName,
+      participants,
+    };
   }
 
   private updateStatus(
@@ -427,12 +508,89 @@ export class WhatsAppService {
         // Add to memory list (limit to 100)
         this.messages = [receivedMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
 
+        // Record contact in Contacts Directory
+        if (!remoteJid.endsWith('@g.us') && !remoteJid.includes('@broadcast')) {
+          contactsService.upsertContact({
+            jid: remoteJid,
+            number: rawNumber || null,
+            name: pushName,
+            source: 'message',
+            lastSeenAt: new Date(timestamp).toISOString(),
+          });
+        } else if (msg.key?.participant) {
+          // If in a group, also record individual sender contact if known
+          const partJid = msg.key.participant;
+          const partNum = partJid.split('@')[0].split(':')[0];
+          contactsService.upsertContact({
+            jid: partJid,
+            number: partNum || null,
+            name: pushName,
+            source: 'message',
+            lastSeenAt: new Date(timestamp).toISOString(),
+          });
+        }
+
         // Required diagnostic log: [WhatsApp] message received from=5593... type=text
         console.log(`[WhatsApp] message received from=${rawNumber || remoteJid} type=${messageType}`);
 
         // Emit to frontend via Socket.IO
         if (this.io) {
           this.io.emit('whatsapp:message', receivedMessage);
+        }
+      }
+    });
+
+    // Handle contacts upsert/update
+    this.sock.ev.on('contacts.upsert', (newContacts: any[]) => {
+      if (Array.isArray(newContacts)) {
+        for (const c of newContacts) {
+          if (c?.id) {
+            contactsService.upsertContact({
+              jid: c.id,
+              name: c.name || c.notify || null,
+              source: 'contact',
+            });
+          }
+        }
+      }
+    });
+
+    this.sock.ev.on('contacts.update', (updates: any[]) => {
+      if (Array.isArray(updates)) {
+        for (const c of updates) {
+          if (c?.id) {
+            contactsService.upsertContact({
+              jid: c.id,
+              name: c.name || c.notify || null,
+              source: 'contact',
+            });
+          }
+        }
+      }
+    });
+
+    // Handle messaging-history.set (Initial sync of contacts and chats)
+    this.sock.ev.on('messaging-history.set', ({ contacts: histContacts, chats: histChats }: any) => {
+      if (Array.isArray(histContacts)) {
+        for (const c of histContacts) {
+          if (c?.id) {
+            contactsService.upsertContact({
+              jid: c.id,
+              name: c.name || c.notify || null,
+              source: 'history',
+            });
+          }
+        }
+      }
+      if (Array.isArray(histChats)) {
+        for (const ch of histChats) {
+          if (ch?.id && !ch.id.endsWith('@g.us') && !ch.id.includes('@broadcast')) {
+            contactsService.upsertContact({
+              jid: ch.id,
+              name: ch.name || null,
+              source: 'chat',
+            });
+          }
         }
       }
     });

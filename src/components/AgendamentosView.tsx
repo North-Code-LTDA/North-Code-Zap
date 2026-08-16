@@ -1,4 +1,4 @@
-import { useState, useMemo, type FormEvent } from 'react';
+import { useState, useMemo, useEffect, useRef, type FormEvent, type ChangeEvent } from 'react';
 import {
   Calendar,
   Clock,
@@ -22,20 +22,31 @@ import {
   Sparkles,
   Send,
   MessageSquare,
+  FileSpreadsheet,
+  Upload,
+  UserCheck,
+  ChevronDown,
+  ChevronUp,
+  ShieldCheck,
+  Timer,
+  Sliders,
+  Check,
 } from 'lucide-react';
 import type {
   ScheduledMessage,
   ScheduledTarget,
   ScheduleType,
   WhatsAppGroup,
-  ReceivedMessage,
+  KnownContact,
+  GroupParticipant,
   WhatsAppAccountInfo,
   ScheduleLastResult,
+  DeliveryOptions,
 } from '../types';
 import { useSchedules } from '../hooks/useSchedules';
+import { renderMessageTemplate } from '../utils/template';
 
 interface AgendamentosViewProps {
-  messages: ReceivedMessage[];
   whatsappState: WhatsAppAccountInfo;
 }
 
@@ -49,15 +60,19 @@ const WEEK_DAYS = [
   { id: 6, label: 'Sáb', full: 'Sábado' },
 ];
 
-export function AgendamentosView({ messages, whatsappState }: AgendamentosViewProps) {
+export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
   const {
     schedules,
     groups,
+    contacts,
     loadingSchedules,
     loadingGroups,
+    loadingContacts,
     currentProgress,
     executingScheduleId,
     fetchGroups,
+    fetchContacts,
+    fetchGroupParticipants,
     createSchedule,
     updateSchedule,
     deleteSchedule,
@@ -76,6 +91,7 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
   // Form State
   const [formName, setFormName] = useState('');
   const [formMessage, setFormMessage] = useState('');
+  const [formFallbackName, setFormFallbackName] = useState('amigo(a)');
   const [formType, setFormType] = useState<ScheduleType>('once');
   const [formDate, setFormDate] = useState(() => {
     const d = new Date();
@@ -86,42 +102,65 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
   const [formWeeklyDays, setFormWeeklyDays] = useState<number[]>([1]); // Seg
   const [formTargets, setFormTargets] = useState<ScheduledTarget[]>([]);
 
-  // Targets picker sub-state
-  const [pickerTab, setPickerTab] = useState<'pessoas' | 'grupos'>('pessoas');
+  // Delivery Rhythm Options
+  const [formIntervalSeconds, setFormIntervalSeconds] = useState(5);
+  const [formBatchPauseEnabled, setFormBatchPauseEnabled] = useState(false);
+  const [formBatchSize, setFormBatchSize] = useState(5);
+  const [formBatchPauseMinutes, setFormBatchPauseMinutes] = useState(5);
+
+  // Compliance Checkbox for imported numbers
+  const [importComplianceChecked, setImportComplianceChecked] = useState(false);
+
+  // Targets Picker Sub-state
+  const [pickerTab, setPickerTab] = useState<'pessoas' | 'grupos' | 'importar'>('pessoas');
   const [pickerSearch, setPickerSearch] = useState('');
   const [manualNumberInput, setManualNumberInput] = useState('');
   const [manualNameInput, setManualNameInput] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const isConnected = whatsappState.status === 'connected';
+  // Group Members Expansion & Cache
+  const [expandedGroupJids, setExpandedGroupJids] = useState<Set<string>>(new Set());
+  const [groupParticipantsMap, setGroupParticipantsMap] = useState<Map<string, GroupParticipant[]>>(new Map());
+  const [loadingGroupParticipants, setLoadingGroupParticipants] = useState<Set<string>>(new Set());
 
-  // Extract unique contacts from received/sent messages
-  const knownContacts = useMemo(() => {
-    const map = new Map<string, { jid: string; number: string; name: string }>();
-    for (const msg of messages) {
-      if (!msg.remoteJid.endsWith('@g.us') && !msg.remoteJid.includes('@broadcast')) {
-        const rawNum = msg.remoteJid.split('@')[0].split(':')[0];
-        if (!map.has(msg.remoteJid)) {
-          map.set(msg.remoteJid, {
-            jid: msg.remoteJid,
-            number: rawNum,
-            name: msg.pushName || `+${rawNum}`,
-          });
-        }
-      }
+  // Import Sub-state
+  const [importMode, setImportMode] = useState<'paste' | 'file'>('paste');
+  const [importRawText, setImportRawText] = useState('');
+  const [importParsedPreview, setImportParsedPreview] = useState<{
+    totalLines: number;
+    valid: Array<{ jid: string; number: string; name: string }>;
+    duplicatesCount: number;
+    invalidCount: number;
+  } | null>(null);
+
+  const isConnected = whatsappState.status === 'connected';
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Lock body scroll when any modal is open
+  useEffect(() => {
+    if (isModalOpen || selectedResultDetails) {
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = prevOverflow;
+      };
     }
-    return Array.from(map.values());
-  }, [messages]);
+  }, [isModalOpen, selectedResultDetails]);
+
+  // Check if any selected target comes from import
+  const hasImportedTargets = useMemo(() => {
+    return formTargets.some((t) => t.source === 'import');
+  }, [formTargets]);
 
   // Filtered contacts
   const filteredContacts = useMemo(() => {
-    if (!pickerSearch.trim()) return knownContacts;
+    if (!pickerSearch.trim()) return contacts;
     const term = pickerSearch.toLowerCase();
-    return knownContacts.filter(
-      (c) => c.name.toLowerCase().includes(term) || c.number.includes(term)
+    return contacts.filter(
+      (c) => (c.name && c.name.toLowerCase().includes(term)) || (c.number && c.number.includes(term))
     );
-  }, [knownContacts, pickerSearch]);
+  }, [contacts, pickerSearch]);
 
   // Filtered groups
   const filteredGroups = useMemo(() => {
@@ -132,10 +171,12 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
     );
   }, [groups, pickerSearch]);
 
+  // Open Modal - New
   const handleOpenNewModal = () => {
     setEditingSchedule(null);
     setFormName('');
     setFormMessage('');
+    setFormFallbackName('amigo(a)');
     setFormType('once');
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -143,14 +184,25 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
     setFormTime('08:00');
     setFormWeeklyDays([1]);
     setFormTargets([]);
+    setFormIntervalSeconds(5);
+    setFormBatchPauseEnabled(false);
+    setFormBatchSize(5);
+    setFormBatchPauseMinutes(5);
+    setImportComplianceChecked(false);
+    setImportRawText('');
+    setImportParsedPreview(null);
     setFormError(null);
     setIsModalOpen(true);
+    fetchContacts();
+    fetchGroups();
   };
 
+  // Open Modal - Edit
   const handleOpenEditModal = (schedule: ScheduledMessage) => {
     setEditingSchedule(schedule);
     setFormName(schedule.name);
     setFormMessage(schedule.message);
+    setFormFallbackName(schedule.fallbackName || 'amigo(a)');
     setFormType(schedule.scheduleType);
 
     if (schedule.scheduledAt) {
@@ -162,115 +214,318 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
         );
       }
     }
+
     if (schedule.timeOfDay) {
       setFormTime(schedule.timeOfDay);
     }
-    if (schedule.weeklyDays) {
+
+    if (schedule.weeklyDays && schedule.weeklyDays.length > 0) {
       setFormWeeklyDays(schedule.weeklyDays);
+    } else {
+      setFormWeeklyDays([1]);
     }
+
     setFormTargets(schedule.targets || []);
+    setFormIntervalSeconds(
+      Math.round((schedule.deliveryOptions?.intervalBetweenMessagesMs || 5000) / 1000)
+    );
+    setFormBatchPauseEnabled(Boolean(schedule.deliveryOptions?.batchPauseEnabled));
+    setFormBatchSize(schedule.deliveryOptions?.batchSize || 5);
+    setFormBatchPauseMinutes(
+      Math.round((schedule.deliveryOptions?.batchPauseMs || 300000) / 60000)
+    );
+    setImportComplianceChecked(true);
+    setImportRawText('');
+    setImportParsedPreview(null);
     setFormError(null);
     setIsModalOpen(true);
+    fetchContacts();
+    fetchGroups();
   };
 
-  const handleAddManualContact = () => {
+  // Toggle group participant expansion
+  const handleToggleGroupParticipants = async (groupJid: string) => {
+    const next = new Set(expandedGroupJids);
+    if (next.has(groupJid)) {
+      next.delete(groupJid);
+      setExpandedGroupJids(next);
+      return;
+    }
+
+    next.add(groupJid);
+    setExpandedGroupJids(next);
+
+    if (!groupParticipantsMap.has(groupJid)) {
+      setLoadingGroupParticipants((prev) => new Set(prev).add(groupJid));
+      const res = await fetchGroupParticipants(groupJid);
+      setLoadingGroupParticipants((prev) => {
+        const updated = new Set(prev);
+        updated.delete(groupJid);
+        return updated;
+      });
+
+      if (res && Array.isArray(res.participants)) {
+        setGroupParticipantsMap((prev) => new Map(prev).set(groupJid, res.participants));
+      }
+    }
+  };
+
+  // Add individual contact target
+  const handleToggleContactTarget = (contact: KnownContact) => {
+    setFormTargets((prev) => {
+      const exists = prev.some((t) => t.jid === contact.jid);
+      if (exists) {
+        return prev.filter((t) => t.jid !== contact.jid);
+      }
+      return [
+        ...prev,
+        {
+          type: 'person',
+          jid: contact.jid,
+          label: contact.name || `+${contact.number || contact.jid.split('@')[0]}`,
+          name: contact.name || undefined,
+          source: contact.source,
+        },
+      ];
+    });
+  };
+
+  // Add group participant target
+  const handleToggleGroupParticipantTarget = (
+    participant: GroupParticipant,
+    groupName: string
+  ) => {
+    if (!participant.selectable) return;
+    setFormTargets((prev) => {
+      const exists = prev.some((t) => t.jid === participant.jid);
+      if (exists) {
+        return prev.filter((t) => t.jid !== participant.jid);
+      }
+      return [
+        ...prev,
+        {
+          type: 'person',
+          jid: participant.jid,
+          label: `${participant.name || `+${participant.number}`} (${groupName})`,
+          name: participant.name || undefined,
+          source: 'group_member',
+        },
+      ];
+    });
+  };
+
+  // Add whole group target
+  const handleToggleGroupTarget = (group: WhatsAppGroup) => {
+    setFormTargets((prev) => {
+      const exists = prev.some((t) => t.jid === group.id);
+      if (exists) {
+        return prev.filter((t) => t.jid !== group.id);
+      }
+      return [
+        ...prev,
+        {
+          type: 'group',
+          jid: group.id,
+          label: `Grupo: ${group.subject}`,
+          name: group.subject,
+          source: 'chat',
+        },
+      ];
+    });
+  };
+
+  // Add manual number target
+  const handleAddManualNumber = () => {
     if (!manualNumberInput.trim()) return;
-    let cleaned = manualNumberInput.replace(/\D/g, '');
-    if (cleaned.length < 10) {
-      setFormError('Número deve ter pelo menos 10 dígitos (DDD + Número).');
-      return;
-    }
-    if (!cleaned.startsWith('55') && (cleaned.length === 10 || cleaned.length === 11)) {
-      cleaned = '55' + cleaned;
-    }
 
-    const jid = `${cleaned}@s.whatsapp.net`;
-    const label = manualNameInput.trim() || `+${cleaned}`;
-
-    if (formTargets.some((t) => t.jid === jid)) {
-      setFormError('Este número já foi adicionado aos destinatários.');
+    let clean = manualNumberInput.trim().replace(/\D/g, '');
+    if (clean.length < 10) {
+      setFormError('Número inválido. Informe DDD + número (ex: 11999998888).');
       return;
     }
 
-    setFormTargets((prev) => [
-      ...prev,
-      {
-        type: 'person',
-        jid,
-        label,
-      },
-    ]);
+    if (clean.length === 10 || clean.length === 11) {
+      clean = `55${clean}`;
+    }
+
+    const jid = `${clean}@s.whatsapp.net`;
+    const label = manualNameInput.trim()
+      ? `${manualNameInput.trim()} (+${clean})`
+      : `+${clean}`;
+
+    setFormTargets((prev) => {
+      if (prev.some((t) => t.jid === jid)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          type: 'person',
+          jid,
+          label,
+          name: manualNameInput.trim() || undefined,
+          source: 'manual',
+        },
+      ];
+    });
 
     setManualNumberInput('');
     setManualNameInput('');
     setFormError(null);
   };
 
-  const handleToggleTarget = (target: ScheduledTarget) => {
+  // Remove target
+  const handleRemoveTarget = (jid: string) => {
+    setFormTargets((prev) => prev.filter((t) => t.jid !== jid));
+  };
+
+  // Parser for importing list (text / CSV)
+  const parseImportText = (raw: string) => {
+    const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const validMap = new Map<string, { jid: string; number: string; name: string }>();
+    let duplicates = 0;
+    let invalid = 0;
+
+    for (const line of lines) {
+      // Split by comma, semicolon, tab or pipe
+      const parts = line.split(/[,;\t|]+/).map((p) => p.trim());
+      const firstPart = parts[0] || '';
+      const secondPart = parts[1] || '';
+
+      // Check which part has digits
+      let digits = firstPart.replace(/\D/g, '');
+      let nameCandidate = secondPart;
+
+      if (!digits && secondPart) {
+        digits = secondPart.replace(/\D/g, '');
+        nameCandidate = firstPart;
+      }
+
+      if (digits.length >= 10 && digits.length <= 15) {
+        if (digits.length === 10 || digits.length === 11) {
+          digits = `55${digits}`;
+        }
+        const jid = `${digits}@s.whatsapp.net`;
+        const name = nameCandidate || `+${digits}`;
+
+        if (validMap.has(jid)) {
+          duplicates++;
+        } else {
+          validMap.set(jid, { jid, number: digits, name });
+        }
+      } else {
+        invalid++;
+      }
+    }
+
+    const valid = Array.from(validMap.values());
+    setImportParsedPreview({
+      totalLines: lines.length,
+      valid,
+      duplicatesCount: duplicates,
+      invalidCount: invalid,
+    });
+  };
+
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (text) {
+        setImportRawText(text);
+        parseImportText(text);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleApplyImportedTargets = () => {
+    if (!importParsedPreview || importParsedPreview.valid.length === 0) return;
+
     setFormTargets((prev) => {
-      const exists = prev.some((t) => t.jid === target.jid);
-      if (exists) {
-        return prev.filter((t) => t.jid !== target.jid);
-      } else {
-        return [...prev, target];
+      const existingJids = new Set(prev.map((t) => t.jid));
+      const additions: ScheduledTarget[] = [];
+
+      for (const item of importParsedPreview.valid) {
+        if (!existingJids.has(item.jid)) {
+          existingJids.add(item.jid);
+          additions.push({
+            type: 'person',
+            jid: item.jid,
+            label: item.name !== `+${item.number}` ? `${item.name} (+${item.number})` : `+${item.number}`,
+            name: item.name !== `+${item.number}` ? item.name : undefined,
+            source: 'import',
+          });
+        }
       }
+      return [...prev, ...additions];
     });
+
+    setImportRawText('');
+    setImportParsedPreview(null);
+    setPickerTab('pessoas');
   };
 
-  const handleToggleWeeklyDay = (dayId: number) => {
-    setFormWeeklyDays((prev) => {
-      if (prev.includes(dayId)) {
-        if (prev.length === 1) return prev; // Keep at least one
-        return prev.filter((d) => d !== dayId);
-      } else {
-        return [...prev, dayId].sort();
-      }
-    });
-  };
-
+  // Form Submit
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    setFormError(null);
+
     if (!formName.trim()) {
-      setFormError('Informe o nome do agendamento.');
+      setFormError('Informe um nome para o agendamento.');
       return;
     }
+
     if (!formMessage.trim()) {
       setFormError('Informe a mensagem a ser enviada.');
       return;
     }
+
     if (formTargets.length === 0) {
-      setFormError('Selecione pelo menos 1 destinatário.');
+      setFormError('Selecione pelo menos um destinatário (Pessoa, Grupo ou Importado).');
       return;
     }
 
-    let calculatedScheduledAt = new Date().toISOString();
-    if (formType === 'once') {
-      const dateTimeStr = `${formDate}T${formTime}:00`;
-      const dt = new Date(dateTimeStr);
-      if (isNaN(dt.getTime())) {
-        setFormError('Data ou horário inválidos.');
-        return;
-      }
-      calculatedScheduledAt = dt.toISOString();
+    if (hasImportedTargets && !importComplianceChecked) {
+      setFormError(
+        'Você incluiu destinatários importados. É obrigatório confirmar a autorização de envio.'
+      );
+      return;
     }
 
     setIsSubmitting(true);
-    setFormError(null);
 
     try {
+      const scheduledAtIso =
+        formType === 'once'
+          ? new Date(`${formDate}T${formTime}:00`).toISOString()
+          : new Date().toISOString();
+
+      const deliveryOptions: DeliveryOptions = {
+        intervalBetweenMessagesMs: Math.max(1000, formIntervalSeconds * 1000),
+        batchPauseEnabled: formBatchPauseEnabled,
+        batchSize: Math.max(1, formBatchSize),
+        batchPauseMs: Math.max(5000, formBatchPauseMinutes * 60000),
+      };
+
       if (editingSchedule) {
         const res = await updateSchedule(editingSchedule.id, {
           name: formName.trim(),
           message: formMessage.trim(),
           targets: formTargets,
           scheduleType: formType,
-          scheduledAt: calculatedScheduledAt,
-          weeklyDays: formWeeklyDays,
+          scheduledAt: scheduledAtIso,
           timeOfDay: formTime,
-          status: 'active',
+          weeklyDays: formWeeklyDays,
+          fallbackName: formFallbackName.trim() || 'amigo(a)',
+          deliveryOptions,
         });
+
         if (!res.success) {
-          setFormError(res.error || 'Falha ao atualizar agendamento');
+          setFormError(res.error || 'Erro ao atualizar agendamento.');
           setIsSubmitting(false);
           return;
         }
@@ -280,12 +535,15 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
           message: formMessage.trim(),
           targets: formTargets,
           scheduleType: formType,
-          scheduledAt: calculatedScheduledAt,
-          weeklyDays: formWeeklyDays,
+          scheduledAt: scheduledAtIso,
           timeOfDay: formTime,
+          weeklyDays: formWeeklyDays,
+          fallbackName: formFallbackName.trim() || 'amigo(a)',
+          deliveryOptions,
         });
+
         if (!res.success) {
-          setFormError(res.error || 'Falha ao criar agendamento');
+          setFormError(res.error || 'Erro ao criar agendamento.');
           setIsSubmitting(false);
           return;
         }
@@ -293,291 +551,268 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
 
       setIsModalOpen(false);
     } catch (err: any) {
-      setFormError(err?.message || 'Erro inesperado');
+      setFormError(err?.message || 'Erro ao processar agendamento.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleRunNow = async (id: string) => {
-    if (!isConnected) {
-      alert('Conecte o WhatsApp antes de executar o agendamento.');
-      return;
+  const getSourceBadge = (source?: string) => {
+    switch (source) {
+      case 'history':
+        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">Histórico</span>;
+      case 'message':
+        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Mensagem</span>;
+      case 'contact':
+        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">Contato</span>;
+      case 'import':
+        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">Importado</span>;
+      case 'group_member':
+        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Membro Grupo</span>;
+      default:
+        return null;
     }
-    const confirmed = window.confirm('Deseja disparar este agendamento imediatamente agora?');
-    if (!confirmed) return;
-
-    await runNow(id);
-  };
-
-  const formatNextRun = (schedule: ScheduledMessage) => {
-    if (schedule.status === 'paused') return 'Pausado';
-    if (schedule.status === 'completed') return 'Concluído';
-    if (schedule.status === 'running') return 'Executando agora...';
-    if (!schedule.nextRunAt) return 'Não programado';
-
-    const dt = new Date(schedule.nextRunAt);
-    if (isNaN(dt.getTime())) return '-';
-
-    return dt.toLocaleString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const formatScheduleTypeBadge = (schedule: ScheduledMessage) => {
-    if (schedule.scheduleType === 'once') {
-      return 'Uma vez';
-    }
-    if (schedule.scheduleType === 'daily') {
-      return `Diário às ${schedule.timeOfDay || '08:00'}`;
-    }
-    if (schedule.scheduleType === 'weekly') {
-      const daysStr = (schedule.weeklyDays || [1])
-        .map((d) => WEEK_DAYS.find((w) => w.id === d)?.label || d)
-        .join(', ');
-      return `Semanal (${daysStr}) às ${schedule.timeOfDay || '08:00'}`;
-    }
-    return schedule.scheduleType;
   };
 
   return (
-    <div className="space-y-6" id="agendamentos-view">
+    <div className="space-y-6">
       {/* Header Bar */}
-      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
-                <Calendar className="w-4 h-4" />
-              </div>
-              <h1 className="text-xl font-bold text-white tracking-tight">
-                Agendamentos de Mensagens
-              </h1>
-            </div>
-            <p className="text-xs text-neutral-400">
-              Envio automático e sequencial para pessoas e grupos com fila e persistência
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-800 border border-neutral-700 text-xs">
-              <Radio
-                className={`w-3.5 h-3.5 ${
-                  isConnected ? 'text-emerald-400 animate-pulse' : 'text-neutral-500'
-                }`}
-              />
-              <span className="text-neutral-300 font-mono text-[11px]">
-                {schedules.filter((s) => s.status === 'active').length} ativos • {schedules.length} total
-              </span>
-            </div>
-
-            <button
-              id="btn-novo-agendamento"
-              onClick={handleOpenNewModal}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-black shadow-lg shadow-emerald-500/10 transition cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>NOVO AGENDAMENTO</span>
-            </button>
-          </div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-neutral-900/60 p-6 rounded-2xl border border-neutral-800">
+        <div>
+          <h2 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+            <Calendar className="w-6 h-6 text-emerald-400" />
+            Agendamentos de Mensagens
+          </h2>
+          <p className="text-neutral-400 text-sm mt-1">
+            Envio automático pontual ou recorrente com controle de ritmo, templates e personalização.
+          </p>
         </div>
+
+        <button
+          id="btn-novo-agendamento"
+          onClick={handleOpenNewModal}
+          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-neutral-950 font-semibold text-sm transition-all shadow-lg shadow-emerald-500/10"
+        >
+          <Plus className="w-4 h-4" />
+          Novo Agendamento
+        </button>
       </div>
 
-      {/* Active Live Progress Bar (if executing) */}
+      {/* Real-time Execution Banner */}
       {currentProgress && (
-        <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-4 shadow-lg animate-fade-in space-y-3">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2.5">
-              <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+        <div className="bg-neutral-900 border border-emerald-500/30 rounded-2xl p-5 shadow-xl relative overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                {currentProgress.status === 'batch_pause' ? (
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 animate-pulse">
+                    <Timer className="w-5 h-5" />
+                  </div>
+                ) : (
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  </div>
+                )}
+              </div>
               <div>
-                <h4 className="text-xs font-bold text-white">
-                  Executando: {currentProgress.scheduleName}
-                </h4>
-                <p className="text-[11px] text-emerald-300/80 font-mono">
-                  Enviando para {currentProgress.targetLabel} ({currentProgress.currentIndex} de{' '}
-                  {currentProgress.totalTargets})
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-white">{currentProgress.scheduleName}</span>
+                  {currentProgress.status === 'batch_pause' ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                      Pausa de Lote Ativa
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      Em Execução Real
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  {currentProgress.status === 'batch_pause'
+                    ? `Pausa de segurança para resfriamento de fila. Retomada prevista para ${
+                        currentProgress.resumeAt
+                          ? new Date(currentProgress.resumeAt).toLocaleTimeString('pt-BR')
+                          : 'em breve'
+                      }.`
+                    : `Enviando para: ${currentProgress.targetLabel} (${currentProgress.currentIndex}/${currentProgress.totalTargets})`}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 text-xs font-mono">
-              <span className="text-emerald-400 font-bold">
-                {currentProgress.sentCount} enviados
+            <div className="flex items-center gap-3 text-xs">
+              <span className="text-emerald-400 font-medium bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+                ✓ {currentProgress.sentCount} enviados
               </span>
               {currentProgress.failedCount > 0 && (
-                <span className="text-red-400 font-bold">
-                  {currentProgress.failedCount} falhas
+                <span className="text-rose-400 font-medium bg-rose-500/10 px-2.5 py-1 rounded-lg border border-rose-500/20">
+                  ✗ {currentProgress.failedCount} falhas
                 </span>
               )}
             </div>
           </div>
 
           {/* Progress Bar */}
-          <div className="w-full bg-neutral-900 rounded-full h-2 overflow-hidden border border-emerald-500/20">
+          <div className="w-full bg-neutral-800 rounded-full h-1.5 mt-4 overflow-hidden">
             <div
-              className="bg-emerald-500 h-full transition-all duration-300 rounded-full"
+              className={`h-full transition-all duration-300 ${
+                currentProgress.status === 'batch_pause' ? 'bg-amber-400' : 'bg-emerald-400'
+              }`}
               style={{
-                width: `${(currentProgress.currentIndex / currentProgress.totalTargets) * 100}%`,
+                width: `${Math.round(
+                  (currentProgress.currentIndex / Math.max(1, currentProgress.totalTargets)) * 100
+                )}%`,
               }}
             />
           </div>
         </div>
       )}
 
-      {/* Schedules Cards List */}
+      {/* Schedules List */}
       {loadingSchedules ? (
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-12 text-center space-y-3">
-          <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mx-auto" />
-          <p className="text-xs text-neutral-400">Carregando agendamentos...</p>
+        <div className="flex items-center justify-center p-12 text-neutral-500 gap-3">
+          <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
+          <span>Carregando agendamentos...</span>
         </div>
       ) : schedules.length === 0 ? (
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-16 text-center space-y-4">
-          <div className="w-16 h-16 rounded-2xl bg-neutral-800/80 border border-neutral-700/50 flex items-center justify-center text-neutral-500 mx-auto">
-            <Calendar className="w-8 h-8" />
+        <div className="text-center py-16 px-4 bg-neutral-900/40 rounded-3xl border border-neutral-800/80">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-neutral-800/80 flex items-center justify-center text-neutral-400 mb-4">
+            <Calendar className="w-7 h-7" />
           </div>
-          <div className="max-w-md mx-auto space-y-1">
-            <h3 className="text-base font-bold text-white">Nenhum agendamento cadastrado</h3>
-            <p className="text-xs text-neutral-400 leading-relaxed">
-              Crie agendamentos automáticos para enviar mensagens individuais ou para múltiplos grupos do WhatsApp em horários programados.
-            </p>
-          </div>
+          <h3 className="text-lg font-semibold text-white">Nenhum agendamento ativo</h3>
+          <p className="text-neutral-400 text-sm max-w-sm mx-auto mt-1 mb-6">
+            Crie disparos programados para contatos individuais, membros de grupos ou listas importadas.
+          </p>
           <button
             onClick={handleOpenNewModal}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-black transition cursor-pointer"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-sm font-medium transition-colors"
           >
             <Plus className="w-4 h-4" />
-            <span>CRIAR PRIMEIRO AGENDAMENTO</span>
+            Criar Primeiro Agendamento
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 gap-4">
           {schedules.map((schedule) => {
-            const isRunning =
-              schedule.status === 'running' || executingScheduleId === schedule.id;
+            const isRunning = executingScheduleId === schedule.id || schedule.status === 'running';
 
             return (
               <div
                 key={schedule.id}
-                id={`schedule-card-${schedule.id}`}
-                className={`bg-neutral-900 border rounded-2xl p-5 shadow-xl flex flex-col justify-between space-y-4 transition ${
-                  isRunning
-                    ? 'border-emerald-500/60 bg-emerald-950/10 ring-1 ring-emerald-500/30'
-                    : 'border-neutral-800 hover:border-neutral-700'
-                }`}
+                className="bg-neutral-900/80 border border-neutral-800 hover:border-neutral-700/80 rounded-2xl p-5 transition-all shadow-sm"
               >
-                {/* Card Top: Title, Status Badge, Frequency */}
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <h3 className="text-sm font-bold text-white truncate">{schedule.name}</h3>
-                      <p className="text-[11px] text-emerald-400 font-mono mt-0.5">
-                        {formatScheduleTypeBadge(schedule)}
-                      </p>
-                    </div>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  {/* Info Header */}
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <h3 className="text-base font-semibold text-white truncate">
+                        {schedule.name}
+                      </h3>
 
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold tracking-wider uppercase shrink-0 ${
-                        isRunning
-                          ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30 animate-pulse'
-                          : schedule.status === 'active'
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                          : schedule.status === 'paused'
-                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
-                          : schedule.status === 'completed'
-                          ? 'bg-neutral-800 text-neutral-400 border border-neutral-700'
-                          : 'bg-red-500/10 text-red-400 border border-red-500/30'
-                      }`}
-                    >
-                      {isRunning ? 'EXECUTANDO' : schedule.status}
-                    </span>
-                  </div>
-
-                  {/* Message Preview Box */}
-                  <div className="p-3 bg-neutral-950/60 border border-neutral-800/80 rounded-xl">
-                    <p className="text-xs text-neutral-300 line-clamp-2 leading-relaxed italic">
-                      "{schedule.message}"
-                    </p>
-                  </div>
-
-                  {/* Targets & Timing Info */}
-                  <div className="space-y-1.5 text-xs text-neutral-400">
-                    <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <Users className="w-3.5 h-3.5 text-neutral-500" />
-                        <span>Destinatários:</span>
-                      </span>
-                      <span className="font-mono text-white font-bold">
-                        {schedule.targets.length} destinos
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5 text-neutral-500" />
-                        <span>Próximo envio:</span>
-                      </span>
-                      <span className="font-mono text-neutral-300">
-                        {formatNextRun(schedule)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Last Run Info (if exists) */}
-                  {schedule.lastResult && (
-                    <div className="p-2.5 bg-neutral-800/50 border border-neutral-700/50 rounded-xl text-[11px] flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 text-neutral-300">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>
-                          Último: {schedule.lastResult.sentCount} ok
-                          {schedule.lastResult.failedCount > 0 &&
-                            `, ${schedule.lastResult.failedCount} erro`}
+                      {/* Status Badge */}
+                      {isRunning ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Executando
                         </span>
-                      </div>
-                      <button
-                        onClick={() =>
-                          setSelectedResultDetails({
-                            scheduleName: schedule.name,
-                            result: schedule.lastResult!,
-                          })
-                        }
-                        className="text-emerald-400 hover:text-emerald-300 text-[10px] font-bold underline cursor-pointer"
-                      >
-                        Ver detalhes
-                      </button>
-                    </div>
-                  )}
-                </div>
+                      ) : schedule.status === 'paused' ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          <Pause className="w-3 h-3" />
+                          Pausado
+                        </span>
+                      ) : schedule.status === 'completed' ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Concluído
+                        </span>
+                      ) : schedule.status === 'error' ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                          <XCircle className="w-3 h-3" />
+                          Falhou
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-neutral-800 text-neutral-300 border border-neutral-700">
+                          <Clock className="w-3 h-3 text-emerald-400" />
+                          Agendado
+                        </span>
+                      )}
 
-                {/* Card Action Buttons */}
-                <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
-                    {/* Run Now Button */}
+                      {/* Type Badge */}
+                      <span className="px-2 py-0.5 text-xs rounded-md bg-neutral-800 text-neutral-400 border border-neutral-700/50">
+                        {schedule.scheduleType === 'once'
+                          ? 'Único'
+                          : schedule.scheduleType === 'daily'
+                          ? 'Diário'
+                          : 'Semanal'}
+                      </span>
+                    </div>
+
+                    {/* Message Preview */}
+                    <p className="text-sm text-neutral-300 font-mono bg-neutral-950/60 p-2.5 rounded-xl border border-neutral-800/80 line-clamp-2">
+                      {schedule.message}
+                    </p>
+
+                    {/* Meta details */}
+                    <div className="flex items-center gap-4 text-xs text-neutral-400 flex-wrap pt-1">
+                      <span className="flex items-center gap-1">
+                        <Users className="w-3.5 h-3.5 text-neutral-500" />
+                        {schedule.targets.length} {schedule.targets.length === 1 ? 'destinatário' : 'destinatários'}
+                      </span>
+
+                      {schedule.nextRunAt && schedule.status === 'active' && (
+                        <span className="flex items-center gap-1 text-emerald-400">
+                          <Clock className="w-3.5 h-3.5" />
+                          Próximo: {new Date(schedule.nextRunAt).toLocaleString('pt-BR')}
+                        </span>
+                      )}
+
+                      {schedule.deliveryOptions && (
+                        <span className="flex items-center gap-1 text-neutral-500">
+                          <Sliders className="w-3 h-3" />
+                          Intervalo: {Math.round(schedule.deliveryOptions.intervalBetweenMessagesMs / 1000)}s
+                          {schedule.deliveryOptions.batchPauseEnabled &&
+                            ` | Lote de ${schedule.deliveryOptions.batchSize}`}
+                        </span>
+                      )}
+
+                      {schedule.lastResult && (
+                        <button
+                          onClick={() =>
+                            setSelectedResultDetails({
+                              scheduleName: schedule.name,
+                              result: schedule.lastResult!,
+                            })
+                          }
+                          className="text-xs text-emerald-400 hover:text-emerald-300 underline font-medium"
+                        >
+                          Ver relatório do último disparo ({schedule.lastResult.sentCount} enviados)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-neutral-800">
                     <button
                       id={`btn-run-now-${schedule.id}`}
-                      onClick={() => handleRunNow(schedule.id)}
+                      onClick={() => runNow(schedule.id)}
                       disabled={isRunning || !isConnected}
-                      title="Disparar este agendamento agora mesmo"
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                      title="Disparar Agora"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
                       {isRunning ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       ) : (
-                        <Play className="w-3.5 h-3.5" />
+                        <Play className="w-3.5 h-3.5 fill-current" />
                       )}
-                      <span>Executar agora</span>
+                      Run Now
                     </button>
 
-                    {/* Pause / Resume Button */}
                     {schedule.status === 'active' ? (
                       <button
                         onClick={() => pauseSchedule(schedule.id)}
                         disabled={isRunning}
-                        title="Pausar agendamento"
-                        className="p-1.5 rounded-lg text-neutral-400 hover:text-amber-400 hover:bg-amber-500/10 transition cursor-pointer"
+                        title="Pausar Agendamento"
+                        className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition-colors"
                       >
                         <Pause className="w-4 h-4" />
                       </button>
@@ -585,35 +820,31 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
                       <button
                         onClick={() => resumeSchedule(schedule.id)}
                         disabled={isRunning}
-                        title="Retomar agendamento"
-                        className="p-1.5 rounded-lg text-neutral-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition cursor-pointer"
+                        title="Retomar Agendamento"
+                        className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs transition-colors"
                       >
-                        <Play className="w-4 h-4" />
+                        <Play className="w-4 h-4 fill-current" />
                       </button>
                     ) : null}
-                  </div>
 
-                  <div className="flex items-center gap-1">
-                    {/* Edit Button */}
                     <button
                       onClick={() => handleOpenEditModal(schedule)}
                       disabled={isRunning}
-                      title="Editar agendamento"
-                      className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition cursor-pointer"
+                      title="Editar"
+                      className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition-colors"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
 
-                    {/* Delete Button */}
                     <button
                       onClick={() => {
-                        if (window.confirm(`Excluir o agendamento "${schedule.name}"?`)) {
+                        if (confirm(`Tem certeza que deseja excluir "${schedule.name}"?`)) {
                           deleteSchedule(schedule.id);
                         }
                       }}
                       disabled={isRunning}
-                      title="Excluir agendamento"
-                      className="p-1.5 rounded-lg text-neutral-400 hover:text-red-400 hover:bg-red-500/10 transition cursor-pointer"
+                      title="Excluir"
+                      className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -625,220 +856,151 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
         </div>
       )}
 
-      {/* CREATE / EDIT MODAL */}
+      {/* Modal: Novo / Editar Agendamento (Strict UX Architecture) */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-6 my-8">
+        <div
+          className="fixed inset-0 z-50 overflow-hidden p-4 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setIsModalOpen(false);
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[calc(100dvh-2rem)] flex flex-col bg-neutral-900 border border-neutral-800 rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-neutral-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
-                  <Calendar className="w-4 h-4" />
-                </div>
-                <h3 className="text-base font-bold text-white">
+            <div className="flex items-center justify-between p-6 pb-4 border-b border-neutral-800 shrink-0 bg-neutral-900">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-emerald-400" />
                   {editingSchedule ? 'Editar Agendamento' : 'Novo Agendamento'}
                 </h3>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  Configure mensagem, destinatários e ritmo de entrega.
+                </p>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition cursor-pointer"
+                className="p-2 rounded-xl bg-neutral-800/80 hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Modal Form */}
-            <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Modal Scrollable Body */}
+            <form id="schedule-form" onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6 space-y-6">
               {formError && (
-                <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-xs text-red-400 flex items-center gap-2">
+                <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{formError}</span>
                 </div>
               )}
 
-              {/* Nome */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-neutral-300">
-                  Nome do Agendamento *
+              {/* 1. Nome do Agendamento */}
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
+                  1. Nome da Campanha / Agendamento
                 </label>
                 <input
                   type="text"
-                  placeholder="Ex: Aviso diário de reunião, Cobrança semanal, etc."
+                  required
+                  placeholder="Ex: Mensagem Boas Vindas, Lembrete Reunião..."
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500/50"
-                  required
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
                 />
               </div>
 
-              {/* Mensagem */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-neutral-300">
-                  Mensagem WhatsApp *
-                </label>
+              {/* 2. Mensagem & Personalização ({nome}) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
+                    2. Mensagem & Personalização
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormMessage((prev) => `${prev} {nome}`)}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded-lg border border-emerald-500/20 transition-colors"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    + Inserir {'{nome}'}
+                  </button>
+                </div>
+
                 <textarea
-                  rows={3}
-                  placeholder="Digite o texto que será enviado automaticamente..."
+                  required
+                  rows={4}
+                  placeholder="Digite sua mensagem. Use {nome} para incluir o nome do destinatário automaticamente..."
                   value={formMessage}
                   onChange={(e) => setFormMessage(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500/50 resize-none"
-                  required
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors font-sans"
                 />
-              </div>
 
-              {/* Tipo de Frequência */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-neutral-300">Frequência *</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setFormType('once')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer ${
-                      formType === 'once'
-                        ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400'
-                        : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
-                    }`}
-                  >
-                    Uma vez
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setFormType('daily')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer ${
-                      formType === 'daily'
-                        ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400'
-                        : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
-                    }`}
-                  >
-                    Diário
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setFormType('weekly')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer ${
-                      formType === 'weekly'
-                        ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400'
-                        : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
-                    }`}
-                  >
-                    Semanal
-                  </button>
-                </div>
-              </div>
-
-              {/* Timing Fields */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-neutral-950/60 border border-neutral-800 rounded-xl">
-                {formType === 'once' && (
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-neutral-400">Data de Envio</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="block text-[11px] text-neutral-400 mb-1">
+                      Substituto quando o nome não for identificado:
+                    </label>
                     <input
-                      type="date"
-                      value={formDate}
-                      onChange={(e) => setFormDate(e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-neutral-800 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
-                      required
+                      type="text"
+                      placeholder="amigo(a)"
+                      value={formFallbackName}
+                      onChange={(e) => setFormFallbackName(e.target.value)}
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
                     />
                   </div>
-                )}
 
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-neutral-400">Horário (HH:mm)</label>
-                  <input
-                    type="time"
-                    value={formTime}
-                    onChange={(e) => setFormTime(e.target.value)}
-                    className="w-full px-3 py-2 bg-neutral-900 border border-neutral-800 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
-                    required
-                  />
-                </div>
-
-                {formType === 'weekly' && (
-                  <div className="sm:col-span-2 space-y-1.5 pt-1">
-                    <label className="text-[11px] font-semibold text-neutral-400">
-                      Dias da Semana
-                    </label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {WEEK_DAYS.map((w) => {
-                        const isSelected = formWeeklyDays.includes(w.id);
-                        return (
-                          <button
-                            key={w.id}
-                            type="button"
-                            onClick={() => handleToggleWeeklyDay(w.id)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
-                              isSelected
-                                ? 'bg-emerald-500 text-black border-emerald-400 font-bold'
-                                : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white'
-                            }`}
-                          >
-                            {w.label}
-                          </button>
-                        );
-                      })}
-                    </div>
+                  {/* Dynamic Template Preview Box */}
+                  <div className="bg-neutral-950/80 p-3 rounded-xl border border-neutral-800/80">
+                    <span className="text-[10px] uppercase font-bold text-neutral-400 block mb-1">
+                      Preview dinâmico:
+                    </span>
+                    <p className="text-xs text-emerald-300 font-mono italic whitespace-pre-wrap line-clamp-3">
+                      {formMessage
+                        ? renderMessageTemplate(formMessage, { jid: 'preview', name: 'João Silva' }, formFallbackName)
+                        : 'Sua mensagem renderizada aparecerá aqui...'}
+                    </p>
                   </div>
-                )}
+                </div>
               </div>
 
-              {/* Destinatários Selector */}
-              <div className="space-y-3 border-t border-neutral-800 pt-4">
+              {/* 3. Destinatários Tabs */}
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-neutral-300 flex items-center gap-2">
-                    <Users className="w-4 h-4 text-emerald-400" />
-                    <span>Destinatários ({formTargets.length} selecionados)</span>
+                  <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
+                    3. Destinatários ({formTargets.length} selecionados)
                   </label>
-
-                  <div className="flex items-center gap-1 bg-neutral-950 p-1 rounded-xl border border-neutral-800 text-xs">
+                  {formTargets.length > 0 && (
                     <button
                       type="button"
-                      onClick={() => setPickerTab('pessoas')}
-                      className={`px-3 py-1 rounded-lg font-semibold transition cursor-pointer ${
-                        pickerTab === 'pessoas'
-                          ? 'bg-neutral-800 text-white'
-                          : 'text-neutral-400 hover:text-neutral-200'
-                      }`}
+                      onClick={() => setFormTargets([])}
+                      className="text-xs text-neutral-500 hover:text-rose-400 transition-colors"
                     >
-                      Pessoas ({knownContacts.length})
+                      Limpar todos
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPickerTab('grupos');
-                        if (groups.length === 0 && isConnected) {
-                          fetchGroups();
-                        }
-                      }}
-                      className={`px-3 py-1 rounded-lg font-semibold transition cursor-pointer ${
-                        pickerTab === 'grupos'
-                          ? 'bg-neutral-800 text-white'
-                          : 'text-neutral-400 hover:text-neutral-200'
-                      }`}
-                    >
-                      Grupos ({groups.length})
-                    </button>
-                  </div>
+                  )}
                 </div>
 
                 {/* Selected Targets Chips */}
                 {formTargets.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-2 bg-neutral-950/70 border border-neutral-800 rounded-xl">
-                    {formTargets.map((target) => (
+                  <div className="flex flex-wrap gap-1.5 p-3 rounded-xl bg-neutral-950 border border-neutral-800 max-h-32 overflow-y-auto">
+                    {formTargets.map((t) => (
                       <span
-                        key={target.jid}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px]"
+                        key={t.jid}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs bg-neutral-900 border border-neutral-700 text-neutral-200"
                       >
-                        {target.type === 'group' ? (
-                          <Users className="w-3 h-3" />
+                        {t.type === 'group' ? (
+                          <Users className="w-3 h-3 text-indigo-400 shrink-0" />
                         ) : (
-                          <User className="w-3 h-3" />
+                          <User className="w-3 h-3 text-emerald-400 shrink-0" />
                         )}
-                        <span className="font-medium truncate max-w-[140px]">{target.label}</span>
+                        <span className="max-w-[150px] truncate">{t.label}</span>
                         <button
                           type="button"
-                          onClick={() => handleToggleTarget(target)}
-                          className="text-emerald-400/60 hover:text-emerald-300 cursor-pointer"
+                          onClick={() => handleRemoveTarget(t.jid)}
+                          className="hover:text-rose-400"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -847,84 +1009,277 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
                   </div>
                 )}
 
-                {/* Search & List Box */}
-                <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-3 space-y-2.5">
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      placeholder={`Buscar ${pickerTab === 'pessoas' ? 'contatos' : 'grupos'}...`}
-                      value={pickerSearch}
-                      onChange={(e) => setPickerSearch(e.target.value)}
-                      className="w-full pl-8 pr-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500"
-                    />
+                {/* Picker Tabs */}
+                <div className="bg-neutral-950 p-3 rounded-2xl border border-neutral-800 space-y-3">
+                  <div className="flex rounded-xl bg-neutral-900 p-1 border border-neutral-800">
+                    <button
+                      type="button"
+                      onClick={() => setPickerTab('pessoas')}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                        pickerTab === 'pessoas'
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <User className="w-3.5 h-3.5" />
+                      Pessoas ({contacts.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPickerTab('grupos')}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                        pickerTab === 'grupos'
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      Grupos ({groups.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPickerTab('importar')}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                        pickerTab === 'importar'
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      Importar Lista
+                    </button>
                   </div>
 
-                  {/* PESSOAS TAB CONTENT */}
+                  {/* Tab 1: Pessoas */}
                   {pickerTab === 'pessoas' && (
-                    <div className="space-y-2">
-                      {/* Manual Phone Add Bar */}
-                      <div className="flex flex-col sm:flex-row items-center gap-2 p-2 bg-neutral-900/60 border border-neutral-800 rounded-lg">
+                    <div className="space-y-3">
+                      {/* Search */}
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
                         <input
                           type="text"
-                          placeholder="Número: 5593999999999"
-                          value={manualNumberInput}
-                          onChange={(e) => setManualNumberInput(e.target.value)}
-                          className="w-full sm:w-1/2 px-2.5 py-1.5 bg-neutral-950 border border-neutral-800 rounded-md text-xs text-white focus:outline-none focus:border-emerald-500"
+                          placeholder="Buscar no diretório de pessoas..."
+                          value={pickerSearch}
+                          onChange={(e) => setPickerSearch(e.target.value)}
+                          className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
                         />
-                        <input
-                          type="text"
-                          placeholder="Nome (opcional)"
-                          value={manualNameInput}
-                          onChange={(e) => setManualNameInput(e.target.value)}
-                          className="w-full sm:w-1/2 px-2.5 py-1.5 bg-neutral-950 border border-neutral-800 rounded-md text-xs text-white focus:outline-none focus:border-emerald-500"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleAddManualContact}
-                          className="w-full sm:w-auto px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-md text-xs font-bold transition shrink-0 cursor-pointer"
-                        >
-                          + Adicionar
-                        </button>
                       </div>
 
-                      {/* Known Contacts List */}
-                      <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
-                        {filteredContacts.length === 0 ? (
-                          <p className="text-[11px] text-neutral-500 text-center py-4">
-                            Nenhum contato recente encontrado. Adicione um número manualmente acima.
-                          </p>
+                      {/* Contacts List */}
+                      <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+                        {loadingContacts ? (
+                          <div className="p-4 text-center text-xs text-neutral-500 flex items-center justify-center gap-2">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                            Carregando diretório...
+                          </div>
+                        ) : filteredContacts.length === 0 ? (
+                          <div className="p-4 text-center text-xs text-neutral-500">
+                            Nenhum contato encontrado no diretório. Use o formulário abaixo para adicionar manualmente.
+                          </div>
                         ) : (
-                          filteredContacts.map((c) => {
-                            const isSelected = formTargets.some((t) => t.jid === c.jid);
+                          filteredContacts.map((contact) => {
+                            const isSelected = formTargets.some((t) => t.jid === contact.jid);
                             return (
                               <div
-                                key={c.jid}
-                                onClick={() =>
-                                  handleToggleTarget({
-                                    type: 'person',
-                                    jid: c.jid,
-                                    label: c.name,
-                                  })
-                                }
-                                className={`flex items-center justify-between p-2 rounded-lg text-xs cursor-pointer transition ${
+                                key={contact.jid}
+                                onClick={() => handleToggleContactTarget(contact)}
+                                className={`flex items-center justify-between p-2 rounded-xl text-xs cursor-pointer border transition-colors ${
                                   isSelected
-                                    ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'
-                                    : 'bg-neutral-900/60 hover:bg-neutral-900 border border-transparent text-neutral-300'
+                                    ? 'bg-emerald-500/10 border-emerald-500/30 text-white'
+                                    : 'bg-neutral-900/60 border-neutral-800/80 text-neutral-300 hover:bg-neutral-800'
                                 }`}
                               >
-                                <div className="flex items-center gap-2 min-w-0">
+                                <div className="flex items-center gap-2.5 min-w-0">
                                   <input
                                     type="checkbox"
                                     checked={isSelected}
                                     onChange={() => {}}
-                                    className="rounded accent-emerald-500 cursor-pointer"
+                                    className="rounded border-neutral-700 bg-neutral-950 text-emerald-500 focus:ring-0"
                                   />
-                                  <span className="font-semibold truncate">{c.name}</span>
+                                  <div className="truncate">
+                                    <span className="font-medium text-white block truncate">
+                                      {contact.name || `+${contact.number}`}
+                                    </span>
+                                    {contact.number && (
+                                      <span className="text-[11px] text-neutral-500 block">
+                                        +{contact.number}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
-                                <span className="text-[10px] font-mono text-neutral-500">
-                                  +{c.number}
-                                </span>
+                                {getSourceBadge(contact.source)}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Manual Number Entry */}
+                      <div className="pt-2 border-t border-neutral-800/80">
+                        <span className="text-[11px] text-neutral-400 font-medium block mb-2">
+                          Adicionar número avulso manualmente:
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <input
+                            type="text"
+                            placeholder="DDD + Número (ex: 93991234567)"
+                            value={manualNumberInput}
+                            onChange={(e) => setManualNumberInput(e.target.value)}
+                            className="bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Nome (opcional)"
+                            value={manualNameInput}
+                            onChange={(e) => setManualNameInput(e.target.value)}
+                            className="bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddManualNumber}
+                            className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-emerald-400 font-medium rounded-xl text-xs transition-colors border border-neutral-700"
+                          >
+                            + Adicionar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tab 2: Grupos & Membros */}
+                  {pickerTab === 'grupos' && (
+                    <div className="space-y-3">
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+                        <input
+                          type="text"
+                          placeholder="Buscar grupos..."
+                          value={pickerSearch}
+                          onChange={(e) => setPickerSearch(e.target.value)}
+                          className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+
+                      <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                        {loadingGroups ? (
+                          <div className="p-4 text-center text-xs text-neutral-500 flex items-center justify-center gap-2">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                            Carregando grupos...
+                          </div>
+                        ) : filteredGroups.length === 0 ? (
+                          <div className="p-4 text-center text-xs text-neutral-500">
+                            Nenhum grupo encontrado.
+                          </div>
+                        ) : (
+                          filteredGroups.map((group) => {
+                            const isGroupSelected = formTargets.some((t) => t.jid === group.id);
+                            const isExpanded = expandedGroupJids.has(group.id);
+                            const participants = groupParticipantsMap.get(group.id) || [];
+                            const isLoadingParticipants = loadingGroupParticipants.has(group.id);
+
+                            return (
+                              <div
+                                key={group.id}
+                                className="bg-neutral-900/80 border border-neutral-800 rounded-xl p-3 space-y-2"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div
+                                    onClick={() => handleToggleGroupTarget(group)}
+                                    className="flex items-center gap-2.5 cursor-pointer min-w-0 flex-1"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isGroupSelected}
+                                      onChange={() => {}}
+                                      className="rounded border-neutral-700 bg-neutral-950 text-emerald-500 focus:ring-0"
+                                    />
+                                    <div className="truncate">
+                                      <span className="font-semibold text-white text-xs block truncate">
+                                        {group.subject}
+                                      </span>
+                                      <span className="text-[10px] text-neutral-500">
+                                        {group.participantsCount} participantes
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleGroupParticipants(group.id)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[11px] transition-colors shrink-0"
+                                  >
+                                    {isLoadingParticipants ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : isExpanded ? (
+                                      <ChevronUp className="w-3 h-3" />
+                                    ) : (
+                                      <ChevronDown className="w-3 h-3" />
+                                    )}
+                                    {isExpanded ? 'Ocultar membros' : 'Selecionar membros'}
+                                  </button>
+                                </div>
+
+                                {/* Expanded Group Participants */}
+                                {isExpanded && (
+                                  <div className="pt-2 border-t border-neutral-800/80 pl-6 space-y-1.5 max-h-40 overflow-y-auto">
+                                    {isLoadingParticipants ? (
+                                      <div className="py-2 text-center text-[11px] text-neutral-500 flex items-center justify-center gap-1.5">
+                                        <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+                                        Obtendo membros do grupo...
+                                      </div>
+                                    ) : participants.length === 0 ? (
+                                      <div className="text-[11px] text-neutral-500">
+                                        Nenhum participante legível retornado.
+                                      </div>
+                                    ) : (
+                                      participants.map((p) => {
+                                        const isMemberSelected = formTargets.some((t) => t.jid === p.jid);
+
+                                        return (
+                                          <div
+                                            key={p.jid}
+                                            onClick={() => {
+                                              if (p.selectable) {
+                                                handleToggleGroupParticipantTarget(p, group.subject);
+                                              }
+                                            }}
+                                            className={`flex items-center justify-between p-1.5 rounded-lg text-[11px] ${
+                                              !p.selectable
+                                                ? 'opacity-40 cursor-not-allowed bg-neutral-950/40 text-neutral-500'
+                                                : isMemberSelected
+                                                ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 cursor-pointer'
+                                                : 'hover:bg-neutral-800 text-neutral-300 cursor-pointer'
+                                            }`}
+                                          >
+                                            <div className="flex items-center gap-2 truncate">
+                                              <input
+                                                type="checkbox"
+                                                disabled={!p.selectable}
+                                                checked={isMemberSelected}
+                                                onChange={() => {}}
+                                                className="rounded border-neutral-700 bg-neutral-950 text-emerald-500 focus:ring-0"
+                                              />
+                                              <span className="truncate">{p.name || `+${p.number}`}</span>
+                                            </div>
+
+                                            <div className="flex items-center gap-1 shrink-0">
+                                              {p.isAdmin && (
+                                                <span className="text-[9px] px-1.5 py-0.2 bg-amber-500/20 text-amber-400 rounded">
+                                                  Admin
+                                                </span>
+                                              )}
+                                              {!p.selectable && (
+                                                <span className="text-[9px] text-neutral-500">
+                                                  Telefone não resolvido
+                                                </span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             );
                           })
@@ -933,197 +1288,401 @@ export function AgendamentosView({ messages, whatsappState }: AgendamentosViewPr
                     </div>
                   )}
 
-                  {/* GRUPOS TAB CONTENT */}
-                  {pickerTab === 'grupos' && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between px-1">
-                        <span className="text-[11px] text-neutral-400">
-                          Grupos do WhatsApp Conectado
-                        </span>
+                  {/* Tab 3: Importar Lista */}
+                  {pickerTab === 'importar' && (
+                    <div className="space-y-3">
+                      <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() => fetchGroups()}
-                          disabled={loadingGroups || !isConnected}
-                          className="text-[10px] text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                          onClick={() => setImportMode('paste')}
+                          className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                            importMode === 'paste'
+                              ? 'bg-neutral-800 text-white'
+                              : 'text-neutral-500 hover:text-neutral-300'
+                          }`}
                         >
-                          <RefreshCw
-                            className={`w-3 h-3 ${loadingGroups ? 'animate-spin' : ''}`}
-                          />
-                          Atualizar grupos
+                          Colar Texto / CSV
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setImportMode('file')}
+                          className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                            importMode === 'file'
+                              ? 'bg-neutral-800 text-white'
+                              : 'text-neutral-500 hover:text-neutral-300'
+                          }`}
+                        >
+                          Upload de Arquivo
                         </button>
                       </div>
 
-                      <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
-                        {!isConnected ? (
-                          <div className="p-4 text-center space-y-1">
-                            <p className="text-xs text-amber-300 font-semibold">
-                              WhatsApp Desconectado
-                            </p>
-                            <p className="text-[11px] text-neutral-500">
-                              Conecte sua conta WhatsApp para carregar a lista de grupos.
-                            </p>
-                          </div>
-                        ) : loadingGroups ? (
-                          <div className="py-6 text-center">
-                            <Loader2 className="w-5 h-5 text-emerald-400 animate-spin mx-auto" />
-                            <span className="text-[11px] text-neutral-500 mt-1 block">
-                              Carregando grupos do Baileys...
+                      {importMode === 'paste' ? (
+                        <div className="space-y-2">
+                          <textarea
+                            rows={4}
+                            placeholder="Cole números (um por linha) ou no formato: 93991234567,Nome do Cliente"
+                            value={importRawText}
+                            onChange={(e) => {
+                              setImportRawText(e.target.value);
+                              parseImportText(e.target.value);
+                            }}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-xl p-3 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                      ) : (
+                        <div className="border-2 border-dashed border-neutral-800 rounded-xl p-6 text-center">
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            accept=".csv,.txt"
+                            onChange={handleFileUpload}
+                            className="hidden"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-medium"
+                          >
+                            <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                            Selecionar Arquivo .CSV ou .TXT
+                          </button>
+                          <p className="text-[11px] text-neutral-500 mt-2">
+                            Formato aceito: linhas com número ou número,nome
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Import Preview Summary */}
+                      {importParsedPreview && (
+                        <div className="bg-neutral-900 p-3 rounded-xl border border-neutral-800 space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-white">Resumo da Importação:</span>
+                            <span className="text-emerald-400 font-bold">
+                              {importParsedPreview.valid.length} válidos
                             </span>
                           </div>
-                        ) : filteredGroups.length === 0 ? (
-                          <p className="text-[11px] text-neutral-500 text-center py-4">
-                            Nenhum grupo encontrado na conta conectada.
-                          </p>
-                        ) : (
-                          filteredGroups.map((g) => {
-                            const isSelected = formTargets.some((t) => t.jid === g.id);
-                            return (
-                              <div
-                                key={g.id}
-                                onClick={() =>
-                                  handleToggleTarget({
-                                    type: 'group',
-                                    jid: g.id,
-                                    label: g.subject,
-                                  })
-                                }
-                                className={`flex items-center justify-between p-2 rounded-lg text-xs cursor-pointer transition ${
-                                  isSelected
-                                    ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'
-                                    : 'bg-neutral-900/60 hover:bg-neutral-900 border border-transparent text-neutral-300'
-                                }`}
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <input
-                                    type="checkbox"
-                                    checked={isSelected}
-                                    onChange={() => {}}
-                                    className="rounded accent-emerald-500 cursor-pointer"
-                                  />
-                                  <span className="font-semibold truncate">{g.subject}</span>
-                                </div>
-                                <span className="text-[10px] font-mono text-neutral-500 shrink-0">
-                                  {g.participantsCount} membros
-                                </span>
-                              </div>
-                            );
-                          })
-                        )}
+
+                          <div className="grid grid-cols-3 gap-2 text-[11px] text-neutral-400">
+                            <div>Lidos: {importParsedPreview.totalLines}</div>
+                            <div>Duplicados: {importParsedPreview.duplicatesCount}</div>
+                            <div>Inválidos: {importParsedPreview.invalidCount}</div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleApplyImportedTargets}
+                            disabled={importParsedPreview.valid.length === 0}
+                            className="w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-98 text-neutral-950 font-bold text-xs transition-all disabled:opacity-40 disabled:cursor-not-allowed mt-2"
+                          >
+                            ADICIONAR {importParsedPreview.valid.length} DESTINATÁRIOS
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Mandatory compliance checkbox for imported contacts */}
+                {hasImportedTargets && (
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-2.5">
+                    <input
+                      type="checkbox"
+                      id="compliance-checkbox"
+                      required
+                      checked={importComplianceChecked}
+                      onChange={(e) => setImportComplianceChecked(e.target.checked)}
+                      className="mt-0.5 rounded border-amber-600 bg-neutral-950 text-amber-500 focus:ring-0"
+                    />
+                    <label htmlFor="compliance-checkbox" className="text-xs text-amber-300 leading-tight">
+                      <strong className="block font-semibold">Termo de Conformidade e Consentimento:</strong>
+                      Confirmo que possuo autorização prévia e base legal para contatar os destinatários importados.
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* 4. Frequência & Horário */}
+              <div className="space-y-3">
+                <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
+                  4. Frequência & Horário
+                </label>
+
+                <div className="grid grid-cols-3 gap-2">
+                  {(['once', 'daily', 'weekly'] as ScheduleType[]).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setFormType(type)}
+                      className={`py-2 rounded-xl text-xs font-semibold transition-all border ${
+                        formType === type
+                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                          : 'bg-neutral-950 text-neutral-400 border-neutral-800 hover:bg-neutral-800'
+                      }`}
+                    >
+                      {type === 'once' ? 'Uma Vez' : type === 'daily' ? 'Diário' : 'Semanal'}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Date & Time Picker */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
+                  {formType === 'once' ? (
+                    <div>
+                      <label className="block text-xs text-neutral-400 mb-1">Data do Disparo:</label>
+                      <input
+                        type="date"
+                        required
+                        value={formDate}
+                        onChange={(e) => setFormDate(e.target.value)}
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  ) : null}
+
+                  <div>
+                    <label className="block text-xs text-neutral-400 mb-1">Horário do Disparo:</label>
+                    <input
+                      type="time"
+                      required
+                      value={formTime}
+                      onChange={(e) => setFormTime(e.target.value)}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  {formType === 'weekly' && (
+                    <div className="sm:col-span-2 space-y-1.5 pt-2 border-t border-neutral-800">
+                      <label className="block text-xs text-neutral-400">Dias da Semana:</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {WEEK_DAYS.map((d) => {
+                          const isSelected = formWeeklyDays.includes(d.id);
+                          return (
+                            <button
+                              key={d.id}
+                              type="button"
+                              onClick={() => {
+                                setFormWeeklyDays((prev) => {
+                                  if (prev.includes(d.id)) {
+                                    if (prev.length === 1) return prev; // keep at least one
+                                    return prev.filter((id) => id !== d.id);
+                                  }
+                                  return [...prev, d.id];
+                                });
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                                isSelected
+                                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                  : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:bg-neutral-800'
+                              }`}
+                            >
+                              {d.label}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Form Buttons */}
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-neutral-800">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-400 hover:text-white transition cursor-pointer"
-                >
-                  Cancelar
-                </button>
+              {/* 5. Controle de Ritmo e Pausa de Lote */}
+              <div className="space-y-3 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
+                <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-emerald-400" />
+                  5. Controle de Ritmo & Fila de Entrega
+                </label>
 
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="inline-flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black transition cursor-pointer"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Salvando...</span>
-                    </>
-                  ) : (
-                    <span>SALVAR AGENDAMENTO</span>
-                  )}
-                </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-neutral-400 mb-1">
+                      Intervalo entre mensagens (segundos):
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={formIntervalSeconds}
+                      onChange={(e) => setFormIntervalSeconds(parseInt(e.target.value, 10) || 5)}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="flex flex-col justify-end">
+                    <label className="flex items-center gap-2 cursor-pointer pb-2">
+                      <input
+                        type="checkbox"
+                        checked={formBatchPauseEnabled}
+                        onChange={(e) => setFormBatchPauseEnabled(e.target.checked)}
+                        className="rounded border-neutral-700 bg-neutral-950 text-emerald-500 focus:ring-0"
+                      />
+                      <span className="text-xs text-neutral-300 font-medium">
+                        Ativar pausa após lote de disparos
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                {formBatchPauseEnabled && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-neutral-800/80 animate-in fade-in duration-200">
+                    <div>
+                      <label className="block text-xs text-neutral-400 mb-1">
+                        A cada quantas mensagens:
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={formBatchSize}
+                        onChange={(e) => setFormBatchSize(parseInt(e.target.value, 10) || 5)}
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-neutral-400 mb-1">
+                        Pausar por quantos minutos:
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={60}
+                        value={formBatchPauseMinutes}
+                        onChange={(e) =>
+                          setFormBatchPauseMinutes(parseInt(e.target.value, 10) || 5)
+                        }
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </form>
+
+            {/* Modal Footer (Always Anchored at Bottom) */}
+            <div className="flex items-center justify-end gap-3 p-4 px-6 border-t border-neutral-800 shrink-0 bg-neutral-900/90 backdrop-blur-sm">
+              <button
+                type="button"
+                onClick={() => setIsModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-semibold transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                form="schedule-form"
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-neutral-950 text-xs font-bold transition-all shadow-lg shadow-emerald-500/10 disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Salvando...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    {editingSchedule ? 'Atualizar Agendamento' : 'Salvar Agendamento'}
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* EXECUTION DETAILS MODAL */}
+      {/* Modal: Relatório de Execução / Detalhes de Disparo */}
       {selectedResultDetails && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
+        <div
+          className="fixed inset-0 z-50 overflow-hidden p-4 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setSelectedResultDetails(null)}
+        >
+          <div
+            className="w-full max-w-xl max-h-[calc(100dvh-2rem)] flex flex-col bg-neutral-900 border border-neutral-800 rounded-3xl shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-6 pb-4 border-b border-neutral-800 shrink-0">
               <div>
-                <h3 className="text-sm font-bold text-white">Relatório de Execução</h3>
-                <p className="text-xs text-neutral-400">{selectedResultDetails.scheduleName}</p>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  Relatório do Disparo: {selectedResultDetails.scheduleName}
+                </h3>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  Executado em {new Date(selectedResultDetails.result.executedAt).toLocaleString('pt-BR')}
+                </p>
               </div>
               <button
                 onClick={() => setSelectedResultDetails(null)}
-                className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition cursor-pointer"
+                className="p-2 rounded-xl bg-neutral-800 text-neutral-400 hover:text-white"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 text-center text-xs">
-              <div className="p-2.5 bg-neutral-950 border border-neutral-800 rounded-xl">
-                <span className="text-neutral-400 block text-[10px]">Total</span>
-                <span className="text-white font-bold text-sm">
-                  {selectedResultDetails.result.totalTargets}
-                </span>
-              </div>
-              <div className="p-2.5 bg-emerald-950/30 border border-emerald-500/20 rounded-xl">
-                <span className="text-emerald-400 block text-[10px]">Enviados</span>
-                <span className="text-emerald-400 font-bold text-sm">
-                  {selectedResultDetails.result.sentCount}
-                </span>
-              </div>
-              <div className="p-2.5 bg-red-950/30 border border-red-500/20 rounded-xl">
-                <span className="text-red-400 block text-[10px]">Falhas</span>
-                <span className="text-red-400 font-bold text-sm">
-                  {selectedResultDetails.result.failedCount}
-                </span>
-              </div>
-            </div>
-
-            <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
-              {selectedResultDetails.result.details.map((detail, idx) => (
-                <div
-                  key={idx}
-                  className={`p-2.5 rounded-xl border text-xs flex items-center justify-between ${
-                    detail.status === 'sent'
-                      ? 'bg-neutral-950 border-neutral-800'
-                      : 'bg-red-950/20 border-red-500/30'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <span className="text-white font-semibold block truncate">
-                      {detail.targetLabel}
-                    </span>
-                    <span className="text-[10px] font-mono text-neutral-500 block truncate">
-                      {detail.targetJid}
-                    </span>
-                    {detail.error && (
-                      <span className="text-[10px] text-red-400 block mt-0.5">
-                        Erro: {detail.error}
-                      </span>
-                    )}
-                  </div>
-
-                  <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase shrink-0 ${
-                      detail.status === 'sent'
-                        ? 'bg-emerald-500/10 text-emerald-400'
-                        : 'bg-red-500/10 text-red-400'
-                    }`}
-                  >
-                    {detail.status === 'sent' ? 'Enviado' : 'Falhou'}
+            <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="p-3 bg-neutral-950 rounded-xl border border-neutral-800">
+                  <span className="text-[10px] text-neutral-400 uppercase font-semibold block">Total</span>
+                  <span className="text-base font-bold text-white">
+                    {selectedResultDetails.result.totalTargets}
                   </span>
                 </div>
-              ))}
+                <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+                  <span className="text-[10px] text-emerald-400 uppercase font-semibold block">Enviados</span>
+                  <span className="text-base font-bold text-emerald-400">
+                    {selectedResultDetails.result.sentCount}
+                  </span>
+                </div>
+                <div className="p-3 bg-rose-500/10 rounded-xl border border-rose-500/20">
+                  <span className="text-[10px] text-rose-400 uppercase font-semibold block">Falhas</span>
+                  <span className="text-base font-bold text-rose-400">
+                    {selectedResultDetails.result.failedCount}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-xs font-semibold text-neutral-300 block">
+                  Destinatários do lote:
+                </span>
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {selectedResultDetails.result.details.map((detail, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3 bg-neutral-950 rounded-xl border border-neutral-800/80 space-y-1"
+                    >
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-white truncate max-w-[250px]">
+                          {detail.targetLabel}
+                        </span>
+                        {detail.status === 'sent' ? (
+                          <span className="text-emerald-400 flex items-center gap-1 text-[11px]">
+                            <CheckCircle2 className="w-3 h-3" /> Enviado
+                          </span>
+                        ) : detail.status === 'skipped' ? (
+                          <span className="text-amber-400 flex items-center gap-1 text-[11px]">
+                            <AlertCircle className="w-3 h-3" /> Ignorado
+                          </span>
+                        ) : (
+                          <span className="text-rose-400 flex items-center gap-1 text-[11px]">
+                            <XCircle className="w-3 h-3" /> {detail.error || 'Falhou'}
+                          </span>
+                        )}
+                      </div>
+
+                      {detail.renderedPreview && (
+                        <p className="text-[11px] text-neutral-400 font-mono italic whitespace-pre-wrap bg-neutral-900/50 p-2 rounded-lg border border-neutral-800">
+                          {detail.renderedPreview}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
-            <div className="pt-2 border-t border-neutral-800 text-right">
+            <div className="p-4 border-t border-neutral-800 shrink-0 flex justify-end">
               <button
                 onClick={() => setSelectedResultDetails(null)}
-                className="px-4 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold"
               >
                 Fechar
               </button>

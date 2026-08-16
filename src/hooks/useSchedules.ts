@@ -5,14 +5,19 @@ import type {
   ScheduledTarget,
   ScheduleType,
   WhatsAppGroup,
+  KnownContact,
+  GroupParticipantsResponse,
   SchedulerProgressEvent,
   ScheduleLastResult,
+  DeliveryOptions,
 } from '../types';
 
 export function useSchedules() {
   const [schedules, setSchedules] = useState<ScheduledMessage[]>([]);
   const [groups, setGroups] = useState<WhatsAppGroup[]>([]);
+  const [contacts, setContacts] = useState<KnownContact[]>([]);
   const [loadingGroups, setLoadingGroups] = useState<boolean>(false);
+  const [loadingContacts, setLoadingContacts] = useState<boolean>(false);
   const [loadingSchedules, setLoadingSchedules] = useState<boolean>(true);
   const [currentProgress, setCurrentProgress] = useState<SchedulerProgressEvent | null>(null);
   const [executingScheduleId, setExecutingScheduleId] = useState<string | null>(null);
@@ -53,10 +58,42 @@ export function useSchedules() {
     }
   }, []);
 
+  // Fetch contacts directory
+  const fetchContacts = useCallback(async () => {
+    try {
+      setLoadingContacts(true);
+      const res = await fetch('/api/whatsapp/contacts');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setContacts(data);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching contacts:', err);
+    } finally {
+      setLoadingContacts(false);
+    }
+  }, []);
+
+  // Fetch group participants
+  const fetchGroupParticipants = useCallback(async (groupJid: string): Promise<GroupParticipantsResponse | null> => {
+    try {
+      const res = await fetch(`/api/whatsapp/groups/${encodeURIComponent(groupJid)}/participants`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (err) {
+      console.error('Error fetching group participants:', err);
+    }
+    return null;
+  }, []);
+
   // Socket.IO realtime integration
   useEffect(() => {
     fetchSchedules();
     fetchGroups();
+    fetchContacts();
 
     const socket: Socket = io({
       transports: ['websocket', 'polling'],
@@ -92,14 +129,14 @@ export function useSchedules() {
         setExecutingScheduleId((prev) => (prev === scheduleId ? null : prev));
         setTimeout(() => {
           setCurrentProgress((prev) => (prev?.scheduleId === scheduleId ? null : prev));
-        }, 5000);
+        }, 8000);
       }
     );
 
     return () => {
       socket.disconnect();
     };
-  }, [fetchSchedules, fetchGroups]);
+  }, [fetchSchedules, fetchGroups, fetchContacts]);
 
   // Actions
   const createSchedule = useCallback(
@@ -111,6 +148,8 @@ export function useSchedules() {
       scheduledAt: string;
       weeklyDays?: number[];
       timeOfDay?: string;
+      fallbackName?: string;
+      deliveryOptions?: DeliveryOptions;
     }): Promise<{ success: boolean; schedule?: ScheduledMessage; error?: string }> => {
       try {
         const res = await fetch('/api/schedules', {
@@ -239,12 +278,16 @@ export function useSchedules() {
   return {
     schedules,
     groups,
+    contacts,
     loadingSchedules,
     loadingGroups,
+    loadingContacts,
     currentProgress,
     executingScheduleId,
     fetchSchedules,
     fetchGroups,
+    fetchContacts,
+    fetchGroupParticipants,
     createSchedule,
     updateSchedule,
     deleteSchedule,
