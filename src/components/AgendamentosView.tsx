@@ -1224,67 +1224,74 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                   </div>
                 </div>
 
-                {/* Card Action Buttons (Standardized UX: Primary Executar agora + Secondary actions) */}
+                {/* Card Action Buttons (Compact Style Restored) */}
                 <div className="flex items-center justify-between gap-2 pt-3 border-t border-neutral-800">
-                  <Button
+                  <button
                     id={`btn-run-now-${schedule.id}`}
-                    variant="primary-soft"
-                    size="sm"
+                    type="button"
                     onClick={() => runNow(schedule.id)}
                     disabled={isRunning || !isConnected}
-                    isLoading={isRunning}
-                    title="Disparar agora"
+                    title="Executar agora"
+                    aria-label="Executar agora"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 text-emerald-400 border border-emerald-500/30 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer select-none"
                   >
-                    {!isRunning && <Play className="w-3.5 h-3.5 fill-current" />}
-                    Executar agora
-                  </Button>
+                    {isRunning ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                    )}
+                    <span>Executar agora</span>
+                  </button>
 
                   <div className="flex items-center gap-1.5">
                     {schedule.status === 'active' ? (
-                      <Button
-                        variant="secondary"
-                        size="icon-sm"
+                      <button
+                        type="button"
                         onClick={() => pauseSchedule(schedule.id)}
                         disabled={isRunning}
                         title="Pausar agendamento"
+                        aria-label="Pausar agendamento"
+                        className="w-8 h-8 rounded-lg bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-neutral-300 hover:text-white flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer select-none"
                       >
                         <Pause className="w-3.5 h-3.5" />
-                      </Button>
+                      </button>
                     ) : schedule.status === 'paused' ? (
-                      <Button
-                        variant="secondary"
-                        size="icon-sm"
+                      <button
+                        type="button"
                         onClick={() => resumeSchedule(schedule.id)}
                         disabled={isRunning}
                         title="Retomar agendamento"
-                        className="text-emerald-400"
+                        aria-label="Retomar agendamento"
+                        className="w-8 h-8 rounded-lg bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-emerald-400 hover:text-emerald-300 flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer select-none"
                       >
                         <Play className="w-3.5 h-3.5 fill-current" />
-                      </Button>
+                      </button>
                     ) : null}
 
-                    <Button
-                      variant="secondary"
-                      size="icon-sm"
+                    <button
+                      type="button"
                       onClick={() => handleOpenEditModal(schedule)}
                       disabled={isRunning}
                       title="Editar agendamento"
+                      aria-label="Editar agendamento"
+                      className="w-8 h-8 rounded-lg bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-neutral-300 hover:text-white flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer select-none"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
-                    </Button>
+                    </button>
 
-                    <Button
-                      variant="danger"
-                      size="icon-sm"
+                    <button
+                      type="button"
                       onClick={() => {
                         setScheduleToDelete(schedule);
                         setDeleteModalError(null);
                       }}
                       disabled={isRunning}
                       title="Excluir agendamento"
+                      aria-label="Excluir agendamento"
+                      className="w-8 h-8 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-400 hover:text-rose-300 border border-rose-500/20 flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer select-none"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                    </button>
                   </div>
                 </div>
               </div>
