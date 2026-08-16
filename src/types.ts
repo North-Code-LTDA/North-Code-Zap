@@ -15,3 +15,25 @@ export interface WhatsAppAccountInfo {
   error?: string | null;
   connectedAt?: string | null;
 }
+
+export interface ReceivedMessage {
+  id: string;
+  remoteJid: string;
+  number: string | null;
+  pushName: string | null;
+  text: string;
+  type: string;
+  timestamp: number;
+}
+
+export type NavigationTab =
+  | 'dashboard'
+  | 'whatsapp'
+  | 'conversas'
+  | 'contatos'
+  | 'automacoes'
+  | 'fluxos'
+  | 'campanhas'
+  | 'agendamentos'
+  | 'ia'
+  | 'configuracoes';

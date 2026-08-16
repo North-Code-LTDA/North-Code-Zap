@@ -5,24 +5,53 @@
 
 import { useState } from 'react';
 import {
+  LayoutDashboard,
   Smartphone,
   MessageSquare,
+  Users,
   Zap,
   Layers,
+  Send,
+  Calendar,
+  Bot,
   Settings,
-  HelpCircle,
-  Activity,
   Menu,
-  X
+  X,
+  Radio,
+  type LucideIcon,
 } from 'lucide-react';
 import { useWhatsApp } from './hooks/useWhatsApp';
 import { NorthCodeLogo } from './components/NorthCodeLogo';
 import { ConnectionCard } from './components/ConnectionCard';
 import { DiagnosticLogs } from './components/DiagnosticLogs';
+import { DashboardView } from './components/DashboardView';
+import { ConversasView } from './components/ConversasView';
+import { PlaceholderView } from './components/PlaceholderView';
+import type { NavigationTab } from './types';
 
 export default function App() {
-  const { state, socketConnected, loading, logs, connect, disconnect } = useWhatsApp();
+  const { state, messages, messagesCount, socketConnected, loading, logs, connect, disconnect } = useWhatsApp();
+  const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const navItems: Array<{
+    id: NavigationTab;
+    label: string;
+    icon: LucideIcon;
+    badge?: number | string;
+    isReal?: boolean;
+  }> = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, isReal: true },
+    { id: 'whatsapp', label: 'WhatsApp', icon: Smartphone, isReal: true },
+    { id: 'conversas', label: 'Conversas', icon: MessageSquare, badge: messagesCount > 0 ? messagesCount : undefined, isReal: true },
+    { id: 'contatos', label: 'Contatos', icon: Users },
+    { id: 'automacoes', label: 'Automações', icon: Zap },
+    { id: 'fluxos', label: 'Fluxos', icon: Layers },
+    { id: 'campanhas', label: 'Campanhas', icon: Send },
+    { id: 'agendamentos', label: 'Agendamentos', icon: Calendar },
+    { id: 'ia', label: 'IA', icon: Bot },
+    { id: 'configuracoes', label: 'Configurações', icon: Settings },
+  ];
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col antialiased selection:bg-emerald-500 selection:text-black">
@@ -30,16 +59,21 @@ export default function App() {
       <header className="sticky top-0 z-40 w-full border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <NorthCodeLogo />
+            <button
+              onClick={() => setCurrentTab('dashboard')}
+              className="focus:outline-none cursor-pointer text-left"
+            >
+              <NorthCodeLogo />
+            </button>
             <div className="hidden md:flex items-center gap-1 text-xs font-medium text-neutral-400">
               <span className="px-2.5 py-1 rounded-md bg-neutral-900 border border-neutral-800 text-neutral-300">
-                v1.0.0-MVP
+                v1.2.0 • Etapa 2
               </span>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Live Connection Pulse Indicator */}
+            {/* Live Socket & Connection Pulse Indicator */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs">
               <span
                 className={`w-2 h-2 rounded-full ${
@@ -82,86 +116,100 @@ export default function App() {
             mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
         >
-          <div className="space-y-6">
+          <div className="space-y-4">
             <div className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 font-mono">
-              Navegação
+              Plataforma
             </div>
 
-            <nav className="space-y-1.5" id="navigation-links">
-              {/* Active Tab */}
-              <div className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-medium text-sm">
-                <Smartphone className="w-4 h-4" />
-                <span>WhatsApp Conexão</span>
-              </div>
+            <nav className="space-y-1" id="navigation-links">
+              {navItems.map((item) => {
+                const IconComponent = item.icon;
+                const isActive = currentTab === item.id;
 
-              {/* Placeholder tabs for future steps */}
-              <div
-                title="Disponível na Etapa 4 & 5"
-                className="flex items-center justify-between px-3.5 py-2.5 rounded-xl text-neutral-500 hover:text-neutral-400 text-sm cursor-not-allowed opacity-60"
-              >
-                <div className="flex items-center gap-3">
-                  <MessageSquare className="w-4 h-4" />
-                  <span>Mensagens</span>
-                </div>
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-500">
-                  Etapa 4
-                </span>
-              </div>
+                return (
+                  <button
+                    key={item.id}
+                    id={`nav-item-${item.id}`}
+                    onClick={() => {
+                      setCurrentTab(item.id);
+                      setMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition cursor-pointer text-left ${
+                      isActive
+                        ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-semibold shadow-sm'
+                        : 'text-neutral-400 hover:text-white hover:bg-neutral-900/80 border border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <IconComponent className={`w-4 h-4 ${isActive ? 'text-emerald-400' : 'text-neutral-400'}`} />
+                      <span>{item.label}</span>
+                    </div>
 
-              <div
-                title="Disponível na Etapa 6"
-                className="flex items-center justify-between px-3.5 py-2.5 rounded-xl text-neutral-500 hover:text-neutral-400 text-sm cursor-not-allowed opacity-60"
-              >
-                <div className="flex items-center gap-3">
-                  <Zap className="w-4 h-4" />
-                  <span>Automações</span>
-                </div>
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-500">
-                  Etapa 6
-                </span>
-              </div>
-
-              <div
-                title="Disponível nas próximas fases"
-                className="flex items-center justify-between px-3.5 py-2.5 rounded-xl text-neutral-500 hover:text-neutral-400 text-sm cursor-not-allowed opacity-60"
-              >
-                <div className="flex items-center gap-3">
-                  <Layers className="w-4 h-4" />
-                  <span>Fluxos</span>
-                </div>
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-500">
-                  Fase 2
-                </span>
-              </div>
+                    {item.badge !== undefined && (
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </nav>
           </div>
 
           <div className="pt-6 border-t border-neutral-800/80 space-y-3">
             <div className="p-3 rounded-xl bg-neutral-900/60 border border-neutral-800 text-xs text-neutral-400 space-y-1">
               <div className="flex items-center gap-1.5 text-neutral-300 font-semibold">
-                <Activity className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Modo Baileys Puro</span>
+                <Radio className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Socket.IO Realtime</span>
               </div>
               <p className="text-[11px] text-neutral-400 leading-tight">
-                Conexão direta por WebSocket, sem Chromium headless.
+                {socketConnected ? 'Sincronização ativa' : 'Conectando ao servidor...'}
               </p>
             </div>
           </div>
         </aside>
 
         {/* Main Content Area */}
-        <main className="flex-1 flex flex-col space-y-6 max-w-4xl min-w-0">
-          {/* Main WhatsApp Connection Card */}
-          <ConnectionCard
-            state={state}
-            loading={loading}
-            socketConnected={socketConnected}
-            onConnect={connect}
-            onDisconnect={disconnect}
-          />
+        <main className="flex-1 flex flex-col min-w-0">
+          {/* TAB 1: DASHBOARD */}
+          {currentTab === 'dashboard' && (
+            <DashboardView
+              state={state}
+              messages={messages}
+              messagesCount={messagesCount}
+              onNavigate={setCurrentTab}
+            />
+          )}
 
-          {/* Diagnostic Real-time Logs Feed */}
-          <DiagnosticLogs logs={logs} />
+          {/* TAB 2: WHATSAPP (CONNECTION & DIAGNOSTICS) */}
+          {currentTab === 'whatsapp' && (
+            <div className="space-y-6">
+              <ConnectionCard
+                state={state}
+                loading={loading}
+                socketConnected={socketConnected}
+                onConnect={connect}
+                onDisconnect={disconnect}
+              />
+              <DiagnosticLogs logs={logs} />
+            </div>
+          )}
+
+          {/* TAB 3: CONVERSAS (RECEBIMENTO REAL EM TEMPO REAL) */}
+          {currentTab === 'conversas' && (
+            <ConversasView
+              messages={messages}
+              state={state}
+              socketConnected={socketConnected}
+            />
+          )}
+
+          {/* OTHER PLACEHOLDER TABS */}
+          {currentTab !== 'dashboard' &&
+            currentTab !== 'whatsapp' &&
+            currentTab !== 'conversas' && (
+              <PlaceholderView tab={currentTab} />
+            )}
         </main>
       </div>
     </div>

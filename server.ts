@@ -32,6 +32,10 @@ async function startServer() {
     res.json(whatsAppService.getState());
   });
 
+  app.get('/api/whatsapp/messages', (req, res) => {
+    res.json(whatsAppService.getMessages());
+  });
+
   app.post('/api/whatsapp/connect', async (req, res) => {
     try {
       await whatsAppService.connect();

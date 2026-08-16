@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-import type { WhatsAppAccountInfo } from '../types';
+import type { WhatsAppAccountInfo, ReceivedMessage } from '../types';
 
 const INITIAL_STATE: WhatsAppAccountInfo = {
   status: 'disconnected',
@@ -14,6 +14,7 @@ const INITIAL_STATE: WhatsAppAccountInfo = {
 
 export function useWhatsApp() {
   const [state, setState] = useState<WhatsAppAccountInfo>(INITIAL_STATE);
+  const [messages, setMessages] = useState<ReceivedMessage[]>([]);
   const [socketConnected, setSocketConnected] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [logs, setLogs] = useState<Array<{ id: string; time: string; text: string; type: 'info' | 'success' | 'warn' | 'error' }>>([]);
@@ -39,6 +40,7 @@ export function useWhatsApp() {
       setSocketConnected(true);
       addLog('Socket.IO conectado ao servidor', 'info');
       socketInstance.emit('whatsapp:get_state');
+      socketInstance.emit('whatsapp:get_messages');
     });
 
     socketInstance.on('disconnect', () => {
@@ -71,6 +73,24 @@ export function useWhatsApp() {
       }
     });
 
+    // Real-time incoming message
+    socketInstance.on('whatsapp:message', (newMsg: ReceivedMessage) => {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === newMsg.id)) {
+          return prev;
+        }
+        return [newMsg, ...prev].slice(0, 100);
+      });
+      const senderDisplay = newMsg.pushName ? `${newMsg.pushName} (${newMsg.number || 'desconhecido'})` : (newMsg.number || 'desconhecido');
+      addLog(`Nova mensagem de ${senderDisplay}`, 'success');
+    });
+
+    socketInstance.on('whatsapp:messages_list', (list: ReceivedMessage[]) => {
+      if (Array.isArray(list)) {
+        setMessages(list);
+      }
+    });
+
     // Initial state fetch via REST
     fetch('/api/whatsapp/status')
       .then((res) => res.json())
@@ -81,6 +101,18 @@ export function useWhatsApp() {
       })
       .catch((err) => {
         console.error('Failed to fetch initial status:', err);
+      });
+
+    // Initial messages fetch via REST
+    fetch('/api/whatsapp/messages')
+      .then((res) => res.json())
+      .then((data: ReceivedMessage[]) => {
+        if (Array.isArray(data)) {
+          setMessages(data);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to fetch initial messages:', err);
       });
 
     return () => {
@@ -126,6 +158,8 @@ export function useWhatsApp() {
 
   return {
     state,
+    messages,
+    messagesCount: messages.length,
     socketConnected,
     loading,
     logs,
