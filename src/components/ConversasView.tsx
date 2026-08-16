@@ -54,6 +54,11 @@ export function ConversasView({
 
     // Messages are stored with newest first
     for (const msg of messages) {
+      // DEFENSE: completely ignore any group or broadcast message
+      if (msg.remoteJid.endsWith('@g.us') || msg.remoteJid.includes('@broadcast')) {
+        continue;
+      }
+
       if (!map.has(msg.remoteJid)) {
         map.set(msg.remoteJid, {
           remoteJid: msg.remoteJid,

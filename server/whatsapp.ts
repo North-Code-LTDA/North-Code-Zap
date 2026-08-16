@@ -144,11 +144,15 @@ export class WhatsAppService {
         direction: 'outgoing',
       };
 
-      // Add to in-memory list (limit to 100)
-      this.messages = [outgoingMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
+      const isGroupTarget = targetJid.endsWith('@g.us');
+
+      // Add to in-memory list ONLY if private chat (limit to 100)
+      if (!isGroupTarget) {
+        this.messages = [outgoingMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
+      }
 
       // Save to contacts directory if private chat
-      if (!targetJid.endsWith('@g.us') && !targetJid.includes('@broadcast')) {
+      if (!isGroupTarget && !targetJid.includes('@broadcast')) {
         contactsService.upsertContact({
           jid: targetJid,
           number: rawNumber || null,
@@ -161,8 +165,8 @@ export class WhatsAppService {
       // Log after sending: [WhatsApp] message sent to=5593... id=...
       console.log(`[WhatsApp] message sent to=${rawNumber || targetJid} id=${messageId}`);
 
-      // Emit to frontend via Socket.IO
-      if (this.io) {
+      // Emit to frontend via Socket.IO ONLY if private chat
+      if (this.io && !isGroupTarget) {
         this.io.emit('whatsapp:message', outgoingMessage);
       }
 
@@ -244,11 +248,15 @@ export class WhatsAppService {
         direction: 'outgoing',
       };
 
-      // Add to in-memory list (limit to 100)
-      this.messages = [outgoingMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
+      const isGroupTarget = targetJid.endsWith('@g.us');
+
+      // Add to in-memory list ONLY if private chat (limit to 100)
+      if (!isGroupTarget) {
+        this.messages = [outgoingMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
+      }
 
       // Save to contacts directory if private chat
-      if (!targetJid.endsWith('@g.us') && !targetJid.includes('@broadcast')) {
+      if (!isGroupTarget && !targetJid.includes('@broadcast')) {
         contactsService.upsertContact({
           jid: targetJid,
           number: rawNumber || null,
@@ -260,8 +268,8 @@ export class WhatsAppService {
 
       console.log(`[WhatsApp] image sent to=${rawNumber || targetJid} id=${messageId}`);
 
-      // Emit to frontend via Socket.IO
-      if (this.io) {
+      // Emit to frontend via Socket.IO ONLY if private chat
+      if (this.io && !isGroupTarget) {
         this.io.emit('whatsapp:message', outgoingMessage);
       }
 
@@ -605,11 +613,15 @@ export class WhatsAppService {
           direction: 'incoming',
         };
 
-        // Add to memory list (limit to 100)
-        this.messages = [receivedMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
+        const isGroupMessage = remoteJid.endsWith('@g.us');
+
+        // Add to memory list ONLY if private chat
+        if (!isGroupMessage && !remoteJid.includes('@broadcast')) {
+          this.messages = [receivedMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
+        }
 
         // Record contact in Contacts Directory
-        if (!remoteJid.endsWith('@g.us') && !remoteJid.includes('@broadcast')) {
+        if (!isGroupMessage && !remoteJid.includes('@broadcast')) {
           contactsService.upsertContact({
             jid: remoteJid,
             number: rawNumber || null,
@@ -631,10 +643,10 @@ export class WhatsAppService {
         }
 
         // Required diagnostic log: [WhatsApp] message received from=5593... type=text
-        console.log(`[WhatsApp] message received from=${rawNumber || remoteJid} type=${messageType}`);
+        console.log(`[WhatsApp] message received from=${rawNumber || remoteJid} type=${messageType}${isGroupMessage ? ' (group)' : ''}`);
 
-        // Emit to frontend via Socket.IO
-        if (this.io) {
+        // Emit to frontend via Socket.IO ONLY if private chat
+        if (this.io && !isGroupMessage && !remoteJid.includes('@broadcast')) {
           this.io.emit('whatsapp:message', receivedMessage);
         }
       }
