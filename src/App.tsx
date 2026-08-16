@@ -26,6 +26,7 @@ import { ConnectionCard } from './components/ConnectionCard';
 import { DiagnosticLogs } from './components/DiagnosticLogs';
 import { DashboardView } from './components/DashboardView';
 import { ConversasView } from './components/ConversasView';
+import { AgendamentosView } from './components/AgendamentosView';
 import { PlaceholderView } from './components/PlaceholderView';
 import type { NavigationTab } from './types';
 
@@ -44,11 +45,11 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, isReal: true },
     { id: 'whatsapp', label: 'WhatsApp', icon: Smartphone, isReal: true },
     { id: 'conversas', label: 'Conversas', icon: MessageSquare, badge: messagesCount > 0 ? messagesCount : undefined, isReal: true },
+    { id: 'agendamentos', label: 'Agendamentos', icon: Calendar, isReal: true },
     { id: 'contatos', label: 'Contatos', icon: Users },
     { id: 'automacoes', label: 'Automações', icon: Zap },
     { id: 'fluxos', label: 'Fluxos', icon: Layers },
     { id: 'campanhas', label: 'Campanhas', icon: Send },
-    { id: 'agendamentos', label: 'Agendamentos', icon: Calendar },
     { id: 'ia', label: 'IA', icon: Bot },
     { id: 'configuracoes', label: 'Configurações', icon: Settings },
   ];
@@ -67,7 +68,7 @@ export default function App() {
             </button>
             <div className="hidden md:flex items-center gap-1 text-xs font-medium text-neutral-400">
               <span className="px-2.5 py-1 rounded-md bg-neutral-900 border border-neutral-800 text-neutral-300">
-                v1.3.0 • Etapa 3
+                v1.4.0 • Etapa 4
               </span>
             </div>
           </div>
@@ -205,10 +206,19 @@ export default function App() {
             />
           )}
 
+          {/* TAB 4: AGENDAMENTOS (ENVIO AUTOMÁTICO PARA PESSOAS E GRUPOS) */}
+          {currentTab === 'agendamentos' && (
+            <AgendamentosView
+              messages={messages}
+              whatsappState={state}
+            />
+          )}
+
           {/* OTHER PLACEHOLDER TABS */}
           {currentTab !== 'dashboard' &&
             currentTab !== 'whatsapp' &&
-            currentTab !== 'conversas' && (
+            currentTab !== 'conversas' &&
+            currentTab !== 'agendamentos' && (
               <PlaceholderView tab={currentTab} />
             )}
         </main>

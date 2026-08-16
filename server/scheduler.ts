@@ -1,0 +1,652 @@
+import fs from 'fs';
+import path from 'path';
+import type { Server as SocketIOServer } from 'socket.io';
+import { whatsAppService, type WhatsAppService } from './whatsapp';
+import type {
+  ScheduledMessage,
+  ScheduledTarget,
+  ScheduleType,
+  ScheduleStatus,
+  ScheduleLastResult,
+  ScheduleExecutionDetail,
+  SchedulerProgressEvent,
+} from '../src/types';
+
+const SCHEDULER_DIR =
+  process.env.SCHEDULER_DATA_DIR || path.join(process.cwd(), 'data', 'scheduler');
+const SCHEDULES_FILE = path.join(SCHEDULER_DIR, 'schedules.json');
+const SCHEDULES_TMP_FILE = path.join(SCHEDULER_DIR, 'schedules.json.tmp');
+
+const SCHEDULE_GRACE_MINUTES = parseInt(process.env.SCHEDULE_GRACE_MINUTES || '30', 10);
+const MIN_SEND_INTERVAL_MS = parseInt(process.env.MIN_SEND_INTERVAL_MS || '1500', 10);
+const MAX_SEND_RETRIES = parseInt(process.env.MAX_SEND_RETRIES || '2', 10);
+const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Belem';
+const LOOP_INTERVAL_MS = 10000; // 10 seconds check loop
+
+export class SchedulerService {
+  private schedules: ScheduledMessage[] = [];
+  private processingSchedules: Set<string> = new Set();
+  private io: SocketIOServer | null = null;
+  private loopTimer: NodeJS.Timeout | null = null;
+  private whatsapp: WhatsAppService = whatsAppService;
+
+  constructor() {
+    this.ensureDirectory();
+    this.loadSchedules();
+  }
+
+  private ensureDirectory() {
+    try {
+      if (!fs.existsSync(SCHEDULER_DIR)) {
+        fs.mkdirSync(SCHEDULER_DIR, { recursive: true });
+      }
+    } catch (err: any) {
+      console.error('[Scheduler] error creating scheduler directory:', err?.message || err);
+    }
+  }
+
+  private loadSchedules() {
+    try {
+      if (fs.existsSync(SCHEDULES_FILE)) {
+        const raw = fs.readFileSync(SCHEDULES_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          this.schedules = parsed;
+          console.log(`[Scheduler] loaded schedules=${this.schedules.length}`);
+          this.validateAndRepairOnStartup();
+          return;
+        }
+      }
+    } catch (err: any) {
+      console.error('[Scheduler] error reading schedules file, initializing empty:', err?.message);
+    }
+    this.schedules = [];
+  }
+
+  private saveSchedules() {
+    this.ensureDirectory();
+    try {
+      const data = JSON.stringify(this.schedules, null, 2);
+      fs.writeFileSync(SCHEDULES_TMP_FILE, data, 'utf-8');
+      fs.renameSync(SCHEDULES_TMP_FILE, SCHEDULES_FILE);
+    } catch (err: any) {
+      console.error('[Scheduler] error saving schedules file:', err?.message || err);
+    }
+  }
+
+  public setSocketIO(io: SocketIOServer) {
+    this.io = io;
+    this.setupSocketEvents();
+  }
+
+  private setupSocketEvents() {
+    if (!this.io) return;
+
+    this.io.on('connection', (clientSocket) => {
+      // Send current schedules on new client connection
+      clientSocket.emit('scheduler:schedules_list', this.schedules);
+
+      clientSocket.on('scheduler:get_schedules', () => {
+        clientSocket.emit('scheduler:schedules_list', this.schedules);
+      });
+    });
+  }
+
+  private emitUpdated() {
+    if (this.io) {
+      this.io.emit('scheduler:updated', this.schedules);
+      this.io.emit('scheduler:schedules_list', this.schedules);
+    }
+  }
+
+  public startLoop() {
+    if (this.loopTimer) {
+      clearInterval(this.loopTimer);
+    }
+    console.log(`[Scheduler] started (timezone=${APP_TIMEZONE}, loop=${LOOP_INTERVAL_MS}ms)`);
+    this.loopTimer = setInterval(() => {
+      this.processDueSchedules().catch((err) => {
+        console.error('[Scheduler] error in processDueSchedules loop:', err);
+      });
+    }, LOOP_INTERVAL_MS);
+  }
+
+  public stopLoop() {
+    if (this.loopTimer) {
+      clearInterval(this.loopTimer);
+      this.loopTimer = null;
+      console.log('[Scheduler] stopped');
+    }
+  }
+
+  public getAll(): ScheduledMessage[] {
+    return this.schedules;
+  }
+
+  public getById(id: string): ScheduledMessage | undefined {
+    return this.schedules.find((s) => s.id === id);
+  }
+
+  public create(data: {
+    name: string;
+    message: string;
+    targets: ScheduledTarget[];
+    scheduleType: ScheduleType;
+    scheduledAt: string;
+    weeklyDays?: number[];
+    timeOfDay?: string;
+  }): ScheduledMessage {
+    const id = `sched_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const nowIso = new Date().toISOString();
+
+    const tempSchedule: ScheduledMessage = {
+      id,
+      name: data.name.trim(),
+      message: data.message.trim(),
+      targets: data.targets || [],
+      scheduleType: data.scheduleType,
+      scheduledAt: data.scheduledAt,
+      nextRunAt: null,
+      weeklyDays: data.weeklyDays,
+      timeOfDay: data.timeOfDay,
+      status: 'active',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      lastRunAt: null,
+      lastResult: null,
+    };
+
+    tempSchedule.nextRunAt = this.calculateNextRunAt(tempSchedule);
+
+    this.schedules.push(tempSchedule);
+    this.saveSchedules();
+    this.emitUpdated();
+
+    console.log(
+      `[Scheduler] created schedule=${tempSchedule.id} name="${tempSchedule.name}" nextRunAt=${tempSchedule.nextRunAt}`
+    );
+
+    return tempSchedule;
+  }
+
+  public update(
+    id: string,
+    data: Partial<{
+      name: string;
+      message: string;
+      targets: ScheduledTarget[];
+      scheduleType: ScheduleType;
+      scheduledAt: string;
+      weeklyDays: number[];
+      timeOfDay: string;
+      status: ScheduleStatus;
+    }>
+  ): ScheduledMessage | null {
+    const index = this.schedules.findIndex((s) => s.id === id);
+    if (index === -1) return null;
+
+    const current = this.schedules[index];
+    const updated: ScheduledMessage = {
+      ...current,
+      ...data,
+      name: data.name !== undefined ? data.name.trim() : current.name,
+      message: data.message !== undefined ? data.message.trim() : current.message,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (
+      data.scheduledAt !== undefined ||
+      data.scheduleType !== undefined ||
+      data.weeklyDays !== undefined ||
+      data.timeOfDay !== undefined ||
+      data.status === 'active'
+    ) {
+      if (updated.status === 'active') {
+        updated.nextRunAt = this.calculateNextRunAt(updated);
+      }
+    }
+
+    this.schedules[index] = updated;
+    this.saveSchedules();
+    this.emitUpdated();
+
+    console.log(`[Scheduler] updated schedule=${updated.id} name="${updated.name}"`);
+    return updated;
+  }
+
+  public delete(id: string): boolean {
+    const initialLen = this.schedules.length;
+    this.schedules = this.schedules.filter((s) => s.id !== id);
+    if (this.schedules.length !== initialLen) {
+      this.saveSchedules();
+      this.emitUpdated();
+      console.log(`[Scheduler] deleted schedule=${id}`);
+      return true;
+    }
+    return false;
+  }
+
+  public pause(id: string): ScheduledMessage | null {
+    const schedule = this.schedules.find((s) => s.id === id);
+    if (!schedule) return null;
+
+    schedule.status = 'paused';
+    schedule.updatedAt = new Date().toISOString();
+    this.saveSchedules();
+    this.emitUpdated();
+
+    console.log(`[Scheduler] paused schedule=${id}`);
+    return schedule;
+  }
+
+  public resume(id: string): ScheduledMessage | null {
+    const schedule = this.schedules.find((s) => s.id === id);
+    if (!schedule) return null;
+
+    schedule.status = 'active';
+    schedule.nextRunAt = this.calculateNextRunAt(schedule);
+    schedule.updatedAt = new Date().toISOString();
+    this.saveSchedules();
+    this.emitUpdated();
+
+    console.log(`[Scheduler] resumed schedule=${id} nextRunAt=${schedule.nextRunAt}`);
+    return schedule;
+  }
+
+  /**
+   * Calculate next run timestamp in ISO format for once, daily, and weekly schedules
+   */
+  public calculateNextRunAt(schedule: ScheduledMessage, fromDate = new Date()): string | null {
+    const nowTime = fromDate.getTime();
+
+    if (schedule.scheduleType === 'once') {
+      if (!schedule.scheduledAt) return null;
+      const targetTime = new Date(schedule.scheduledAt).getTime();
+      if (isNaN(targetTime)) return null;
+      return new Date(targetTime).toISOString();
+    }
+
+    if (schedule.scheduleType === 'daily') {
+      const timeOfDay = schedule.timeOfDay || '08:00';
+      const [hours, minutes] = timeOfDay.split(':').map((v) => parseInt(v, 10) || 0);
+
+      const candidate = new Date(fromDate);
+      candidate.setHours(hours, minutes, 0, 0);
+
+      // If today's time has already passed, schedule for tomorrow
+      if (candidate.getTime() <= nowTime) {
+        candidate.setDate(candidate.getDate() + 1);
+      }
+      return candidate.toISOString();
+    }
+
+    if (schedule.scheduleType === 'weekly') {
+      const timeOfDay = schedule.timeOfDay || '08:00';
+      const [hours, minutes] = timeOfDay.split(':').map((v) => parseInt(v, 10) || 0);
+      const days =
+        Array.isArray(schedule.weeklyDays) && schedule.weeklyDays.length > 0
+          ? schedule.weeklyDays
+          : [1]; // Default to Monday if not specified
+
+      // Check next 7 days for the earliest matching day/time
+      for (let offset = 0; offset <= 7; offset++) {
+        const candidate = new Date(fromDate);
+        candidate.setDate(candidate.getDate() + offset);
+        candidate.setHours(hours, minutes, 0, 0);
+
+        const dayOfWeek = candidate.getDay(); // 0 = Sunday, 1 = Monday...
+        if (days.includes(dayOfWeek) && candidate.getTime() > nowTime) {
+          return candidate.toISOString();
+        }
+      }
+
+      // Fallback: 7 days from now
+      const fallback = new Date(fromDate);
+      fallback.setDate(fallback.getDate() + 7);
+      fallback.setHours(hours, minutes, 0, 0);
+      return fallback.toISOString();
+    }
+
+    return null;
+  }
+
+  /**
+   * Startup verification: handles server restart, grace period, and missed schedules
+   */
+  private validateAndRepairOnStartup() {
+    const now = Date.now();
+    const graceMs = SCHEDULE_GRACE_MINUTES * 60 * 1000;
+    let modified = false;
+
+    for (const schedule of this.schedules) {
+      if (schedule.status === 'running') {
+        // Reset previously interrupted running status back to active
+        schedule.status = 'active';
+        modified = true;
+      }
+
+      if (schedule.status === 'active' && schedule.nextRunAt) {
+        const dueTime = new Date(schedule.nextRunAt).getTime();
+        const delay = now - dueTime;
+
+        if (delay > 0) {
+          // It was due in the past
+          if (delay > graceMs) {
+            console.log(
+              `[Scheduler] schedule=${schedule.id} overdue by ${Math.round(
+                delay / 60000
+              )} mins (exceeds grace of ${SCHEDULE_GRACE_MINUTES} mins)`
+            );
+            if (schedule.scheduleType === 'once') {
+              schedule.status = 'error';
+              schedule.lastResult = {
+                totalTargets: schedule.targets.length,
+                sentCount: 0,
+                failedCount: schedule.targets.length,
+                skippedCount: schedule.targets.length,
+                executedAt: new Date().toISOString(),
+                details: schedule.targets.map((t) => ({
+                  targetJid: t.jid,
+                  targetLabel: t.label,
+                  status: 'skipped',
+                  error: 'Horário expirado durante reinicialização do servidor',
+                })),
+              };
+            } else {
+              // Advance recurring schedule to next occurrence
+              schedule.nextRunAt = this.calculateNextRunAt(schedule, new Date(now));
+            }
+            modified = true;
+          }
+        }
+      }
+    }
+
+    if (modified) {
+      this.saveSchedules();
+    }
+  }
+
+  /**
+   * Single loop tick: identifies schedules that are active and due
+   */
+  private async processDueSchedules() {
+    const now = Date.now();
+    const graceMs = SCHEDULE_GRACE_MINUTES * 60 * 1000;
+
+    for (const schedule of this.schedules) {
+      if (schedule.status !== 'active' || !schedule.nextRunAt) {
+        continue;
+      }
+
+      const dueTime = new Date(schedule.nextRunAt).getTime();
+      if (isNaN(dueTime)) continue;
+
+      if (dueTime <= now) {
+        // Check if overdue beyond grace period
+        const delay = now - dueTime;
+        if (delay > graceMs) {
+          console.log(
+            `[Scheduler] skipping overdue schedule=${schedule.id} delay=${Math.round(
+              delay / 60000
+            )}m > grace=${SCHEDULE_GRACE_MINUTES}m`
+          );
+          if (schedule.scheduleType === 'once') {
+            schedule.status = 'error';
+            schedule.lastResult = {
+              totalTargets: schedule.targets.length,
+              sentCount: 0,
+              failedCount: schedule.targets.length,
+              skippedCount: schedule.targets.length,
+              executedAt: new Date().toISOString(),
+              details: schedule.targets.map((t) => ({
+                targetJid: t.jid,
+                targetLabel: t.label,
+                status: 'skipped',
+                error: 'Expirado fora da tolerância',
+              })),
+            };
+          } else {
+            schedule.nextRunAt = this.calculateNextRunAt(schedule, new Date(now));
+          }
+          this.saveSchedules();
+          this.emitUpdated();
+          continue;
+        }
+
+        // Execute due schedule
+        await this.executeSchedule(schedule, false);
+      }
+    }
+  }
+
+  /**
+   * Triggers immediate execution of a schedule (Run Now)
+   */
+  public async runNow(
+    id: string
+  ): Promise<{ success: boolean; result?: ScheduleLastResult; error?: string }> {
+    const schedule = this.schedules.find((s) => s.id === id);
+    if (!schedule) {
+      return { success: false, error: 'Agendamento não encontrado.' };
+    }
+
+    if (this.processingSchedules.has(schedule.id)) {
+      return {
+        success: false,
+        error: 'Este agendamento já está em execução no momento.',
+      };
+    }
+
+    const state = this.whatsapp.getState();
+    if (state.status !== 'connected') {
+      return {
+        success: false,
+        error: 'WhatsApp não está conectado. Conecte antes de disparar o agendamento.',
+      };
+    }
+
+    if (!schedule.targets || schedule.targets.length === 0) {
+      return {
+        success: false,
+        error: 'Nenhum destinatário configurado neste agendamento.',
+      };
+    }
+
+    const result = await this.executeSchedule(schedule, true);
+    return { success: true, result };
+  }
+
+  /**
+   * Core sequential queue execution engine with throttle, retries, and result tracking
+   */
+  private async executeSchedule(
+    schedule: ScheduledMessage,
+    isRunNow = false
+  ): Promise<ScheduleLastResult> {
+    if (this.processingSchedules.has(schedule.id)) {
+      console.log(`[Scheduler] schedule=${schedule.id} is already running, skipping`);
+      return (
+        schedule.lastResult || {
+          totalTargets: schedule.targets.length,
+          sentCount: 0,
+          failedCount: 0,
+          skippedCount: schedule.targets.length,
+          executedAt: new Date().toISOString(),
+          details: [],
+        }
+      );
+    }
+
+    this.processingSchedules.add(schedule.id);
+    schedule.status = 'running';
+    this.saveSchedules();
+    this.emitUpdated();
+
+    if (this.io) {
+      this.io.emit('scheduler:started', {
+        scheduleId: schedule.id,
+        name: schedule.name,
+        targetsCount: schedule.targets.length,
+        isRunNow,
+      });
+    }
+
+    console.log(
+      `[Scheduler] executing schedule=${schedule.id} targets=${schedule.targets.length}`
+    );
+
+    const details: ScheduleExecutionDetail[] = [];
+    let sentCount = 0;
+    let failedCount = 0;
+    let skippedCount = 0;
+
+    for (let i = 0; i < schedule.targets.length; i++) {
+      const target = schedule.targets[i];
+      console.log(
+        `[Scheduler] sending target=${target.label || target.jid} (${i + 1}/${
+          schedule.targets.length
+        })`
+      );
+
+      // Emit progress
+      const progressEvent: SchedulerProgressEvent = {
+        scheduleId: schedule.id,
+        scheduleName: schedule.name,
+        currentIndex: i + 1,
+        totalTargets: schedule.targets.length,
+        targetLabel: target.label,
+        targetJid: target.jid,
+        status: 'sending',
+        sentCount,
+        failedCount,
+      };
+      if (this.io) {
+        this.io.emit('scheduler:progress', progressEvent);
+      }
+
+      // Check WhatsApp connection
+      const state = this.whatsapp.getState();
+      if (state.status !== 'connected') {
+        console.log(
+          `[Scheduler] WhatsApp disconnected during schedule=${schedule.id} target=${target.label}`
+        );
+        failedCount++;
+        details.push({
+          targetJid: target.jid,
+          targetLabel: target.label,
+          status: 'failed',
+          error: 'WhatsApp desconectado',
+        });
+        continue;
+      }
+
+      // Attempt send with retry and small backoff
+      let attemptSuccess = false;
+      let lastError = '';
+      let messageId: string | undefined;
+
+      for (let attempt = 1; attempt <= MAX_SEND_RETRIES; attempt++) {
+        try {
+          const sendRes = await this.whatsapp.sendTextMessage(target.jid, schedule.message);
+          if (sendRes.success) {
+            attemptSuccess = true;
+            messageId = sendRes.message?.id;
+            break;
+          } else {
+            lastError = sendRes.error || 'Falha no envio';
+          }
+        } catch (err: any) {
+          lastError = err?.message || 'Erro inesperado';
+        }
+
+        if (attempt < MAX_SEND_RETRIES) {
+          // Exponential / linear backoff (1000ms * attempt)
+          await new Promise((res) => setTimeout(res, 1000 * attempt));
+        }
+      }
+
+      if (attemptSuccess) {
+        sentCount++;
+        console.log(
+          `[Scheduler] sent target=${target.label || target.jid} id=${messageId || 'unknown'}`
+        );
+        details.push({
+          targetJid: target.jid,
+          targetLabel: target.label,
+          status: 'sent',
+          messageId,
+          sentAt: new Date().toISOString(),
+        });
+      } else {
+        failedCount++;
+        console.log(
+          `[Scheduler] failed target=${target.label || target.jid} error=${lastError}`
+        );
+        details.push({
+          targetJid: target.jid,
+          targetLabel: target.label,
+          status: 'failed',
+          error: lastError,
+        });
+      }
+
+      // Update progress with completion of current target
+      if (this.io) {
+        this.io.emit('scheduler:progress', {
+          ...progressEvent,
+          status: attemptSuccess ? 'sent' : 'failed',
+          sentCount,
+          failedCount,
+        });
+      }
+
+      // Operational throttle delay between consecutive targets
+      if (i < schedule.targets.length - 1) {
+        await new Promise((res) => setTimeout(res, MIN_SEND_INTERVAL_MS));
+      }
+    }
+
+    const executionResult: ScheduleLastResult = {
+      totalTargets: schedule.targets.length,
+      sentCount,
+      failedCount,
+      skippedCount,
+      executedAt: new Date().toISOString(),
+      details,
+    };
+
+    console.log(
+      `[Scheduler] completed schedule=${schedule.id} sent=${sentCount} failed=${failedCount}`
+    );
+
+    // Update schedule state
+    schedule.lastRunAt = new Date().toISOString();
+    schedule.lastResult = executionResult;
+
+    if (schedule.scheduleType === 'once') {
+      schedule.status = failedCount > 0 && sentCount === 0 ? 'error' : 'completed';
+      schedule.nextRunAt = null;
+    } else {
+      // Recurring schedule: calculate next run time
+      schedule.status = 'active';
+      schedule.nextRunAt = this.calculateNextRunAt(schedule);
+    }
+
+    this.processingSchedules.delete(schedule.id);
+    this.saveSchedules();
+    this.emitUpdated();
+
+    if (this.io) {
+      this.io.emit('scheduler:completed', {
+        scheduleId: schedule.id,
+        name: schedule.name,
+        result: executionResult,
+      });
+    }
+
+    return executionResult;
+  }
+}
+
+export const schedulerService = new SchedulerService();

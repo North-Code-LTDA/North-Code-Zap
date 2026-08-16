@@ -28,6 +28,14 @@ export interface WhatsAppAccountInfo {
   connectedAt?: string | null;
 }
 
+export interface WhatsAppGroup {
+  id: string;
+  subject: string;
+  participantsCount: number;
+  creation?: number;
+  owner?: string;
+}
+
 export interface ReceivedMessage {
   id: string;
   remoteJid: string;
@@ -42,7 +50,7 @@ export interface ReceivedMessage {
 const AUTH_DIR = process.env.AUTH_DIR || path.join(process.cwd(), 'data', 'auth');
 const MAX_MESSAGES_IN_MEMORY = 100;
 
-class WhatsAppService {
+export class WhatsAppService {
   private sock: WASocket | null = null;
   private io: SocketIOServer | null = null;
   private isStarting: boolean = false;
@@ -60,6 +68,8 @@ class WhatsAppService {
   };
   private connectedAt: string | null = null;
   private messages: ReceivedMessage[] = [];
+  private groupCache: Map<string, { data: any; expiresAt: number }> = new Map();
+  private groupsListCache: { data: WhatsAppGroup[]; expiresAt: number } | null = null;
 
   constructor() {
     this.ensureAuthDir();
@@ -180,6 +190,50 @@ class WhatsAppService {
     }
   }
 
+  public async getGroups(): Promise<WhatsAppGroup[]> {
+    if (!this.sock || this.currentStatus !== 'connected') {
+      return [];
+    }
+
+    const now = Date.now();
+    if (this.groupsListCache && this.groupsListCache.expiresAt > now) {
+      return this.groupsListCache.data;
+    }
+
+    try {
+      const groupsMap = await this.sock.groupFetchAllParticipating();
+      const groupsList: WhatsAppGroup[] = Object.values(groupsMap).map((g: any) => ({
+        id: g.id,
+        subject: g.subject || 'Grupo sem nome',
+        participantsCount: Array.isArray(g.participants) ? g.participants.length : (g.size || 0),
+        creation: g.creation,
+        owner: g.owner,
+      }));
+
+      // Sort alphabetically by group name
+      groupsList.sort((a, b) => a.subject.localeCompare(b.subject));
+
+      // Cache list for 3 minutes
+      this.groupsListCache = {
+        data: groupsList,
+        expiresAt: now + 180000,
+      };
+
+      // Populate groupCache
+      for (const g of Object.values(groupsMap)) {
+        this.groupCache.set((g as any).id, {
+          data: g,
+          expiresAt: now + 300000, // 5 min TTL
+        });
+      }
+
+      return groupsList;
+    } catch (err: any) {
+      console.error('[WhatsApp] error fetching groups:', err?.message || err);
+      return this.groupsListCache?.data || [];
+    }
+  }
+
   private updateStatus(
     status: WhatsAppStatus,
     extra: Partial<WhatsAppAccountInfo> = {}
@@ -258,6 +312,21 @@ class WhatsAppService {
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 25000,
+      cachedGroupMetadata: async (jid: string) => {
+        const cached = this.groupCache.get(jid);
+        if (cached && cached.expiresAt > Date.now()) {
+          return cached.data;
+        }
+        try {
+          const meta = await this.sock?.groupMetadata(jid);
+          if (meta) {
+            this.groupCache.set(jid, { data: meta, expiresAt: Date.now() + 300000 });
+          }
+          return meta;
+        } catch {
+          return undefined;
+        }
+      },
     });
 
     // Handle creds update
