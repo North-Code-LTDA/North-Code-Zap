@@ -74,6 +74,7 @@ export interface DeliveryOptions {
   batchPauseEnabled: boolean;
   batchSize: number; // e.g. 3
   batchPauseMs: number; // e.g. 300000 ms (5 min)
+  retryAttempts?: number;
 }
 
 export interface ScheduleExecutionDetail {
@@ -95,6 +96,21 @@ export interface ScheduleLastResult {
   details: ScheduleExecutionDetail[];
 }
 
+export interface WeeklyTimeSlot {
+  day: number; // 0=Dom, 1=Seg, 2=Ter, 3=Qua, 4=Qui, 5=Sex, 6=Sáb
+  times: string[]; // ["08:00", "14:00"]
+}
+
+export interface ScheduledMedia {
+  type: 'image';
+  source: 'upload' | 'url';
+  localPath?: string;
+  url?: string;
+  fileName?: string;
+  mimeType?: string;
+  size?: number;
+}
+
 export interface ScheduledMessage {
   id: string;
   name: string;
@@ -103,8 +119,11 @@ export interface ScheduledMessage {
   scheduleType: ScheduleType;
   scheduledAt: string; // ISO string e.g. "2026-08-17T08:00"
   nextRunAt: string | null; // ISO string or null
-  weeklyDays?: number[]; // [0,1,2,3,4,5,6]
-  timeOfDay?: string; // "08:00"
+  dailyTimes?: string[]; // ["08:00", "12:00", "18:00"]
+  weeklyTimeSlots?: WeeklyTimeSlot[];
+  media?: ScheduledMedia | null;
+  weeklyDays?: number[]; // Legacy compatibility
+  timeOfDay?: string; // Legacy compatibility
   fallbackName?: string; // "amigo(a)"
   deliveryOptions?: DeliveryOptions;
   status: ScheduleStatus;

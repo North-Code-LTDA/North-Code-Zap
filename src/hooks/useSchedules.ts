@@ -10,6 +10,8 @@ import type {
   SchedulerProgressEvent,
   ScheduleLastResult,
   DeliveryOptions,
+  ScheduledMedia,
+  WeeklyTimeSlot,
 } from '../types';
 
 export function useSchedules() {
@@ -89,6 +91,29 @@ export function useSchedules() {
     return null;
   }, []);
 
+  // Upload Media
+  const uploadMedia = useCallback(
+    async (file: File): Promise<{ success: boolean; media?: ScheduledMedia; error?: string }> => {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const res = await fetch('/api/media/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        const result = await res.json();
+        if (!res.ok || !result.success) {
+          return { success: false, error: result.error || 'Falha no upload da imagem.' };
+        }
+        return { success: true, media: result.media };
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Erro ao enviar imagem.' };
+      }
+    },
+    []
+  );
+
   // Socket.IO realtime integration
   useEffect(() => {
     fetchSchedules();
@@ -142,10 +167,13 @@ export function useSchedules() {
   const createSchedule = useCallback(
     async (data: {
       name: string;
-      message: string;
+      message?: string;
       targets: ScheduledTarget[];
       scheduleType: ScheduleType;
       scheduledAt: string;
+      dailyTimes?: string[];
+      weeklyTimeSlots?: WeeklyTimeSlot[];
+      media?: ScheduledMedia | null;
       weeklyDays?: number[];
       timeOfDay?: string;
       fallbackName?: string;
@@ -288,6 +316,7 @@ export function useSchedules() {
     fetchGroups,
     fetchContacts,
     fetchGroupParticipants,
+    uploadMedia,
     createSchedule,
     updateSchedule,
     deleteSchedule,

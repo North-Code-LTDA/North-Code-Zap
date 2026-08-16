@@ -68,7 +68,7 @@ export default function App() {
             </button>
             <div className="hidden md:flex items-center gap-1 text-xs font-medium text-neutral-400">
               <span className="px-2.5 py-1 rounded-md bg-neutral-900 border border-neutral-800 text-neutral-300">
-                v1.5.0 • Etapa 5
+                v1.6.0 • Etapa 6
               </span>
             </div>
           </div>

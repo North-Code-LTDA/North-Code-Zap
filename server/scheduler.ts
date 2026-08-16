@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Server as SocketIOServer } from 'socket.io';
 import { whatsAppService, type WhatsAppService } from './whatsapp';
+import { mediaService } from './media';
 import { renderMessageTemplate } from '../src/utils/template';
 import type {
   ScheduledMessage,
@@ -12,6 +13,8 @@ import type {
   ScheduleExecutionDetail,
   SchedulerProgressEvent,
   DeliveryOptions,
+  ScheduledMedia,
+  WeeklyTimeSlot,
 } from '../src/types';
 
 const SCHEDULER_DIR =
@@ -24,6 +27,49 @@ const MIN_SEND_INTERVAL_MS = parseInt(process.env.MIN_SEND_INTERVAL_MS || '1500'
 const MAX_SEND_RETRIES = parseInt(process.env.MAX_SEND_RETRIES || '2', 10);
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Belem';
 const LOOP_INTERVAL_MS = 10000; // 10 seconds check loop
+
+/**
+ * Utility to sort and deduplicate HH:mm times
+ */
+function normalizeTimeList(times: string[] | undefined): string[] {
+  if (!Array.isArray(times) || times.length === 0) return ['08:00'];
+  const valid = times
+    .map((t) => (t || '').trim())
+    .filter((t) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t));
+  const unique = Array.from(new Set(valid));
+  unique.sort((a, b) => a.localeCompare(b));
+  return unique.length > 0 ? unique : ['08:00'];
+}
+
+/**
+ * Utility to normalize weekly time slots
+ */
+function normalizeWeeklySlots(
+  slots?: WeeklyTimeSlot[],
+  legacyDays?: number[],
+  legacyTime?: string
+): WeeklyTimeSlot[] {
+  if (Array.isArray(slots) && slots.length > 0) {
+    return slots
+      .filter((s) => typeof s.day === 'number' && s.day >= 0 && s.day <= 6)
+      .map((s) => ({
+        day: s.day,
+        times: normalizeTimeList(s.times),
+      }))
+      .sort((a, b) => a.day - b.day);
+  }
+
+  // Legacy fallback
+  if (Array.isArray(legacyDays) && legacyDays.length > 0) {
+    const defaultTime = legacyTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(legacyTime) ? legacyTime : '08:00';
+    return legacyDays.map((day) => ({
+      day,
+      times: [defaultTime],
+    }));
+  }
+
+  return [{ day: 1, times: ['08:00'] }];
+}
 
 export class SchedulerService {
   private schedules: ScheduledMessage[] = [];
@@ -131,10 +177,13 @@ export class SchedulerService {
 
   public create(data: {
     name: string;
-    message: string;
+    message?: string;
     targets: ScheduledTarget[];
     scheduleType: ScheduleType;
     scheduledAt: string;
+    dailyTimes?: string[];
+    weeklyTimeSlots?: WeeklyTimeSlot[];
+    media?: ScheduledMedia | null;
     weeklyDays?: number[];
     timeOfDay?: string;
     fallbackName?: string;
@@ -143,14 +192,27 @@ export class SchedulerService {
     const id = `sched_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const nowIso = new Date().toISOString();
 
+    const normalizedDailyTimes =
+      data.scheduleType === 'daily'
+        ? normalizeTimeList(data.dailyTimes || (data.timeOfDay ? [data.timeOfDay] : ['08:00']))
+        : undefined;
+
+    const normalizedWeeklySlots =
+      data.scheduleType === 'weekly'
+        ? normalizeWeeklySlots(data.weeklyTimeSlots, data.weeklyDays, data.timeOfDay)
+        : undefined;
+
     const tempSchedule: ScheduledMessage = {
       id,
       name: data.name.trim(),
-      message: data.message.trim(),
+      message: (data.message || '').trim(),
       targets: data.targets || [],
       scheduleType: data.scheduleType,
       scheduledAt: data.scheduledAt,
       nextRunAt: null,
+      dailyTimes: normalizedDailyTimes,
+      weeklyTimeSlots: normalizedWeeklySlots,
+      media: data.media || null,
       weeklyDays: data.weeklyDays,
       timeOfDay: data.timeOfDay,
       fallbackName: data.fallbackName ? data.fallbackName.trim() : 'amigo(a)',
@@ -188,6 +250,9 @@ export class SchedulerService {
       targets: ScheduledTarget[];
       scheduleType: ScheduleType;
       scheduledAt: string;
+      dailyTimes: string[];
+      weeklyTimeSlots: WeeklyTimeSlot[];
+      media: ScheduledMedia | null;
       weeklyDays: number[];
       timeOfDay: string;
       fallbackName: string;
@@ -199,11 +264,36 @@ export class SchedulerService {
     if (index === -1) return null;
 
     const current = this.schedules[index];
+    const previousMedia = current.media;
+
+    const effectiveScheduleType = data.scheduleType || current.scheduleType;
+
+    const updatedDailyTimes =
+      effectiveScheduleType === 'daily'
+        ? normalizeTimeList(
+            data.dailyTimes !== undefined
+              ? data.dailyTimes
+              : current.dailyTimes || (current.timeOfDay ? [current.timeOfDay] : ['08:00'])
+          )
+        : undefined;
+
+    const updatedWeeklySlots =
+      effectiveScheduleType === 'weekly'
+        ? normalizeWeeklySlots(
+            data.weeklyTimeSlots !== undefined ? data.weeklyTimeSlots : current.weeklyTimeSlots,
+            data.weeklyDays !== undefined ? data.weeklyDays : current.weeklyDays,
+            data.timeOfDay !== undefined ? data.timeOfDay : current.timeOfDay
+          )
+        : undefined;
+
     const updated: ScheduledMessage = {
       ...current,
       ...data,
       name: data.name !== undefined ? data.name.trim() : current.name,
       message: data.message !== undefined ? data.message.trim() : current.message,
+      dailyTimes: updatedDailyTimes,
+      weeklyTimeSlots: updatedWeeklySlots,
+      media: data.media !== undefined ? data.media : current.media,
       fallbackName:
         data.fallbackName !== undefined ? data.fallbackName.trim() : current.fallbackName || 'amigo(a)',
       deliveryOptions:
@@ -214,6 +304,8 @@ export class SchedulerService {
     if (
       data.scheduledAt !== undefined ||
       data.scheduleType !== undefined ||
+      data.dailyTimes !== undefined ||
+      data.weeklyTimeSlots !== undefined ||
       data.weeklyDays !== undefined ||
       data.timeOfDay !== undefined ||
       data.status === 'active'
@@ -227,20 +319,36 @@ export class SchedulerService {
     this.saveSchedules();
     this.emitUpdated();
 
+    // If media was replaced or removed, clean up previous file if unreferenced
+    if (
+      previousMedia?.source === 'upload' &&
+      previousMedia.localPath &&
+      previousMedia.localPath !== updated.media?.localPath
+    ) {
+      mediaService.deleteMediaIfUnreferenced(previousMedia.localPath, this.schedules);
+    }
+
     console.log(`[Scheduler] updated schedule=${updated.id} name="${updated.name}"`);
     return updated;
   }
 
   public delete(id: string): boolean {
-    const initialLen = this.schedules.length;
+    const targetSchedule = this.schedules.find((s) => s.id === id);
+    if (!targetSchedule) return false;
+
+    const mediaToClean = targetSchedule.media;
+
     this.schedules = this.schedules.filter((s) => s.id !== id);
-    if (this.schedules.length !== initialLen) {
-      this.saveSchedules();
-      this.emitUpdated();
-      console.log(`[Scheduler] deleted schedule=${id}`);
-      return true;
+    this.saveSchedules();
+    this.emitUpdated();
+    console.log(`[Scheduler] deleted schedule=${id}`);
+
+    // Cleanup associated uploaded media if no longer referenced
+    if (mediaToClean?.source === 'upload' && mediaToClean.localPath) {
+      mediaService.deleteMediaIfUnreferenced(mediaToClean.localPath, this.schedules);
     }
-    return false;
+
+    return true;
   }
 
   public pause(id: string): ScheduledMessage | null {
@@ -284,43 +392,61 @@ export class SchedulerService {
     }
 
     if (schedule.scheduleType === 'daily') {
-      const timeOfDay = schedule.timeOfDay || '08:00';
-      const [hours, minutes] = timeOfDay.split(':').map((v) => parseInt(v, 10) || 0);
+      const times = normalizeTimeList(
+        schedule.dailyTimes || (schedule.timeOfDay ? [schedule.timeOfDay] : ['08:00'])
+      );
 
-      const candidate = new Date(fromDate);
-      candidate.setHours(hours, minutes, 0, 0);
-
-      // If today's time has already passed, schedule for tomorrow
-      if (candidate.getTime() <= nowTime) {
-        candidate.setDate(candidate.getDate() + 1);
-      }
-      return candidate.toISOString();
-    }
-
-    if (schedule.scheduleType === 'weekly') {
-      const timeOfDay = schedule.timeOfDay || '08:00';
-      const [hours, minutes] = timeOfDay.split(':').map((v) => parseInt(v, 10) || 0);
-      const days =
-        Array.isArray(schedule.weeklyDays) && schedule.weeklyDays.length > 0
-          ? schedule.weeklyDays
-          : [1]; // Default to Monday if not specified
-
-      // Check next 7 days for the earliest matching day/time
-      for (let offset = 0; offset <= 7; offset++) {
+      // Check today's configured time slots in ascending order
+      for (const timeStr of times) {
+        const [hours, minutes] = timeStr.split(':').map((v) => parseInt(v, 10) || 0);
         const candidate = new Date(fromDate);
-        candidate.setDate(candidate.getDate() + offset);
         candidate.setHours(hours, minutes, 0, 0);
 
-        const dayOfWeek = candidate.getDay(); // 0 = Sunday, 1 = Monday...
-        if (days.includes(dayOfWeek) && candidate.getTime() > nowTime) {
+        if (candidate.getTime() > nowTime) {
           return candidate.toISOString();
         }
       }
 
-      // Fallback: 7 days from now
+      // If all times for today have passed, pick the first slot for tomorrow
+      const [firstH, firstM] = times[0].split(':').map((v) => parseInt(v, 10) || 0);
+      const tomorrowCandidate = new Date(fromDate);
+      tomorrowCandidate.setDate(tomorrowCandidate.getDate() + 1);
+      tomorrowCandidate.setHours(firstH, firstM, 0, 0);
+      return tomorrowCandidate.toISOString();
+    }
+
+    if (schedule.scheduleType === 'weekly') {
+      const slots = normalizeWeeklySlots(
+        schedule.weeklyTimeSlots,
+        schedule.weeklyDays,
+        schedule.timeOfDay
+      );
+
+      // Check next 8 days (covering full upcoming week)
+      for (let offset = 0; offset <= 8; offset++) {
+        const candidateDate = new Date(fromDate);
+        candidateDate.setDate(candidateDate.getDate() + offset);
+        const dayOfWeek = candidateDate.getDay(); // 0 = Sunday, 1 = Monday...
+
+        const slotForDay = slots.find((s) => s.day === dayOfWeek);
+        if (slotForDay && slotForDay.times.length > 0) {
+          const sortedTimes = normalizeTimeList(slotForDay.times);
+          for (const timeStr of sortedTimes) {
+            const [hours, minutes] = timeStr.split(':').map((v) => parseInt(v, 10) || 0);
+            const candidate = new Date(candidateDate);
+            candidate.setHours(hours, minutes, 0, 0);
+
+            if (candidate.getTime() > nowTime) {
+              return candidate.toISOString();
+            }
+          }
+        }
+      }
+
+      // Fallback
       const fallback = new Date(fromDate);
       fallback.setDate(fallback.getDate() + 7);
-      fallback.setHours(hours, minutes, 0, 0);
+      fallback.setHours(8, 0, 0, 0);
       return fallback.toISOString();
     }
 
@@ -510,7 +636,9 @@ export class SchedulerService {
     }
 
     console.log(
-      `[Scheduler] executing schedule=${schedule.id} targets=${schedule.targets.length}`
+      `[Scheduler] executing schedule=${schedule.id} targets=${schedule.targets.length} hasMedia=${Boolean(
+        schedule.media
+      )}`
     );
 
     const details: ScheduleExecutionDetail[] = [];
@@ -547,7 +675,7 @@ export class SchedulerService {
 
       // Personalize message with template renderer
       const renderedMessage = renderMessageTemplate(
-        schedule.message,
+        schedule.message || '',
         target,
         schedule.fallbackName || 'amigo(a)'
       );
@@ -593,13 +721,28 @@ export class SchedulerService {
 
       for (let attempt = 1; attempt <= MAX_SEND_RETRIES; attempt++) {
         try {
-          const sendRes = await this.whatsapp.sendTextMessage(target.jid, renderedMessage);
-          if (sendRes.success) {
-            attemptSuccess = true;
-            messageId = sendRes.message?.id;
-            break;
+          if (schedule.media && schedule.media.type === 'image') {
+            const sendRes = await this.whatsapp.sendImageMessage(
+              target.jid,
+              schedule.media,
+              renderedMessage
+            );
+            if (sendRes.success) {
+              attemptSuccess = true;
+              messageId = sendRes.message?.id;
+              break;
+            } else {
+              lastError = sendRes.error || 'Falha no envio da imagem';
+            }
           } else {
-            lastError = sendRes.error || 'Falha no envio';
+            const sendRes = await this.whatsapp.sendTextMessage(target.jid, renderedMessage);
+            if (sendRes.success) {
+              attemptSuccess = true;
+              messageId = sendRes.message?.id;
+              break;
+            } else {
+              lastError = sendRes.error || 'Falha no envio da mensagem';
+            }
           }
         } catch (err: any) {
           lastError = err?.message || 'Erro inesperado';
@@ -723,7 +866,7 @@ export class SchedulerService {
       schedule.status = failedCount > 0 && sentCount === 0 ? 'error' : 'completed';
       schedule.nextRunAt = null;
     } else {
-      // Recurring schedule: calculate next run time
+      // Recurring schedule: calculate next run time from current time (preserving recurrence after run now)
       schedule.status = 'active';
       schedule.nextRunAt = this.calculateNextRunAt(schedule);
     }
@@ -745,3 +888,4 @@ export class SchedulerService {
 }
 
 export const schedulerService = new SchedulerService();
+

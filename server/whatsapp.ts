@@ -17,6 +17,7 @@ import type {
   WhatsAppAccountInfo,
   WhatsAppGroup,
   ReceivedMessage,
+  ScheduledMedia,
 } from '../src/types';
 
 const AUTH_DIR = process.env.AUTH_DIR || path.join(process.cwd(), 'data', 'auth');
@@ -169,6 +170,105 @@ export class WhatsAppService {
     } catch (err: any) {
       const errorMsg = err?.message || 'Erro ao enviar mensagem pelo Baileys';
       console.log(`[WhatsApp] send error to=${rawNumber || targetJid} reason=${errorMsg}`);
+      return { success: false, error: errorMsg };
+    }
+  }
+
+  public async sendImageMessage(
+    remoteJid: string,
+    media: ScheduledMedia,
+    caption?: string
+  ): Promise<{ success: boolean; message?: ReceivedMessage; error?: string }> {
+    if (!this.sock || this.currentStatus !== 'connected') {
+      return { success: false, error: 'WhatsApp não está conectado.' };
+    }
+
+    if (!remoteJid || typeof remoteJid !== 'string' || !remoteJid.trim()) {
+      return { success: false, error: 'Destinatário inválido.' };
+    }
+
+    if (!media || media.type !== 'image') {
+      return { success: false, error: 'Mídia de imagem inválida.' };
+    }
+
+    const targetJid = remoteJid.trim();
+    const rawNumber = targetJid.split('@')[0].split(':')[0];
+    const trimmedCaption = caption ? caption.trim() : undefined;
+
+    console.log(`[WhatsApp] sending image to=${rawNumber || targetJid}`);
+
+    try {
+      let imagePayload: any;
+
+      if (media.source === 'upload') {
+        if (!media.localPath || !fs.existsSync(media.localPath)) {
+          return { success: false, error: `Arquivo de imagem não encontrado no servidor: ${media.localPath}` };
+        }
+        imagePayload = fs.readFileSync(media.localPath);
+      } else if (media.source === 'url') {
+        if (!media.url || !/^https?:\/\//i.test(media.url)) {
+          return { success: false, error: `URL de imagem inválida: ${media.url}` };
+        }
+        imagePayload = { url: media.url };
+      } else {
+        return { success: false, error: 'Fonte de mídia desconhecida.' };
+      }
+
+      // Look up previous pushName from conversation if available
+      const existingMsg = this.messages.find((m) => m.remoteJid === targetJid);
+      const targetPushName = existingMsg?.pushName || null;
+
+      const messageContent: any = {
+        image: imagePayload,
+      };
+
+      if (trimmedCaption) {
+        messageContent.caption = trimmedCaption;
+      }
+
+      // Real Baileys send using connected socket
+      const sentResult = await this.sock.sendMessage(targetJid, messageContent);
+
+      const messageId =
+        sentResult?.key?.id || `${Date.now()}_out_img_${Math.random().toString(36).substring(2, 7)}`;
+      const timestamp = Date.now();
+
+      const outgoingMessage: ReceivedMessage = {
+        id: messageId,
+        remoteJid: targetJid,
+        number: rawNumber || null,
+        pushName: targetPushName,
+        text: trimmedCaption || '[Imagem]',
+        type: 'image',
+        timestamp,
+        direction: 'outgoing',
+      };
+
+      // Add to in-memory list (limit to 100)
+      this.messages = [outgoingMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
+
+      // Save to contacts directory if private chat
+      if (!targetJid.endsWith('@g.us') && !targetJid.includes('@broadcast')) {
+        contactsService.upsertContact({
+          jid: targetJid,
+          number: rawNumber || null,
+          name: targetPushName,
+          source: 'message',
+          lastSeenAt: new Date().toISOString(),
+        });
+      }
+
+      console.log(`[WhatsApp] image sent to=${rawNumber || targetJid} id=${messageId}`);
+
+      // Emit to frontend via Socket.IO
+      if (this.io) {
+        this.io.emit('whatsapp:message', outgoingMessage);
+      }
+
+      return { success: true, message: outgoingMessage };
+    } catch (err: any) {
+      const errorMsg = err?.message || 'Erro ao enviar imagem pelo Baileys';
+      console.log(`[WhatsApp] send image error to=${rawNumber || targetJid} reason=${errorMsg}`);
       return { success: false, error: errorMsg };
     }
   }

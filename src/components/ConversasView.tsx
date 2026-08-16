@@ -207,7 +207,7 @@ export function ConversasView({
           </div>
 
           {/* Conversations Feed */}
-          <div className="flex-1 overflow-y-auto space-y-2 max-h-[640px] pr-1">
+          <div className="flex-1 overflow-y-auto scrollbar-hidden space-y-2 max-h-[640px] pr-1">
             {filteredConversations.length === 0 ? (
               <div className="py-16 text-center space-y-3 px-4">
                 <div className="w-12 h-12 rounded-2xl bg-neutral-800/80 border border-neutral-700/50 flex items-center justify-center text-neutral-500 mx-auto">
@@ -337,7 +337,7 @@ export function ConversasView({
               </div>
 
               {/* Message Bubble History Feed */}
-              <div className="flex-1 overflow-y-auto max-h-[380px] min-h-[260px] space-y-3.5 p-2 pr-3">
+              <div className="flex-1 overflow-y-auto scrollbar-hidden max-h-[380px] min-h-[260px] space-y-3.5 p-2 pr-3">
                 {activeConversationMessages.map((msg) => {
                   const isOutgoing = msg.direction === 'outgoing';
                   const formattedTime = new Date(msg.timestamp).toLocaleTimeString('pt-BR', {

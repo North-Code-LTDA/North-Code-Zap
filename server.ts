@@ -1,11 +1,41 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import multer from 'multer';
 import { Server as SocketIOServer } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 import { whatsAppService } from './server/whatsapp.ts';
 import { schedulerService } from './server/scheduler.ts';
 import { contactsService } from './server/contacts.ts';
+import { mediaService, MEDIA_DATA_DIR } from './server/media.ts';
+
+// Configure multer storage for media uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, MEDIA_DATA_DIR);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+    const cleanExt = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) ? ext : '.jpg';
+    const uniqueName = `media_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${cleanExt}`;
+    cb(null, uniqueName);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Tipo de arquivo não suportado. Envie imagens JPG, PNG ou WebP.'));
+    }
+  },
+});
 
 async function startServer() {
   const app = express();
@@ -13,6 +43,9 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Serve uploaded media files
+  app.use('/api/media/files', express.static(MEDIA_DATA_DIR));
 
   // Attach Socket.IO
   const io = new SocketIOServer(server, {
@@ -30,6 +63,37 @@ async function startServer() {
   // REST API Routes
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', service: 'North Code Zap' });
+  });
+
+  // Media Upload Route
+  app.post('/api/media/upload', (req, res) => {
+    upload.single('file')(req, res, (err) => {
+      if (err) {
+        const errorMsg =
+          err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE'
+            ? 'A imagem excede o limite máximo permitido de 10 MB.'
+            : err.message || 'Falha ao fazer upload da imagem.';
+        return res.status(400).json({ success: false, error: errorMsg });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'Nenhum arquivo enviado.' });
+      }
+
+      const fileUrl = `/api/media/files/${req.file.filename}`;
+      const mediaData = {
+        type: 'image' as const,
+        source: 'upload' as const,
+        localPath: req.file.path,
+        url: fileUrl,
+        fileName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+      };
+
+      console.log(`[Media] Uploaded file: ${req.file.filename} (${Math.round(req.file.size / 1024)} KB)`);
+      return res.status(201).json({ success: true, media: mediaData });
+    });
   });
 
   app.get('/api/whatsapp/status', (req, res) => {
@@ -130,6 +194,9 @@ async function startServer() {
         targets,
         scheduleType,
         scheduledAt,
+        dailyTimes,
+        weeklyTimeSlots,
+        media,
         weeklyDays,
         timeOfDay,
         fallbackName,
@@ -140,8 +207,18 @@ async function startServer() {
         return res.status(400).json({ success: false, error: 'Nome do agendamento é obrigatório.' });
       }
 
-      if (!message || typeof message !== 'string' || !message.trim()) {
-        return res.status(400).json({ success: false, error: 'Mensagem não pode estar vazia.' });
+      const hasText = Boolean(message && typeof message === 'string' && message.trim().length > 0);
+      const hasMedia = Boolean(
+        media &&
+          media.type === 'image' &&
+          (media.source === 'upload' ? Boolean(media.localPath) : Boolean(media.url))
+      );
+
+      if (!hasText && !hasMedia) {
+        return res.status(400).json({
+          success: false,
+          error: 'O agendamento precisa ter pelo menos uma mensagem de texto ou uma imagem.',
+        });
       }
 
       if (!Array.isArray(targets) || targets.length === 0) {
@@ -156,10 +233,13 @@ async function startServer() {
 
       const newSchedule = schedulerService.create({
         name,
-        message,
+        message: message || '',
         targets,
         scheduleType,
         scheduledAt: scheduledAt || new Date().toISOString(),
+        dailyTimes,
+        weeklyTimeSlots,
+        media,
         weeklyDays,
         timeOfDay,
         fallbackName,

@@ -14,23 +14,19 @@ import {
   AlertCircle,
   Loader2,
   Search,
-  Radio,
-  Phone,
-  Info,
   X,
-  RefreshCw,
   Sparkles,
-  Send,
-  MessageSquare,
   FileSpreadsheet,
   Upload,
-  UserCheck,
   ChevronDown,
   ChevronUp,
-  ShieldCheck,
   Timer,
   Sliders,
   Check,
+  Image as ImageIcon,
+  Link2,
+  Eye,
+  ExternalLink,
 } from 'lucide-react';
 import type {
   ScheduledMessage,
@@ -42,6 +38,8 @@ import type {
   WhatsAppAccountInfo,
   ScheduleLastResult,
   DeliveryOptions,
+  ScheduledMedia,
+  WeeklyTimeSlot,
 } from '../types';
 import { useSchedules } from '../hooks/useSchedules';
 import { renderMessageTemplate } from '../utils/template';
@@ -73,6 +71,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     fetchGroups,
     fetchContacts,
     fetchGroupParticipants,
+    uploadMedia,
     createSchedule,
     updateSchedule,
     deleteSchedule,
@@ -87,28 +86,51 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     scheduleName: string;
     result: ScheduleLastResult;
   } | null>(null);
+  const [previewMediaModal, setPreviewMediaModal] = useState<ScheduledMedia | null>(null);
 
-  // Form State
+  // Form Basic Info
   const [formName, setFormName] = useState('');
   const [formMessage, setFormMessage] = useState('');
   const [formFallbackName, setFormFallbackName] = useState('amigo(a)');
   const [formType, setFormType] = useState<ScheduleType>('once');
+
+  // Form Once Timing
   const [formDate, setFormDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
     return d.toISOString().split('T')[0];
   });
   const [formTime, setFormTime] = useState('08:00');
+
+  // Form Daily Multi-slot Timing
+  const [formDailyTimes, setFormDailyTimes] = useState<string[]>(['08:00']);
+  const [newDailyTimeInput, setNewDailyTimeInput] = useState('14:00');
+
+  // Form Weekly Multi-slot Timing
   const [formWeeklyDays, setFormWeeklyDays] = useState<number[]>([1]); // Seg
+  const [formWeeklySlots, setFormWeeklySlots] = useState<WeeklyTimeSlot[]>([
+    { day: 1, times: ['08:00'] },
+  ]);
+  const [selectedWeeklyDayForTimes, setSelectedWeeklyDayForTimes] = useState<number>(1);
+  const [newWeeklyTimeInput, setNewWeeklyTimeInput] = useState('14:00');
+
+  // Form Media State
+  const [formMedia, setFormMedia] = useState<ScheduledMedia | null>(null);
+  const [mediaTab, setMediaTab] = useState<'upload' | 'url'>('upload');
+  const [mediaUrlInput, setMediaUrlInput] = useState('');
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+
+  // Form Targets
   const [formTargets, setFormTargets] = useState<ScheduledTarget[]>([]);
 
-  // Delivery Rhythm Options
+  // Form Delivery Rhythm Options
   const [formIntervalSeconds, setFormIntervalSeconds] = useState(5);
   const [formBatchPauseEnabled, setFormBatchPauseEnabled] = useState(false);
   const [formBatchSize, setFormBatchSize] = useState(5);
   const [formBatchPauseMinutes, setFormBatchPauseMinutes] = useState(5);
 
-  // Compliance Checkbox for imported numbers
+  // Form Compliance Checkbox for imported numbers
   const [importComplianceChecked, setImportComplianceChecked] = useState(false);
 
   // Targets Picker Sub-state
@@ -136,17 +158,18 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
   const isConnected = whatsappState.status === 'connected';
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaFileInputRef = useRef<HTMLInputElement>(null);
 
   // Lock body scroll when any modal is open
   useEffect(() => {
-    if (isModalOpen || selectedResultDetails) {
+    if (isModalOpen || selectedResultDetails || previewMediaModal) {
       const prevOverflow = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
       return () => {
         document.body.style.overflow = prevOverflow;
       };
     }
-  }, [isModalOpen, selectedResultDetails]);
+  }, [isModalOpen, selectedResultDetails, previewMediaModal]);
 
   // Check if any selected target comes from import
   const hasImportedTargets = useMemo(() => {
@@ -171,18 +194,29 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     );
   }, [groups, pickerSearch]);
 
-  // Open Modal - New
+  // Reset & Open Modal - New
   const handleOpenNewModal = () => {
     setEditingSchedule(null);
     setFormName('');
     setFormMessage('');
     setFormFallbackName('amigo(a)');
     setFormType('once');
+
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     setFormDate(tomorrow.toISOString().split('T')[0]);
     setFormTime('08:00');
+
+    setFormDailyTimes(['08:00']);
     setFormWeeklyDays([1]);
+    setFormWeeklySlots([{ day: 1, times: ['08:00'] }]);
+    setSelectedWeeklyDayForTimes(1);
+
+    setFormMedia(null);
+    setMediaUrlInput('');
+    setMediaError(null);
+    setMediaTab('upload');
+
     setFormTargets([]);
     setFormIntervalSeconds(5);
     setFormBatchPauseEnabled(false);
@@ -201,7 +235,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
   const handleOpenEditModal = (schedule: ScheduledMessage) => {
     setEditingSchedule(schedule);
     setFormName(schedule.name);
-    setFormMessage(schedule.message);
+    setFormMessage(schedule.message || '');
     setFormFallbackName(schedule.fallbackName || 'amigo(a)');
     setFormType(schedule.scheduleType);
 
@@ -215,15 +249,52 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
       }
     }
 
-    if (schedule.timeOfDay) {
-      setFormTime(schedule.timeOfDay);
+    // Daily times parsing
+    if (schedule.dailyTimes && schedule.dailyTimes.length > 0) {
+      setFormDailyTimes(schedule.dailyTimes);
+    } else if (schedule.timeOfDay) {
+      setFormDailyTimes([schedule.timeOfDay]);
+    } else {
+      setFormDailyTimes(['08:00']);
     }
 
-    if (schedule.weeklyDays && schedule.weeklyDays.length > 0) {
+    // Weekly slots parsing
+    if (schedule.weeklyTimeSlots && schedule.weeklyTimeSlots.length > 0) {
+      setFormWeeklySlots(schedule.weeklyTimeSlots);
+      const days = schedule.weeklyTimeSlots.map((s) => s.day);
+      setFormWeeklyDays(days);
+      setSelectedWeeklyDayForTimes(days[0] ?? 1);
+    } else if (schedule.weeklyDays && schedule.weeklyDays.length > 0) {
+      const time = schedule.timeOfDay || '08:00';
+      const slots: WeeklyTimeSlot[] = schedule.weeklyDays.map((d) => ({
+        day: d,
+        times: [time],
+      }));
       setFormWeeklyDays(schedule.weeklyDays);
+      setFormWeeklySlots(slots);
+      setSelectedWeeklyDayForTimes(schedule.weeklyDays[0]);
     } else {
       setFormWeeklyDays([1]);
+      setFormWeeklySlots([{ day: 1, times: ['08:00'] }]);
+      setSelectedWeeklyDayForTimes(1);
     }
+
+    // Media
+    if (schedule.media) {
+      setFormMedia(schedule.media);
+      if (schedule.media.source === 'url') {
+        setMediaTab('url');
+        setMediaUrlInput(schedule.media.url);
+      } else {
+        setMediaTab('upload');
+        setMediaUrlInput('');
+      }
+    } else {
+      setFormMedia(null);
+      setMediaUrlInput('');
+      setMediaTab('upload');
+    }
+    setMediaError(null);
 
     setFormTargets(schedule.targets || []);
     setFormIntervalSeconds(
@@ -241,6 +312,149 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     setIsModalOpen(true);
     fetchContacts();
     fetchGroups();
+  };
+
+  // Media Upload Handler
+  const handleMediaFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+
+    if (file.size > 10 * 1024 * 1024) {
+      setMediaError('A imagem não pode ultrapassar 10 MB.');
+      return;
+    }
+
+    const validMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!validMimes.includes(file.type)) {
+      setMediaError('Formato inválido. Envie JPG, PNG ou WebP.');
+      return;
+    }
+
+    setMediaUploading(true);
+    setMediaError(null);
+
+    const res = await uploadMedia(file);
+    setMediaUploading(false);
+
+    if (res.success && res.media) {
+      setFormMedia(res.media);
+      if (mediaFileInputRef.current) {
+        mediaFileInputRef.current.value = '';
+      }
+    } else {
+      setMediaError(res.error || 'Falha ao processar upload da imagem.');
+    }
+  };
+
+  // Media URL Handler
+  const handleApplyMediaUrl = () => {
+    if (!mediaUrlInput.trim()) {
+      setMediaError('Informe uma URL de imagem válida.');
+      return;
+    }
+
+    const url = mediaUrlInput.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      setMediaError('A URL deve começar com http:// ou https://');
+      return;
+    }
+
+    setFormMedia({
+      type: 'image',
+      source: 'url',
+      url,
+      fileName: url.split('/').pop()?.split('?')[0] || 'imagem_web.jpg',
+      mimeType: 'image/jpeg',
+    });
+    setMediaError(null);
+  };
+
+  // Remove Media
+  const handleRemoveMedia = () => {
+    setFormMedia(null);
+    setMediaUrlInput('');
+    setMediaError(null);
+  };
+
+  // Daily Times Management
+  const handleAddDailyTime = () => {
+    if (!newDailyTimeInput || !newDailyTimeInput.match(/^([01]\d|2[0-3]):[0-5]\d$/)) {
+      return;
+    }
+    if (!formDailyTimes.includes(newDailyTimeInput)) {
+      const updated = [...formDailyTimes, newDailyTimeInput].sort();
+      setFormDailyTimes(updated);
+    }
+  };
+
+  const handleRemoveDailyTime = (timeToRemove: string) => {
+    if (formDailyTimes.length <= 1) {
+      setFormError('É necessário manter pelo menos um horário de envio diário.');
+      return;
+    }
+    setFormDailyTimes(formDailyTimes.filter((t) => t !== timeToRemove));
+  };
+
+  // Weekly Days & Slots Management
+  const handleToggleWeeklyDay = (dayId: number) => {
+    let nextDays: number[];
+    if (formWeeklyDays.includes(dayId)) {
+      if (formWeeklyDays.length <= 1) return; // Keep at least one day
+      nextDays = formWeeklyDays.filter((d) => d !== dayId);
+    } else {
+      nextDays = [...formWeeklyDays, dayId].sort((a, b) => a - b);
+    }
+
+    setFormWeeklyDays(nextDays);
+
+    // Synchronize slots
+    const updatedSlots = nextDays.map((d) => {
+      const existing = formWeeklySlots.find((s) => s.day === d);
+      return existing || { day: d, times: ['08:00'] };
+    });
+    setFormWeeklySlots(updatedSlots);
+
+    if (!nextDays.includes(selectedWeeklyDayForTimes)) {
+      setSelectedWeeklyDayForTimes(nextDays[0]);
+    }
+  };
+
+  const handleAddWeeklyTime = (dayId: number) => {
+    if (!newWeeklyTimeInput || !newWeeklyTimeInput.match(/^([01]\d|2[0-3]):[0-5]\d$/)) {
+      return;
+    }
+
+    setFormWeeklySlots((prev) => {
+      return prev.map((slot) => {
+        if (slot.day === dayId) {
+          if (!slot.times.includes(newWeeklyTimeInput)) {
+            return {
+              ...slot,
+              times: [...slot.times, newWeeklyTimeInput].sort(),
+            };
+          }
+        }
+        return slot;
+      });
+    });
+  };
+
+  const handleRemoveWeeklyTime = (dayId: number, timeToRemove: string) => {
+    setFormWeeklySlots((prev) => {
+      return prev.map((slot) => {
+        if (slot.day === dayId) {
+          if (slot.times.length <= 1) {
+            return slot; // Keep at least one time per day
+          }
+          return {
+            ...slot,
+            times: slot.times.filter((t) => t !== timeToRemove),
+          };
+        }
+        return slot;
+      });
+    });
   };
 
   // Toggle group participant expansion
@@ -374,94 +588,98 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     setFormError(null);
   };
 
-  // Remove target
+  // Remove single target chip
   const handleRemoveTarget = (jid: string) => {
     setFormTargets((prev) => prev.filter((t) => t.jid !== jid));
   };
 
-  // Parser for importing list (text / CSV)
-  const parseImportText = (raw: string) => {
-    const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    const validMap = new Map<string, { jid: string; number: string; name: string }>();
-    let duplicates = 0;
-    let invalid = 0;
+  // Parse Text or CSV list
+  const parseImportText = (text: string) => {
+    const lines = text.split(/\r?\n/);
+    const valid: Array<{ jid: string; number: string; name: string }> = [];
+    const seenNumbers = new Set<string>();
+    let duplicatesCount = 0;
+    let invalidCount = 0;
 
-    for (const line of lines) {
-      // Split by comma, semicolon, tab or pipe
-      const parts = line.split(/[,;\t|]+/).map((p) => p.trim());
-      const firstPart = parts[0] || '';
-      const secondPart = parts[1] || '';
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
 
-      // Check which part has digits
-      let digits = firstPart.replace(/\D/g, '');
-      let nameCandidate = secondPart;
+      let rawNumber = '';
+      let rawName = '';
 
-      if (!digits && secondPart) {
-        digits = secondPart.replace(/\D/g, '');
-        nameCandidate = firstPart;
-      }
-
-      if (digits.length >= 10 && digits.length <= 15) {
-        if (digits.length === 10 || digits.length === 11) {
-          digits = `55${digits}`;
-        }
-        const jid = `${digits}@s.whatsapp.net`;
-        const name = nameCandidate || `+${digits}`;
-
-        if (validMap.has(jid)) {
-          duplicates++;
-        } else {
-          validMap.set(jid, { jid, number: digits, name });
-        }
+      if (line.includes(',') || line.includes(';') || line.includes('\t')) {
+        const delimiter = line.includes(',') ? ',' : line.includes(';') ? ';' : '\t';
+        const parts = line.split(delimiter);
+        rawNumber = parts[0]?.trim() || '';
+        rawName = parts.slice(1).join(' ').trim();
       } else {
-        invalid++;
+        rawNumber = line;
       }
+
+      let clean = rawNumber.replace(/\D/g, '');
+      if (clean.length < 10) {
+        invalidCount++;
+        continue;
+      }
+
+      if (clean.length === 10 || clean.length === 11) {
+        clean = `55${clean}`;
+      }
+
+      if (seenNumbers.has(clean)) {
+        duplicatesCount++;
+        continue;
+      }
+
+      seenNumbers.add(clean);
+      valid.push({
+        jid: `${clean}@s.whatsapp.net`,
+        number: clean,
+        name: rawName,
+      });
     }
 
-    const valid = Array.from(validMap.values());
     setImportParsedPreview({
-      totalLines: lines.length,
+      totalLines: lines.filter((l) => l.trim().length > 0).length,
       valid,
-      duplicatesCount: duplicates,
-      invalidCount: invalid,
+      duplicatesCount,
+      invalidCount,
     });
   };
 
+  // Handle CSV/TXT file upload
   const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      if (text) {
-        setImportRawText(text);
-        parseImportText(text);
+    reader.onload = (evt) => {
+      const content = evt.target?.result as string;
+      if (content) {
+        setImportRawText(content);
+        parseImportText(content);
       }
     };
     reader.readAsText(file);
   };
 
+  // Add parsed imported targets to form
   const handleApplyImportedTargets = () => {
     if (!importParsedPreview || importParsedPreview.valid.length === 0) return;
 
+    const newTargets: ScheduledTarget[] = importParsedPreview.valid.map((item) => ({
+      type: 'person',
+      jid: item.jid,
+      label: item.name ? `${item.name} (+${item.number})` : `+${item.number}`,
+      name: item.name || undefined,
+      source: 'import',
+    }));
+
     setFormTargets((prev) => {
       const existingJids = new Set(prev.map((t) => t.jid));
-      const additions: ScheduledTarget[] = [];
-
-      for (const item of importParsedPreview.valid) {
-        if (!existingJids.has(item.jid)) {
-          existingJids.add(item.jid);
-          additions.push({
-            type: 'person',
-            jid: item.jid,
-            label: item.name !== `+${item.number}` ? `${item.name} (+${item.number})` : `+${item.number}`,
-            name: item.name !== `+${item.number}` ? item.name : undefined,
-            source: 'import',
-          });
-        }
-      }
-      return [...prev, ...additions];
+      const filtered = newTargets.filter((t) => !existingJids.has(t.jid));
+      return [...prev, ...filtered];
     });
 
     setImportRawText('');
@@ -475,57 +693,88 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     setFormError(null);
 
     if (!formName.trim()) {
-      setFormError('Informe um nome para o agendamento.');
+      setFormError('Por favor, informe o nome do agendamento.');
       return;
     }
 
-    if (!formMessage.trim()) {
-      setFormError('Informe a mensagem a ser enviada.');
+    const hasText = Boolean(formMessage && formMessage.trim().length > 0);
+    const hasMedia = Boolean(formMedia);
+
+    if (!hasText && !hasMedia) {
+      setFormError('Informe pelo menos uma mensagem de texto ou selecione uma imagem.');
       return;
     }
 
     if (formTargets.length === 0) {
-      setFormError('Selecione pelo menos um destinatário (Pessoa, Grupo ou Importado).');
+      setFormError('Selecione pelo menos um destinatário para o agendamento.');
       return;
     }
 
     if (hasImportedTargets && !importComplianceChecked) {
-      setFormError(
-        'Você incluiu destinatários importados. É obrigatório confirmar a autorização de envio.'
-      );
+      setFormError('Para disparar para números importados, você deve aceitar o Termo de Conformidade.');
       return;
+    }
+
+    // Prepare Delivery Options
+    const deliveryOptions: DeliveryOptions = {
+      intervalBetweenMessagesMs: Math.max(1000, formIntervalSeconds * 1000),
+      batchPauseEnabled: formBatchPauseEnabled,
+      batchSize: Math.max(1, formBatchSize),
+      batchPauseMs: Math.max(60000, formBatchPauseMinutes * 60000),
+      retryAttempts: 2,
+    };
+
+    let scheduledAt = new Date().toISOString();
+    let payloadDailyTimes: string[] | undefined = undefined;
+    let payloadWeeklySlots: WeeklyTimeSlot[] | undefined = undefined;
+
+    if (formType === 'once') {
+      const combined = `${formDate}T${formTime}:00`;
+      const dateObj = new Date(combined);
+      if (isNaN(dateObj.getTime())) {
+        setFormError('Data ou horário inválido.');
+        return;
+      }
+      scheduledAt = dateObj.toISOString();
+    } else if (formType === 'daily') {
+      if (formDailyTimes.length === 0) {
+        setFormError('Adicione pelo menos um horário diário de envio.');
+        return;
+      }
+      payloadDailyTimes = formDailyTimes;
+    } else if (formType === 'weekly') {
+      if (formWeeklyDays.length === 0) {
+        setFormError('Selecione pelo menos um dia da semana.');
+        return;
+      }
+      if (formWeeklySlots.length === 0) {
+        setFormError('Configure os horários para os dias selecionados.');
+        return;
+      }
+      payloadWeeklySlots = formWeeklySlots;
     }
 
     setIsSubmitting(true);
 
     try {
-      const scheduledAtIso =
-        formType === 'once'
-          ? new Date(`${formDate}T${formTime}:00`).toISOString()
-          : new Date().toISOString();
-
-      const deliveryOptions: DeliveryOptions = {
-        intervalBetweenMessagesMs: Math.max(1000, formIntervalSeconds * 1000),
-        batchPauseEnabled: formBatchPauseEnabled,
-        batchSize: Math.max(1, formBatchSize),
-        batchPauseMs: Math.max(5000, formBatchPauseMinutes * 60000),
-      };
-
       if (editingSchedule) {
         const res = await updateSchedule(editingSchedule.id, {
           name: formName.trim(),
           message: formMessage.trim(),
-          targets: formTargets,
-          scheduleType: formType,
-          scheduledAt: scheduledAtIso,
-          timeOfDay: formTime,
-          weeklyDays: formWeeklyDays,
           fallbackName: formFallbackName.trim() || 'amigo(a)',
+          scheduleType: formType,
+          scheduledAt,
+          dailyTimes: payloadDailyTimes,
+          weeklyTimeSlots: payloadWeeklySlots,
+          weeklyDays: formWeeklyDays,
+          timeOfDay: formDailyTimes[0] || '08:00',
+          media: formMedia,
+          targets: formTargets,
           deliveryOptions,
         });
 
         if (!res.success) {
-          setFormError(res.error || 'Erro ao atualizar agendamento.');
+          setFormError(res.error || 'Falha ao atualizar agendamento.');
           setIsSubmitting(false);
           return;
         }
@@ -533,17 +782,20 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
         const res = await createSchedule({
           name: formName.trim(),
           message: formMessage.trim(),
-          targets: formTargets,
-          scheduleType: formType,
-          scheduledAt: scheduledAtIso,
-          timeOfDay: formTime,
-          weeklyDays: formWeeklyDays,
           fallbackName: formFallbackName.trim() || 'amigo(a)',
+          scheduleType: formType,
+          scheduledAt,
+          dailyTimes: payloadDailyTimes,
+          weeklyTimeSlots: payloadWeeklySlots,
+          weeklyDays: formWeeklyDays,
+          timeOfDay: formDailyTimes[0] || '08:00',
+          media: formMedia,
+          targets: formTargets,
           deliveryOptions,
         });
 
         if (!res.success) {
-          setFormError(res.error || 'Erro ao criar agendamento.');
+          setFormError(res.error || 'Falha ao criar agendamento.');
           setIsSubmitting(false);
           return;
         }
@@ -551,7 +803,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
       setIsModalOpen(false);
     } catch (err: any) {
-      setFormError(err?.message || 'Erro ao processar agendamento.');
+      setFormError(err?.message || 'Erro inesperado ao salvar.');
     } finally {
       setIsSubmitting(false);
     }
@@ -559,39 +811,56 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
   const getSourceBadge = (source?: string) => {
     switch (source) {
-      case 'history':
-        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">Histórico</span>;
-      case 'message':
-        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Mensagem</span>;
-      case 'contact':
-        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">Contato</span>;
-      case 'import':
-        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">Importado</span>;
+      case 'chat':
+        return (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+            Conversa
+          </span>
+        );
       case 'group_member':
-        return <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Membro Grupo</span>;
+        return (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+            Membro Grupo
+          </span>
+        );
+      case 'import':
+        return (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+            Importado
+          </span>
+        );
+      case 'manual':
+        return (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+            Avulso
+          </span>
+        );
       default:
-        return null;
+        return (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400">
+            Diretório
+          </span>
+        );
     }
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-neutral-900/60 p-6 rounded-2xl border border-neutral-800">
+    <div className="space-y-6 animate-in fade-in duration-300">
+      {/* Header & New Schedule Action */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-neutral-900/60 p-6 rounded-3xl border border-neutral-800/80">
         <div>
-          <h2 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-            <Calendar className="w-6 h-6 text-emerald-400" />
-            Agendamentos de Mensagens
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-emerald-400" />
+            Agendamentos V3
           </h2>
-          <p className="text-neutral-400 text-sm mt-1">
-            Envio automático pontual ou recorrente com controle de ritmo, templates e personalização.
+          <p className="text-sm text-neutral-400 mt-1">
+            Programação recorrente com suporte a múltiplos horários diários/semanais, envio de imagens e controle de ritmo.
           </p>
         </div>
 
         <button
-          id="btn-novo-agendamento"
           onClick={handleOpenNewModal}
-          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-neutral-950 font-semibold text-sm transition-all shadow-lg shadow-emerald-500/10"
+          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-neutral-950 font-bold text-sm transition-all shadow-lg shadow-emerald-500/10 shrink-0"
         >
           <Plus className="w-4 h-4" />
           Novo Agendamento
@@ -667,7 +936,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
         </div>
       )}
 
-      {/* Schedules List */}
+      {/* Schedules List (Restored 2-Card Desktop Grid) */}
       {loadingSchedules ? (
         <div className="flex items-center justify-center p-12 text-neutral-500 gap-3">
           <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
@@ -678,9 +947,9 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           <div className="w-14 h-14 mx-auto rounded-2xl bg-neutral-800/80 flex items-center justify-center text-neutral-400 mb-4">
             <Calendar className="w-7 h-7" />
           </div>
-          <h3 className="text-lg font-semibold text-white">Nenhum agendamento ativo</h3>
+          <h3 className="text-lg font-semibold text-white">Nenhum agendamento cadastrado</h3>
           <p className="text-neutral-400 text-sm max-w-sm mx-auto mt-1 mb-6">
-            Crie disparos programados para contatos individuais, membros de grupos ou listas importadas.
+            Crie disparos programados com mensagens de texto, imagens anexadas e múltiplos horários de repetição.
           </p>
           <button
             onClick={handleOpenNewModal}
@@ -691,90 +960,187 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {schedules.map((schedule) => {
             const isRunning = executingScheduleId === schedule.id || schedule.status === 'running';
+
+            // Daily times display list
+            const dailyTimesList =
+              schedule.dailyTimes && schedule.dailyTimes.length > 0
+                ? schedule.dailyTimes
+                : schedule.timeOfDay
+                ? [schedule.timeOfDay]
+                : ['08:00'];
+
+            // Weekly slots display
+            const weeklySlotsList =
+              schedule.weeklyTimeSlots && schedule.weeklyTimeSlots.length > 0
+                ? schedule.weeklyTimeSlots
+                : schedule.weeklyDays
+                ? schedule.weeklyDays.map((d) => ({
+                    day: d,
+                    times: [schedule.timeOfDay || '08:00'],
+                  }))
+                : [];
 
             return (
               <div
                 key={schedule.id}
-                className="bg-neutral-900/80 border border-neutral-800 hover:border-neutral-700/80 rounded-2xl p-5 transition-all shadow-sm"
+                className="bg-neutral-900/90 border border-neutral-800 hover:border-neutral-700/90 rounded-2xl p-5 transition-all shadow-sm flex flex-col justify-between space-y-4"
               >
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  {/* Info Header */}
-                  <div className="space-y-1.5 flex-1 min-w-0">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <h3 className="text-base font-semibold text-white truncate">
+                <div className="space-y-3">
+                  {/* Card Header: Title & Badges */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-base font-bold text-white truncate" title={schedule.name}>
                         {schedule.name}
                       </h3>
+                      <div className="flex items-center gap-2 flex-wrap mt-1">
+                        {/* Status Badge */}
+                        {isRunning ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Executando
+                          </span>
+                        ) : schedule.status === 'paused' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            <Pause className="w-3 h-3" />
+                            Pausado
+                          </span>
+                        ) : schedule.status === 'completed' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                            <CheckCircle2 className="w-3 h-3" />
+                            Concluído
+                          </span>
+                        ) : schedule.status === 'error' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                            <XCircle className="w-3 h-3" />
+                            Falhou
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-neutral-800 text-neutral-300 border border-neutral-700">
+                            <Clock className="w-3 h-3 text-emerald-400" />
+                            Ativo
+                          </span>
+                        )}
 
-                      {/* Status Badge */}
-                      {isRunning ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          Executando
+                        {/* Schedule Type Badge */}
+                        <span className="px-2 py-0.5 text-xs rounded-md bg-neutral-800 text-neutral-400 border border-neutral-700/60 font-medium">
+                          {schedule.scheduleType === 'once'
+                            ? 'Único'
+                            : schedule.scheduleType === 'daily'
+                            ? `Diário (${dailyTimesList.length}x)`
+                            : `Semanal (${weeklySlotsList.length} dias)`}
                         </span>
-                      ) : schedule.status === 'paused' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                          <Pause className="w-3 h-3" />
-                          Pausado
-                        </span>
-                      ) : schedule.status === 'completed' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                          <CheckCircle2 className="w-3 h-3" />
-                          Concluído
-                        </span>
-                      ) : schedule.status === 'error' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                          <XCircle className="w-3 h-3" />
-                          Falhou
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-neutral-800 text-neutral-300 border border-neutral-700">
-                          <Clock className="w-3 h-3 text-emerald-400" />
-                          Agendado
-                        </span>
-                      )}
 
-                      {/* Type Badge */}
-                      <span className="px-2 py-0.5 text-xs rounded-md bg-neutral-800 text-neutral-400 border border-neutral-700/50">
-                        {schedule.scheduleType === 'once'
-                          ? 'Único'
-                          : schedule.scheduleType === 'daily'
-                          ? 'Diário'
-                          : 'Semanal'}
-                      </span>
+                        {/* Media Indicator Badge */}
+                        {schedule.media && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20">
+                            <ImageIcon className="w-3 h-3" />
+                            Imagem ({schedule.media.source === 'upload' ? 'Upload' : 'URL'})
+                          </span>
+                        )}
+                      </div>
                     </div>
+                  </div>
 
-                    {/* Message Preview */}
-                    <p className="text-sm text-neutral-300 font-mono bg-neutral-950/60 p-2.5 rounded-xl border border-neutral-800/80 line-clamp-2">
-                      {schedule.message}
-                    </p>
+                  {/* Media Thumbnail & Message Preview */}
+                  <div className="flex items-start gap-3 bg-neutral-950/80 p-3 rounded-xl border border-neutral-800/80">
+                    {schedule.media && (
+                      <div
+                        onClick={() => setPreviewMediaModal(schedule.media!)}
+                        className="relative group cursor-pointer w-16 h-16 rounded-lg overflow-hidden bg-neutral-900 border border-neutral-800 shrink-0 flex items-center justify-center"
+                      >
+                        <img
+                          src={schedule.media.url}
+                          alt="Thumbnail do agendamento"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white">
+                          <Eye className="w-4 h-4" />
+                        </div>
+                      </div>
+                    )}
 
-                    {/* Meta details */}
-                    <div className="flex items-center gap-4 text-xs text-neutral-400 flex-wrap pt-1">
-                      <span className="flex items-center gap-1">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      {schedule.message ? (
+                        <p className="text-xs text-neutral-300 font-sans line-clamp-3 whitespace-pre-wrap">
+                          {schedule.message}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-neutral-500 italic">
+                          (Envio exclusivo de imagem sem legenda de texto)
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Target and Time Details */}
+                  <div className="space-y-1.5 text-xs text-neutral-400 pt-1">
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-neutral-300">
                         <Users className="w-3.5 h-3.5 text-neutral-500" />
-                        {schedule.targets.length} {schedule.targets.length === 1 ? 'destinatário' : 'destinatários'}
+                        <strong>{schedule.targets.length}</strong> {schedule.targets.length === 1 ? 'destinatário' : 'destinatários'}
                       </span>
 
                       {schedule.nextRunAt && schedule.status === 'active' && (
-                        <span className="flex items-center gap-1 text-emerald-400">
-                          <Clock className="w-3.5 h-3.5" />
+                        <span className="flex items-center gap-1 text-emerald-400 font-medium">
+                          <Clock className="w-3 h-3" />
                           Próximo: {new Date(schedule.nextRunAt).toLocaleString('pt-BR')}
                         </span>
                       )}
+                    </div>
 
-                      {schedule.deliveryOptions && (
-                        <span className="flex items-center gap-1 text-neutral-500">
-                          <Sliders className="w-3 h-3" />
-                          Intervalo: {Math.round(schedule.deliveryOptions.intervalBetweenMessagesMs / 1000)}s
-                          {schedule.deliveryOptions.batchPauseEnabled &&
-                            ` | Lote de ${schedule.deliveryOptions.batchSize}`}
-                        </span>
-                      )}
+                    {/* Multi-slot timing chips */}
+                    {schedule.scheduleType === 'daily' && (
+                      <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                        <span className="text-[11px] text-neutral-500">Horários diários:</span>
+                        {dailyTimesList.map((t, idx) => (
+                          <span
+                            key={idx}
+                            className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-[11px] text-emerald-300 font-mono"
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
 
-                      {schedule.lastResult && (
+                    {schedule.scheduleType === 'weekly' && (
+                      <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                        <span className="text-[11px] text-neutral-500">Dias & Horários:</span>
+                        {weeklySlotsList.map((slot) => {
+                          const dayObj = WEEK_DAYS.find((d) => d.id === slot.day);
+                          return (
+                            <span
+                              key={slot.day}
+                              className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-[11px] text-neutral-200"
+                            >
+                              <strong className="text-emerald-400">{dayObj?.label}:</strong> {slot.times.join(', ')}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Delivery rhythm parameters */}
+                    {schedule.deliveryOptions && (
+                      <div className="flex items-center gap-2 text-[11px] text-neutral-500 pt-0.5">
+                        <Sliders className="w-3 h-3 text-neutral-600" />
+                        <span>Intervalo: {Math.round(schedule.deliveryOptions.intervalBetweenMessagesMs / 1000)}s</span>
+                        {schedule.deliveryOptions.batchPauseEnabled && (
+                          <span>• Pausa: a cada {schedule.deliveryOptions.batchSize} msgs por {Math.round(schedule.deliveryOptions.batchPauseMs / 60000)} min</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Report link */}
+                    {schedule.lastResult && (
+                      <div className="pt-1">
                         <button
                           onClick={() =>
                             setSelectedResultDetails({
@@ -786,27 +1152,29 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                         >
                           Ver relatório do último disparo ({schedule.lastResult.sentCount} enviados)
                         </button>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
+                </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-neutral-800">
-                    <button
-                      id={`btn-run-now-${schedule.id}`}
-                      onClick={() => runNow(schedule.id)}
-                      disabled={isRunning || !isConnected}
-                      title="Disparar Agora"
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {isRunning ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                      )}
-                      Run Now
-                    </button>
+                {/* Card Action Buttons (Standardized UX: Primary Executar agora + Secondary actions) */}
+                <div className="flex items-center justify-between gap-2 pt-3 border-t border-neutral-800">
+                  <button
+                    id={`btn-run-now-${schedule.id}`}
+                    onClick={() => runNow(schedule.id)}
+                    disabled={isRunning || !isConnected}
+                    title="Disparar Agora"
+                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 text-emerald-400 border border-emerald-500/30 text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  >
+                    {isRunning ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                    )}
+                    Executar agora
+                  </button>
 
+                  <div className="flex items-center gap-1.5">
                     {schedule.status === 'active' ? (
                       <button
                         onClick={() => pauseSchedule(schedule.id)}
@@ -814,26 +1182,26 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                         title="Pausar Agendamento"
                         className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition-colors"
                       >
-                        <Pause className="w-4 h-4" />
+                        <Pause className="w-3.5 h-3.5" />
                       </button>
                     ) : schedule.status === 'paused' ? (
                       <button
                         onClick={() => resumeSchedule(schedule.id)}
                         disabled={isRunning}
                         title="Retomar Agendamento"
-                        className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs transition-colors"
+                        className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-emerald-400 text-xs transition-colors"
                       >
-                        <Play className="w-4 h-4 fill-current" />
+                        <Play className="w-3.5 h-3.5 fill-current" />
                       </button>
                     ) : null}
 
                     <button
                       onClick={() => handleOpenEditModal(schedule)}
                       disabled={isRunning}
-                      title="Editar"
+                      title="Editar Agendamento"
                       className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition-colors"
                     >
-                      <Edit2 className="w-4 h-4" />
+                      <Edit2 className="w-3.5 h-3.5" />
                     </button>
 
                     <button
@@ -843,10 +1211,10 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                         }
                       }}
                       disabled={isRunning}
-                      title="Excluir"
+                      title="Excluir Agendamento"
                       className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs transition-colors"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -856,7 +1224,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
         </div>
       )}
 
-      {/* Modal: Novo / Editar Agendamento (Strict UX Architecture) */}
+      {/* Modal: Novo / Editar Agendamento */}
       {isModalOpen && (
         <div
           className="fixed inset-0 z-50 overflow-hidden p-4 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
@@ -878,7 +1246,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                   {editingSchedule ? 'Editar Agendamento' : 'Novo Agendamento'}
                 </h3>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Configure mensagem, destinatários e ritmo de entrega.
+                  Configure mensagens, imagens, múltiplos horários de repetição e ritmo de envio.
                 </p>
               </div>
               <button
@@ -890,7 +1258,11 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
             </div>
 
             {/* Modal Scrollable Body */}
-            <form id="schedule-form" onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6 space-y-6">
+            <form
+              id="schedule-form"
+              onSubmit={handleSubmit}
+              className="flex-1 min-h-0 overflow-y-auto scrollbar-hidden overscroll-contain p-6 space-y-6"
+            >
               {formError && (
                 <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
@@ -906,18 +1278,154 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                 <input
                   type="text"
                   required
-                  placeholder="Ex: Mensagem Boas Vindas, Lembrete Reunião..."
+                  placeholder="Ex: Bom dia Clientes, Lembrete de Aula, Oferta da Semana..."
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
                 />
               </div>
 
-              {/* 2. Mensagem & Personalização ({nome}) */}
+              {/* 2. Mídia (Imagem Opcional) */}
+              <div className="space-y-3 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4 text-purple-400" />
+                    2. Mídia / Imagem (Opcional)
+                  </label>
+                  {formMedia && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveMedia}
+                      className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Remover Imagem
+                    </button>
+                  )}
+                </div>
+
+                {/* Media Preview if attached */}
+                {formMedia ? (
+                  <div className="flex items-center gap-4 bg-neutral-900 p-3 rounded-xl border border-neutral-800">
+                    <div className="w-20 h-20 rounded-lg overflow-hidden bg-neutral-950 border border-neutral-800 shrink-0">
+                      <img
+                        src={formMedia.url}
+                        alt="Preview da imagem"
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1 space-y-1 text-xs">
+                      <div className="font-semibold text-white truncate">{formMedia.fileName}</div>
+                      <div className="text-[11px] text-neutral-400 flex items-center gap-2">
+                        <span>Origem: {formMedia.source === 'upload' ? 'Upload Local' : 'URL Externa'}</span>
+                        {formMedia.size && <span>• {Math.round(formMedia.size / 1024)} KB</span>}
+                      </div>
+                      <div className="text-[11px] text-emerald-400 font-medium">
+                        ✓ Imagem pronta para disparo
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {/* Media Tabs */}
+                    <div className="flex rounded-xl bg-neutral-900 p-1 border border-neutral-800">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMediaTab('upload');
+                          setMediaError(null);
+                        }}
+                        className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                          mediaTab === 'upload'
+                            ? 'bg-neutral-800 text-white'
+                            : 'text-neutral-400 hover:text-white'
+                        }`}
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Upload (JPG, PNG, WebP)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMediaTab('url');
+                          setMediaError(null);
+                        }}
+                        className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                          mediaTab === 'url'
+                            ? 'bg-neutral-800 text-white'
+                            : 'text-neutral-400 hover:text-white'
+                        }`}
+                      >
+                        <Link2 className="w-3.5 h-3.5" />
+                        URL da Imagem
+                      </button>
+                    </div>
+
+                    {mediaError && (
+                      <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
+                        {mediaError}
+                      </div>
+                    )}
+
+                    {mediaTab === 'upload' ? (
+                      <div className="border-2 border-dashed border-neutral-800 hover:border-neutral-700 rounded-xl p-5 text-center transition-colors">
+                        <input
+                          type="file"
+                          ref={mediaFileInputRef}
+                          accept="image/jpeg,image/png,image/webp"
+                          onChange={handleMediaFileUpload}
+                          className="hidden"
+                        />
+                        <button
+                          type="button"
+                          disabled={mediaUploading}
+                          onClick={() => mediaFileInputRef.current?.click()}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-medium transition-colors disabled:opacity-50"
+                        >
+                          {mediaUploading ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                          ) : (
+                            <Upload className="w-4 h-4 text-purple-400" />
+                          )}
+                          {mediaUploading ? 'Enviando imagem...' : 'Selecionar Imagem do Computador'}
+                        </button>
+                        <p className="text-[11px] text-neutral-500 mt-2">
+                          Formatos aceitos: JPG, PNG, WebP (Tamanho máximo: 10 MB)
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex gap-2">
+                          <input
+                            type="url"
+                            placeholder="https://exemplo.com/imagem.jpg"
+                            value={mediaUrlInput}
+                            onChange={(e) => setMediaUrlInput(e.target.value)}
+                            className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleApplyMediaUrl}
+                            className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold transition-colors"
+                          >
+                            Carregar
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-neutral-500">
+                          A URL deve ser pública e direta para a imagem.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Mensagem & Personalização ({nome}) */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
-                    2. Mensagem & Personalização
+                    3. Mensagem & Personalização {formMedia && '(Opcional se houver imagem)'}
                   </label>
                   <button
                     type="button"
@@ -930,9 +1438,12 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                 </div>
 
                 <textarea
-                  required
                   rows={4}
-                  placeholder="Digite sua mensagem. Use {nome} para incluir o nome do destinatário automaticamente..."
+                  placeholder={
+                    formMedia
+                      ? 'Legenda opcional da imagem. Use {nome} para personalizar com o nome do cliente...'
+                      : 'Digite sua mensagem. Use {nome} para incluir o nome do destinatário automaticamente...'
+                  }
                   value={formMessage}
                   onChange={(e) => setFormMessage(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors font-sans"
@@ -960,17 +1471,19 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                     <p className="text-xs text-emerald-300 font-mono italic whitespace-pre-wrap line-clamp-3">
                       {formMessage
                         ? renderMessageTemplate(formMessage, { jid: 'preview', name: 'João Silva' }, formFallbackName)
+                        : formMedia
+                        ? '(Apenas envio da imagem anexada)'
                         : 'Sua mensagem renderizada aparecerá aqui...'}
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* 3. Destinatários Tabs */}
+              {/* 4. Destinatários Tabs */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
-                    3. Destinatários ({formTargets.length} selecionados)
+                    4. Destinatários ({formTargets.length} selecionados)
                   </label>
                   {formTargets.length > 0 && (
                     <button
@@ -985,7 +1498,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
                 {/* Selected Targets Chips */}
                 {formTargets.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 p-3 rounded-xl bg-neutral-950 border border-neutral-800 max-h-32 overflow-y-auto">
+                  <div className="flex flex-wrap gap-1.5 p-3 rounded-xl bg-neutral-950 border border-neutral-800 max-h-32 overflow-y-auto scrollbar-hidden">
                     {formTargets.map((t) => (
                       <span
                         key={t.jid}
@@ -1053,7 +1566,6 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                   {/* Tab 1: Pessoas */}
                   {pickerTab === 'pessoas' && (
                     <div className="space-y-3">
-                      {/* Search */}
                       <div className="relative">
                         <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
                         <input
@@ -1065,8 +1577,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                         />
                       </div>
 
-                      {/* Contacts List */}
-                      <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+                      <div className="max-h-48 overflow-y-auto scrollbar-hidden space-y-1 pr-1">
                         {loadingContacts ? (
                           <div className="p-4 text-center text-xs text-neutral-500 flex items-center justify-center gap-2">
                             <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
@@ -1122,7 +1633,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                           <input
                             type="text"
-                            placeholder="DDD + Número (ex: 93991234567)"
+                            placeholder="DDD + Número (ex: 11999998888)"
                             value={manualNumberInput}
                             onChange={(e) => setManualNumberInput(e.target.value)}
                             className="bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-1.5 text-xs text-white"
@@ -1160,7 +1671,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                         />
                       </div>
 
-                      <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                      <div className="max-h-60 overflow-y-auto scrollbar-hidden space-y-2 pr-1">
                         {loadingGroups ? (
                           <div className="p-4 text-center text-xs text-neutral-500 flex items-center justify-center gap-2">
                             <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
@@ -1221,7 +1732,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
                                 {/* Expanded Group Participants */}
                                 {isExpanded && (
-                                  <div className="pt-2 border-t border-neutral-800/80 pl-6 space-y-1.5 max-h-40 overflow-y-auto">
+                                  <div className="pt-2 border-t border-neutral-800/80 pl-6 space-y-1.5 max-h-40 overflow-y-auto scrollbar-hidden">
                                     {isLoadingParticipants ? (
                                       <div className="py-2 text-center text-[11px] text-neutral-500 flex items-center justify-center gap-1.5">
                                         <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
@@ -1401,12 +1912,14 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                 )}
               </div>
 
-              {/* 4. Frequência & Horário */}
-              <div className="space-y-3">
-                <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
-                  4. Frequência & Horário
+              {/* 5. Frequência & Múltiplos Horários */}
+              <div className="space-y-3 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
+                <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-emerald-400" />
+                  5. Frequência & Horários de Envio
                 </label>
 
+                {/* Frequency selector buttons */}
                 <div className="grid grid-cols-3 gap-2">
                   {(['once', 'daily', 'weekly'] as ScheduleType[]).map((type) => (
                     <button
@@ -1416,17 +1929,17 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                       className={`py-2 rounded-xl text-xs font-semibold transition-all border ${
                         formType === type
                           ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                          : 'bg-neutral-950 text-neutral-400 border-neutral-800 hover:bg-neutral-800'
+                          : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:bg-neutral-800'
                       }`}
                     >
-                      {type === 'once' ? 'Uma Vez' : type === 'daily' ? 'Diário' : 'Semanal'}
+                      {type === 'once' ? 'Único (Uma Vez)' : type === 'daily' ? 'Diário (Múltiplos)' : 'Semanal (Múltiplos)'}
                     </button>
                   ))}
                 </div>
 
-                {/* Date & Time Picker */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
-                  {formType === 'once' ? (
+                {/* Case 1: Once (Date + Single Time) */}
+                {formType === 'once' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                     <div>
                       <label className="block text-xs text-neutral-400 mb-1">Data do Disparo:</label>
                       <input
@@ -1437,22 +1950,79 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                         className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
                       />
                     </div>
-                  ) : null}
 
-                  <div>
-                    <label className="block text-xs text-neutral-400 mb-1">Horário do Disparo:</label>
-                    <input
-                      type="time"
-                      required
-                      value={formTime}
-                      onChange={(e) => setFormTime(e.target.value)}
-                      className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                    />
+                    <div>
+                      <label className="block text-xs text-neutral-400 mb-1">Horário do Disparo:</label>
+                      <input
+                        type="time"
+                        required
+                        value={formTime}
+                        onChange={(e) => setFormTime(e.target.value)}
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
                   </div>
+                )}
 
-                  {formType === 'weekly' && (
-                    <div className="sm:col-span-2 space-y-1.5 pt-2 border-t border-neutral-800">
-                      <label className="block text-xs text-neutral-400">Dias da Semana:</label>
+                {/* Case 2: Daily (Multi-slot time list) */}
+                {formType === 'daily' && (
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-neutral-400">
+                        Horários de disparo diário ({formDailyTimes.length} ativos):
+                      </span>
+                    </div>
+
+                    {/* Chips of daily times */}
+                    <div className="flex flex-wrap gap-2">
+                      {formDailyTimes.map((time) => (
+                        <span
+                          key={time}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900 border border-emerald-500/30 text-emerald-300 font-mono text-xs"
+                        >
+                          <Clock className="w-3 h-3 text-emerald-400" />
+                          {time}
+                          {formDailyTimes.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveDailyTime(time)}
+                              className="hover:text-rose-400 ml-1"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Add another daily time */}
+                    <div className="flex items-center gap-2 pt-2 border-t border-neutral-800">
+                      <input
+                        type="time"
+                        value={newDailyTimeInput}
+                        onChange={(e) => setNewDailyTimeInput(e.target.value)}
+                        className="bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddDailyTime}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-emerald-400 text-xs font-semibold transition-colors border border-neutral-700"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Adicionar Horário Diário
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Case 3: Weekly (Multi-slot per day) */}
+                {formType === 'weekly' && (
+                  <div className="space-y-3 pt-2">
+                    {/* Days selector */}
+                    <div>
+                      <label className="block text-xs text-neutral-400 mb-1.5">
+                        1. Selecione os Dias da Semana:
+                      </label>
                       <div className="flex flex-wrap gap-1.5">
                         {WEEK_DAYS.map((d) => {
                           const isSelected = formWeeklyDays.includes(d.id);
@@ -1460,18 +2030,10 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                             <button
                               key={d.id}
                               type="button"
-                              onClick={() => {
-                                setFormWeeklyDays((prev) => {
-                                  if (prev.includes(d.id)) {
-                                    if (prev.length === 1) return prev; // keep at least one
-                                    return prev.filter((id) => id !== d.id);
-                                  }
-                                  return [...prev, d.id];
-                                });
-                              }}
+                              onClick={() => handleToggleWeeklyDay(d.id)}
                               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
                                 isSelected
-                                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 font-bold'
                                   : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:bg-neutral-800'
                               }`}
                             >
@@ -1481,15 +2043,101 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                         })}
                       </div>
                     </div>
-                  )}
-                </div>
+
+                    {/* Times per day manager */}
+                    <div className="p-3 bg-neutral-900 rounded-xl border border-neutral-800 space-y-3">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-neutral-300 font-semibold">
+                          2. Horários configurados por dia:
+                        </span>
+                        <div className="flex gap-1">
+                          {formWeeklyDays.map((dayId) => {
+                            const dayObj = WEEK_DAYS.find((d) => d.id === dayId);
+                            const isActive = selectedWeeklyDayForTimes === dayId;
+                            return (
+                              <button
+                                key={dayId}
+                                type="button"
+                                onClick={() => setSelectedWeeklyDayForTimes(dayId)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                                  isActive
+                                    ? 'bg-emerald-500 text-neutral-950'
+                                    : 'bg-neutral-800 text-neutral-400 hover:text-white'
+                                }`}
+                              >
+                                {dayObj?.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Display slots for selected day */}
+                      {(() => {
+                        const currentSlot = formWeeklySlots.find(
+                          (s) => s.day === selectedWeeklyDayForTimes
+                        );
+                        const dayObj = WEEK_DAYS.find((d) => d.id === selectedWeeklyDayForTimes);
+                        const times = currentSlot?.times || ['08:00'];
+
+                        return (
+                          <div className="space-y-2 pt-1">
+                            <span className="text-[11px] text-neutral-400 block">
+                              Horários para <strong>{dayObj?.full}:</strong>
+                            </span>
+
+                            <div className="flex flex-wrap gap-2">
+                              {times.map((t) => (
+                                <span
+                                  key={t}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-neutral-950 border border-emerald-500/30 text-emerald-300 font-mono text-xs"
+                                >
+                                  <Clock className="w-3 h-3 text-emerald-400" />
+                                  {t}
+                                  {times.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleRemoveWeeklyTime(selectedWeeklyDayForTimes, t)
+                                      }
+                                      className="hover:text-rose-400 ml-1"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
+
+                            <div className="flex items-center gap-2 pt-2">
+                              <input
+                                type="time"
+                                value={newWeeklyTimeInput}
+                                onChange={(e) => setNewWeeklyTimeInput(e.target.value)}
+                                className="bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleAddWeeklyTime(selectedWeeklyDayForTimes)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-emerald-400 text-xs font-semibold transition-colors border border-neutral-700"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                Adicionar Horário para {dayObj?.label}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* 5. Controle de Ritmo e Pausa de Lote */}
+              {/* 6. Controle de Ritmo e Pausa de Lote */}
               <div className="space-y-3 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
                 <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider flex items-center gap-2">
                   <Sliders className="w-4 h-4 text-emerald-400" />
-                  5. Controle de Ritmo & Fila de Entrega
+                  6. Controle de Ritmo & Fila de Entrega
                 </label>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1557,7 +2205,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
               </div>
             </form>
 
-            {/* Modal Footer (Always Anchored at Bottom) */}
+            {/* Modal Footer */}
             <div className="flex items-center justify-end gap-3 p-4 px-6 border-t border-neutral-800 shrink-0 bg-neutral-900/90 backdrop-blur-sm">
               <button
                 type="button"
@@ -1584,6 +2232,39 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                   </>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Visualizar Imagem em Tamanho Real */}
+      {previewMediaModal && (
+        <div
+          className="fixed inset-0 z-50 overflow-hidden p-4 flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => setPreviewMediaModal(null)}
+        >
+          <div
+            className="max-w-2xl max-h-[85vh] flex flex-col bg-neutral-900 border border-neutral-800 rounded-3xl overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 px-5 border-b border-neutral-800 bg-neutral-900 shrink-0">
+              <span className="text-xs font-semibold text-white truncate max-w-sm">
+                {previewMediaModal.fileName}
+              </span>
+              <button
+                onClick={() => setPreviewMediaModal(null)}
+                className="p-1.5 rounded-lg bg-neutral-800 text-neutral-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-neutral-950">
+              <img
+                src={previewMediaModal.url}
+                alt="Imagem ampliada"
+                className="max-w-full max-h-[70vh] rounded-xl object-contain"
+                referrerPolicy="no-referrer"
+              />
             </div>
           </div>
         </div>
@@ -1617,7 +2298,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
               </button>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
+            <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hidden p-6 space-y-4">
               <div className="grid grid-cols-3 gap-3 text-center">
                 <div className="p-3 bg-neutral-950 rounded-xl border border-neutral-800">
                   <span className="text-[10px] text-neutral-400 uppercase font-semibold block">Total</span>
@@ -1643,7 +2324,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                 <span className="text-xs font-semibold text-neutral-300 block">
                   Destinatários do lote:
                 </span>
-                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-60 overflow-y-auto scrollbar-hidden pr-1">
                   {selectedResultDetails.result.details.map((detail, idx) => (
                     <div
                       key={idx}
