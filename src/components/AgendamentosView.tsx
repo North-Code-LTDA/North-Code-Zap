@@ -208,9 +208,16 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     setFormFallbackName('amigo(a)');
     setFormType('once');
 
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    setFormDate(tomorrow.toISOString().split('T')[0]);
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: schedulerTimezone,
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date());
+    const dict = parts.reduce((acc, part) => {
+      acc[part.type] = part.value;
+      return acc;
+    }, {} as Record<string, string>);
+    setFormDate(`${dict.year}-${dict.month}-${dict.day}`);
+
     setFormTime('08:00');
 
     setFormDailyTimes(['08:00']);
@@ -1001,7 +1008,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                   {currentProgress.status === 'batch_pause'
                     ? `Pausa de segurança para resfriamento de fila. Retomada prevista para ${
                         currentProgress.resumeAt
-                          ? new Date(currentProgress.resumeAt).toLocaleTimeString('pt-BR')
+                          ? new Date(currentProgress.resumeAt).toLocaleTimeString('pt-BR', { timeZone: schedulerTimezone })
                           : 'em breve'
                       }.`
                     : `Enviando para: ${currentProgress.targetLabel} (${currentProgress.currentIndex}/${currentProgress.totalTargets})`}
@@ -2476,7 +2483,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                   Relatório do Disparo: {selectedResultDetails.scheduleName}
                 </h3>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Executado em {new Date(selectedResultDetails.result.executedAt).toLocaleString('pt-BR')}
+                  Executado em {new Date(selectedResultDetails.result.executedAt).toLocaleString('pt-BR', { timeZone: schedulerTimezone })}
                 </p>
               </div>
               <button

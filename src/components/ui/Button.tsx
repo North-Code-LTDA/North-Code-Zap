@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 
 export type ButtonVariant =
   | 'primary'
+  | 'primary-soft'
   | 'secondary'
   | 'danger'
   | 'danger-solid'
@@ -55,6 +56,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     const variantStyles: Record<ButtonVariant, string> = {
       primary:
         'bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-neutral-950 shadow-md shadow-emerald-500/10 font-bold',
+      'primary-soft':
+        'bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-[0.98] text-emerald-400 border border-emerald-500/30 font-semibold',
       secondary:
         'bg-neutral-800 hover:bg-neutral-700 active:scale-[0.98] text-neutral-200 border border-neutral-700/80 shadow-sm font-semibold',
       danger:

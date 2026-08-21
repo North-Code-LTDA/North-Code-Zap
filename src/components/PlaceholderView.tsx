@@ -3,7 +3,6 @@ import {
   Zap,
   Layers,
   Send,
-  Calendar,
   Bot,
   Settings,
   Clock,
@@ -65,26 +64,14 @@ const TAB_CONFIG: Record<
   },
   campanhas: {
     title: 'Campanhas de Transmissão',
-    description: 'Envie comunicados e ofertas em massa com controle de cadência e segurança anti-bloqueio.',
+    description: 'Organize ações de comunicação reutilizando destinatários, personalização, mídia, agendamento e relatórios já existentes na plataforma.',
     icon: Send,
     phase: 'Fase 2',
     features: [
-      'Disparo em massa programado com delay randômico',
-      'Variáveis dinâmicas de personalização por cliente',
-      'Relatórios detalhados de entrega e leitura',
-      'Gestão de opt-out e listas de exclusão',
-    ],
-  },
-  agendamentos: {
-    title: 'Agendamento de Mensagens',
-    description: 'Programe mensagens para datas e horários específicos com confirmação automática.',
-    icon: Calendar,
-    phase: 'Fase 2',
-    features: [
-      'Calendário visual de disparos programados',
-      'Lembretes de reuniões e compromissos',
-      'Cobranças e notificações periódicas',
-      'Fuso horário configurável por cliente',
+      'Organização de campanhas',
+      'Segmentação avançada de destinatários',
+      'Histórico e relatórios globais',
+      'Opt-out e listas de exclusão',
     ],
   },
   ia: {
@@ -173,7 +160,7 @@ export function PlaceholderView({ tab }: PlaceholderViewProps) {
 
         <div className="p-4 rounded-xl bg-neutral-950/60 border border-neutral-800 text-xs text-neutral-400 flex items-center justify-between">
           <span>
-            Funcionalidades ativas no momento: <strong className="text-emerald-400 font-mono">WhatsApp (Conexão Baileys)</strong> e <strong className="text-emerald-400 font-mono">Conversas (Recebimento Realtime)</strong>
+            Módulos ativos no momento: <strong className="text-emerald-400 font-mono">Dashboard</strong>, <strong className="text-emerald-400 font-mono">WhatsApp</strong>, <strong className="text-emerald-400 font-mono">Conversas</strong> e <strong className="text-emerald-400 font-mono">Agendamentos</strong>
           </span>
         </div>
       </div>

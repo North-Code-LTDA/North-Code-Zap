@@ -238,12 +238,36 @@ async function startServer() {
         return res.status(400).json({ success: false, error: 'Tipo de agendamento inválido.' });
       }
 
+      let parsedScheduledAt = scheduledAt;
+      
+      if (scheduleType === 'once') {
+        if (!scheduledAt) {
+          return res.status(400).json({ success: false, error: 'Informe uma data e horário válidos para o agendamento único.' });
+        }
+        const parsedDate = new Date(scheduledAt);
+        if (isNaN(parsedDate.getTime())) {
+          return res.status(400).json({ success: false, error: 'Data e horário inválidos.' });
+        }
+        if (parsedDate.getTime() <= Date.now()) {
+          return res.status(400).json({ success: false, error: 'O horário do agendamento deve estar no futuro.' });
+        }
+        parsedScheduledAt = parsedDate.toISOString();
+      } else if (scheduleType === 'daily') {
+        if (!Array.isArray(dailyTimes) || dailyTimes.length === 0) {
+          return res.status(400).json({ success: false, error: 'Adicione pelo menos um horário diário válido.' });
+        }
+      } else if (scheduleType === 'weekly') {
+        if (!Array.isArray(weeklyTimeSlots) || weeklyTimeSlots.length === 0) {
+          return res.status(400).json({ success: false, error: 'Configure pelo menos um dia e horário semanal válido.' });
+        }
+      }
+
       const newSchedule = schedulerService.create({
         name,
         message: message || '',
         targets,
         scheduleType,
-        scheduledAt: scheduledAt || new Date().toISOString(),
+        scheduledAt: parsedScheduledAt,
         dailyTimes,
         weeklyTimeSlots,
         media,
@@ -261,7 +285,37 @@ async function startServer() {
 
   app.put('/api/schedules/:id', (req, res) => {
     try {
-      const updated = schedulerService.update(req.params.id, req.body);
+      const { scheduleType, scheduledAt, dailyTimes, weeklyTimeSlots } = req.body;
+      let parsedScheduledAt = scheduledAt;
+
+      if (scheduleType === 'once') {
+        if (!scheduledAt) {
+          return res.status(400).json({ success: false, error: 'Informe uma data e horário válidos para o agendamento único.' });
+        }
+        const parsedDate = new Date(scheduledAt);
+        if (isNaN(parsedDate.getTime())) {
+          return res.status(400).json({ success: false, error: 'Data e horário inválidos.' });
+        }
+        // No future validation required on edit, or maybe we just normalize
+        parsedScheduledAt = parsedDate.toISOString();
+      } else if (scheduleType === 'daily') {
+        if (!Array.isArray(dailyTimes) || dailyTimes.length === 0) {
+          return res.status(400).json({ success: false, error: 'Adicione pelo menos um horário diário válido.' });
+        }
+      } else if (scheduleType === 'weekly') {
+        // If we have weeklyDays and timeOfDay, we allow it to pass for legacy schedules.
+        const isLegacy = Array.isArray(req.body.weeklyDays) && req.body.weeklyDays.length > 0;
+        if (!isLegacy && (!Array.isArray(weeklyTimeSlots) || weeklyTimeSlots.length === 0)) {
+          return res.status(400).json({ success: false, error: 'Configure pelo menos um dia e horário semanal válido.' });
+        }
+      }
+
+      const bodyToUpdate = { ...req.body };
+      if (parsedScheduledAt) {
+        bodyToUpdate.scheduledAt = parsedScheduledAt;
+      }
+
+      const updated = schedulerService.update(req.params.id, bodyToUpdate);
       if (!updated) {
         return res.status(404).json({ success: false, error: 'Agendamento não encontrado' });
       }

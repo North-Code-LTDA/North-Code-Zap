@@ -196,7 +196,7 @@ export class SchedulerService {
 
     const normalizedDailyTimes =
       data.scheduleType === 'daily'
-        ? normalizeTimeList(data.dailyTimes || (data.timeOfDay ? [data.timeOfDay] : ['08:00']))
+        ? normalizeTimeList(data.dailyTimes || (data.timeOfDay ? [data.timeOfDay] : []))
         : undefined;
 
     const normalizedWeeklySlots =
@@ -275,7 +275,7 @@ export class SchedulerService {
         ? normalizeTimeList(
             data.dailyTimes !== undefined
               ? data.dailyTimes
-              : current.dailyTimes || (current.timeOfDay ? [current.timeOfDay] : ['08:00'])
+              : current.dailyTimes || (current.timeOfDay ? [current.timeOfDay] : [])
           )
         : undefined;
 
