@@ -8,7 +8,8 @@ import {
   Clock,
   Sparkles,
   Zap,
-  Users
+  Users,
+  Calendar
 } from 'lucide-react';
 import type { WhatsAppAccountInfo, ReceivedMessage, NavigationTab } from '../types';
 
@@ -42,7 +43,7 @@ export function DashboardView({
               Visão geral do sistema
             </h1>
             <p className="text-sm text-neutral-400 max-w-xl leading-relaxed">
-              Monitore o status da instância do WhatsApp em tempo real e acompanhe as mensagens recebidas na plataforma.
+              Monitore a conexão do WhatsApp, acompanhe conversas em tempo real e gerencie seus agendamentos de mensagens.
             </p>
           </div>
 
@@ -58,10 +59,18 @@ export function DashboardView({
             <button
               id="dashboard-btn-conversas"
               onClick={() => onNavigate('conversas')}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 transition cursor-pointer"
+            >
+              <MessageSquare className="w-4 h-4 text-emerald-400" />
+              Ver conversas
+            </button>
+            <button
+              id="dashboard-btn-agendamentos"
+              onClick={() => onNavigate('agendamentos')}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-neutral-950 shadow-lg shadow-emerald-500/20 transition cursor-pointer"
             >
-              <MessageSquare className="w-4 h-4" />
-              Ver conversas
+              <Calendar className="w-4 h-4" />
+              Ver agendamentos
             </button>
           </div>
         </div>

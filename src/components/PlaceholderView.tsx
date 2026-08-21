@@ -22,15 +22,15 @@ const TAB_CONFIG: Record<
     title: string;
     description: string;
     icon: LucideIcon;
-    phase: string;
+    statusLabel: string;
     features: string[];
   }
 > = {
   contatos: {
     title: 'Gerenciamento de Contatos',
-    description: 'Centralize sua base de contatos, histórico de interações e segmentação por tags.',
+    description: 'Gerencie em uma interface dedicada os contatos já reconhecidos e persistidos pela plataforma.',
     icon: Users,
-    phase: 'Etapa 3',
+    statusLabel: 'Interface em desenvolvimento',
     features: [
       'Sincronização automática de contatos recebidos',
       'Etiquetas personalizadas e filtros avançados',
@@ -42,7 +42,7 @@ const TAB_CONFIG: Record<
     title: 'Automações & Gatilhos',
     description: 'Crie regras inteligentes para disparo automático de mensagens baseadas em eventos.',
     icon: Zap,
-    phase: 'Etapa 6',
+    statusLabel: 'Módulo em desenvolvimento',
     features: [
       'Respostas automáticas por palavras-chave',
       'Gatilhos de boas-vindas e ausência',
@@ -54,7 +54,7 @@ const TAB_CONFIG: Record<
     title: 'Editor Visual de Fluxos',
     description: 'Construa árvores de decisão e chatbots interativos arrastando blocos no canvas.',
     icon: Layers,
-    phase: 'Fase 2',
+    statusLabel: 'Módulo em desenvolvimento',
     features: [
       'Editor visual de nós e conexões',
       'Menus com botões e listas interativas',
@@ -66,7 +66,7 @@ const TAB_CONFIG: Record<
     title: 'Campanhas de Transmissão',
     description: 'Organize ações de comunicação reutilizando destinatários, personalização, mídia, agendamento e relatórios já existentes na plataforma.',
     icon: Send,
-    phase: 'Fase 2',
+    statusLabel: 'Interface dedicada em desenvolvimento',
     features: [
       'Organização de campanhas',
       'Segmentação avançada de destinatários',
@@ -78,7 +78,7 @@ const TAB_CONFIG: Record<
     title: 'Agentes de Inteligência Artificial',
     description: 'Conecte modelos de IA generativa para responder clientes de forma humanizada e inteligente.',
     icon: Bot,
-    phase: 'Fase 2',
+    statusLabel: 'Módulo em desenvolvimento',
     features: [
       'Assistente treinado com a base de conhecimento da empresa',
       'Compreensão de linguagem natural em áudio e texto',
@@ -90,7 +90,7 @@ const TAB_CONFIG: Record<
     title: 'Configurações do Sistema',
     description: 'Gerencie parâmetros de conexão, servidores, webhooks e credenciais de segurança.',
     icon: Settings,
-    phase: 'Geral',
+    statusLabel: 'Interface em desenvolvimento',
     features: [
       'Portas de rede e status do servidor Express',
       'Caminhos de persistência da sessão Baileys',
@@ -103,10 +103,10 @@ const TAB_CONFIG: Record<
 export function PlaceholderView({ tab }: PlaceholderViewProps) {
   const config = TAB_CONFIG[tab] || {
     title: 'Módulo em Desenvolvimento',
-    description: 'Esta área estará disponível nas próximas etapas do projeto.',
+    description: 'Esta área estará disponível nas próximas atualizações da plataforma.',
     icon: Sparkles,
-    phase: 'Próxima Etapa',
-    features: ['Funcionalidade planejada conforme o roadmap do projeto'],
+    statusLabel: 'Em desenvolvimento',
+    features: ['Funcionalidade em construção'],
   };
 
   const IconComponent = config.icon;
@@ -128,7 +128,7 @@ export function PlaceholderView({ tab }: PlaceholderViewProps) {
 
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono bg-neutral-800 text-neutral-400 border border-neutral-700">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
-            Previsto para: {config.phase}
+            {config.statusLabel}
           </span>
         </div>
       </div>
@@ -140,7 +140,7 @@ export function PlaceholderView({ tab }: PlaceholderViewProps) {
             Recursos Planejados para este Módulo
           </h2>
           <p className="text-xs text-neutral-400">
-            Conforme a metodologia de construção sequencial da North Code Zap, as funcionalidades são implementadas de forma robusta e isolada.
+            Esta funcionalidade está em construção e estará disponível em breve.
           </p>
         </div>
 

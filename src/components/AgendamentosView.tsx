@@ -100,12 +100,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
   const [formType, setFormType] = useState<ScheduleType>('once');
 
   // Form Once Timing
-  const [formDate, setFormDate] = useState(() => {
-    return new Intl.DateTimeFormat('en-CA', { 
-      timeZone: 'America/Belem', 
-      year: 'numeric', month: '2-digit', day: '2-digit' 
-    }).format(new Date());
-  });
+  const [formDate, setFormDate] = useState('');
   const [formTime, setFormTime] = useState('08:00');
 
   // Form Daily Multi-slot Timing
@@ -872,8 +867,6 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           scheduledAt,
           dailyTimes: payloadDailyTimes,
           weeklyTimeSlots: payloadWeeklySlots,
-          weeklyDays: formWeeklyDays,
-          timeOfDay: formType === 'daily' ? (payloadDailyTimes?.[0] || '08:00') : formType === 'weekly' ? (payloadWeeklySlots?.[0]?.times?.[0] || '08:00') : '08:00',
           media: formMedia,
           targets: formTargets,
           deliveryOptions,
@@ -893,8 +886,6 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           scheduledAt,
           dailyTimes: payloadDailyTimes,
           weeklyTimeSlots: payloadWeeklySlots,
-          weeklyDays: formWeeklyDays,
-          timeOfDay: formType === 'daily' ? (payloadDailyTimes?.[0] || '08:00') : formType === 'weekly' ? (payloadWeeklySlots?.[0]?.times?.[0] || '08:00') : '08:00',
           media: formMedia,
           targets: formTargets,
           deliveryOptions,

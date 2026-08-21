@@ -93,7 +93,7 @@ export function ConnectionCard({
               Conexão do WhatsApp
             </h2>
             <p className="text-xs text-neutral-400">
-              Instância Baileys oficial com sincronização em tempo real
+              Conexão Baileys com sincronização em tempo real
             </p>
           </div>
         </div>
@@ -306,7 +306,7 @@ export function ConnectionCard({
                   <span>Nome da Conta</span>
                 </div>
                 <div className="text-base font-bold text-white font-mono truncate" id="account-name-display">
-                  {state.name || 'WhatsApp Account'}
+                  {state.name || 'Conta WhatsApp'}
                 </div>
               </div>
 
@@ -399,47 +399,10 @@ export function ConnectionCard({
         )}
       </div>
 
-      {/* Step Roadmap Tracker (Etapa 1 to 6) */}
-      <div className="mt-4 pt-4 border-t border-neutral-800/80">
-        <div className="flex items-center justify-between text-[11px] text-neutral-400 mb-2">
-          <span className="font-semibold text-neutral-300">Etapas do Projeto North Code Zap</span>
-          <span className="text-emerald-400 font-mono">
-            {state.status === 'connected' ? 'Etapa 1 a 3 Concluídas' : 'Etapa 1 em Execução'}
-          </span>
-        </div>
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
-          <div className={`p-1.5 rounded text-center border text-[10px] font-mono ${
-            state.status === 'qr' || state.status === 'connected'
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-              : 'bg-neutral-800 border-neutral-700 text-neutral-400'
-          }`}>
-            1. QR Real
-          </div>
-          <div className={`p-1.5 rounded text-center border text-[10px] font-mono ${
-            state.status === 'connected'
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-              : 'bg-neutral-800 border-neutral-700 text-neutral-400'
-          }`}>
-            2. Conexão
-          </div>
-          <div className={`p-1.5 rounded text-center border text-[10px] font-mono ${
-            state.status === 'connected' && state.number
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-              : 'bg-neutral-800 border-neutral-700 text-neutral-400'
-          }`}>
-            3. Info Conta
-          </div>
-          <div className="p-1.5 rounded text-center border text-[10px] font-mono bg-neutral-900 border-neutral-800 text-neutral-600">
-            4. Receber
-          </div>
-          <div className="p-1.5 rounded text-center border text-[10px] font-mono bg-neutral-900 border-neutral-800 text-neutral-600">
-            5. Enviar
-          </div>
-          <div className="p-1.5 rounded text-center border text-[10px] font-mono bg-neutral-900 border-neutral-800 text-neutral-600">
-            6. Automação
-          </div>
-        </div>
-      </div>
+      {/* 
+        Não mostramos o bloco "Etapas do Projeto North Code Zap"
+        porque a aplicação já está consolidada.
+      */}
     </div>
   );
 }

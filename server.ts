@@ -193,6 +193,24 @@ async function startServer() {
     res.json(schedulerService.getAll());
   });
 
+  function isValidTime(t: any): boolean {
+    return typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
+  }
+
+  function validateDaily(times: any[]): boolean {
+    if (!Array.isArray(times)) return false;
+    return times.some(isValidTime);
+  }
+
+  function validateWeekly(slots: any[]): boolean {
+    if (!Array.isArray(slots)) return false;
+    return slots.some(s => 
+      typeof s === 'object' && s !== null &&
+      Number.isInteger(s.day) && s.day >= 0 && s.day <= 6 &&
+      Array.isArray(s.times) && s.times.some(isValidTime)
+    );
+  }
+
   app.post('/api/schedules', (req, res) => {
     try {
       const {
@@ -253,11 +271,11 @@ async function startServer() {
         }
         parsedScheduledAt = parsedDate.toISOString();
       } else if (scheduleType === 'daily') {
-        if (!Array.isArray(dailyTimes) || dailyTimes.length === 0) {
+        if (!validateDaily(dailyTimes)) {
           return res.status(400).json({ success: false, error: 'Adicione pelo menos um horário diário válido.' });
         }
       } else if (scheduleType === 'weekly') {
-        if (!Array.isArray(weeklyTimeSlots) || weeklyTimeSlots.length === 0) {
+        if (!validateWeekly(weeklyTimeSlots)) {
           return res.status(400).json({ success: false, error: 'Configure pelo menos um dia e horário semanal válido.' });
         }
       }
@@ -296,16 +314,19 @@ async function startServer() {
         if (isNaN(parsedDate.getTime())) {
           return res.status(400).json({ success: false, error: 'Data e horário inválidos.' });
         }
-        // No future validation required on edit, or maybe we just normalize
+        if (parsedDate.getTime() <= Date.now()) {
+          return res.status(400).json({ success: false, error: 'O horário do agendamento deve estar no futuro.' });
+        }
         parsedScheduledAt = parsedDate.toISOString();
       } else if (scheduleType === 'daily') {
-        if (!Array.isArray(dailyTimes) || dailyTimes.length === 0) {
+        if (!validateDaily(dailyTimes)) {
           return res.status(400).json({ success: false, error: 'Adicione pelo menos um horário diário válido.' });
         }
       } else if (scheduleType === 'weekly') {
-        // If we have weeklyDays and timeOfDay, we allow it to pass for legacy schedules.
-        const isLegacy = Array.isArray(req.body.weeklyDays) && req.body.weeklyDays.length > 0;
-        if (!isLegacy && (!Array.isArray(weeklyTimeSlots) || weeklyTimeSlots.length === 0)) {
+        // If we have weeklyDays and timeOfDay, we allow it to pass ONLY if weeklyTimeSlots is missing/invalid
+        // This preserves strict validation for any modern edits
+        const hasLegacyFields = Array.isArray(req.body.weeklyDays) && req.body.weeklyDays.length > 0;
+        if (!validateWeekly(weeklyTimeSlots) && !hasLegacyFields) {
           return res.status(400).json({ success: false, error: 'Configure pelo menos um dia e horário semanal válido.' });
         }
       }
