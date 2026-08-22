@@ -3,6 +3,7 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import multer from 'multer';
+import fs from 'fs';
 import { Server as SocketIOServer } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 import { InstanceManager, DATA_DIR } from './server/instances.ts';
@@ -13,7 +14,6 @@ process.env.TZ = APP_TIMEZONE;
 
 const instanceManager = new InstanceManager();
 const schedulerService = new SchedulerService(instanceManager);
-instanceManager.setScheduler(schedulerService);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -169,7 +169,7 @@ async function startServer() {
         if (runtime) {
           clientSocket.join(`instance:${instanceId}`);
           clientSocket.emit('whatsapp:state', runtime.whatsapp.getState());
-          clientSocket.emit('whatsapp:messages_list', runtime.whatsapp['messages']);
+          clientSocket.emit('whatsapp:messages_list', runtime.whatsapp.getMessages());
           clientSocket.emit('scheduler:schedules_list', schedulerService.getSchedulesForInstance(instanceId));
         }
       }
@@ -202,9 +202,12 @@ async function startServer() {
     res.json(meta);
   });
 
-  app.delete('/api/instances/:id', (req, res) => {
-    const success = instanceManager.deleteInstance(req.params.id);
-    if (!success) return res.status(404).json({ error: 'Instância não encontrada' });
+  app.delete('/api/instances/:id', async (req, res) => {
+    const runtime = instanceManager.get(req.params.id);
+    if (!runtime) return res.status(404).json({ error: 'Instância não encontrada' });
+    
+    schedulerService.deleteAllForInstance(req.params.id, runtime.media);
+    await instanceManager.deleteInstance(req.params.id);
     res.json({ success: true });
   });
 
@@ -213,16 +216,32 @@ async function startServer() {
     if (!runtime) return res.status(404).json({ error: 'Instância não encontrada' });
     const fileName = path.basename(req.params.fileName);
     const p = runtime.media.getFilePath(fileName);
+    if (!fs.existsSync(p)) return res.status(404).json({ error: 'Arquivo não encontrado' });
     res.sendFile(p);
   });
 
-  app.post('/api/instances/:instanceId/media/upload', (req, res) => {
+  app.post('/api/instances/:instanceId/media/upload', (req, res, next) => {
+    const runtime = instanceManager.get(req.params.instanceId);
+    if (!runtime) return res.status(404).json({ success: false, error: 'Instância não encontrada' });
+    next();
+  }, (req, res) => {
     upload.single('file')(req, res, (err) => {
       if (err) return res.status(400).json({ success: false, error: err.message });
       if (!req.file) return res.status(400).json({ success: false, error: 'Nenhum arquivo.' });
       const localPath = req.file.path;
       const url = `/api/instances/${req.params.instanceId}/media/files/${req.file.filename}`;
-      res.json({ success: true, localPath, url });
+      res.json({ 
+        success: true, 
+        media: {
+          type: 'image',
+          source: 'upload',
+          localPath,
+          url,
+          fileName: req.file.filename,
+          mimeType: req.file.mimetype,
+          size: req.file.size
+        } 
+      });
     });
   });
 
@@ -237,13 +256,13 @@ async function startServer() {
   app.get('/api/instances/:instanceId/whatsapp/messages', (req, res) => {
     const runtime = instanceManager.get(req.params.instanceId);
     if (!runtime) return res.status(404).json({ error: 'Not found' });
-    res.json({ success: true, messages: runtime.whatsapp['messages'] });
+    res.json(runtime.whatsapp.getMessages());
   });
 
   app.get('/api/instances/:instanceId/contacts', (req, res) => {
     const runtime = instanceManager.get(req.params.instanceId);
     if (!runtime) return res.status(404).json({ error: 'Not found' });
-    res.json({ success: true, contacts: runtime.contacts.getAll() });
+    res.json(runtime.contacts.getAll());
   });
 
   app.get('/api/instances/:instanceId/whatsapp/groups', async (req, res) => {
@@ -251,8 +270,8 @@ async function startServer() {
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     try {
       const groups = await runtime.whatsapp.getGroups();
-      res.json({ success: true, groups });
-    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+      res.json(groups);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   app.get('/api/instances/:instanceId/whatsapp/groups/:jid/participants', async (req, res) => {
@@ -260,16 +279,18 @@ async function startServer() {
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     try {
       const participants = await runtime.whatsapp.getGroupParticipants(req.params.jid);
-      res.json({ success: true, data: participants });
-    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+      res.json(participants);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   app.post('/api/instances/:instanceId/whatsapp/messages/send', async (req, res) => {
     const runtime = instanceManager.get(req.params.instanceId);
     if (!runtime) return res.status(404).json({ error: 'Not found' });
-    const { to, message } = req.body;
+    const remoteJid = typeof req.body.remoteJid === 'string' ? req.body.remoteJid.trim() : '';
+    const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
+    if (!remoteJid || !text) return res.status(400).json({ success: false, error: 'Dados inválidos' });
     try {
-      const result = await runtime.whatsapp.sendTextMessage(to, message);
+      const result = await runtime.whatsapp.sendTextMessage(remoteJid, text);
       if (result.success) res.json(result);
       else res.status(400).json(result);
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
@@ -294,6 +315,8 @@ async function startServer() {
   });
 
   app.get('/api/instances/:instanceId/schedules', (req, res) => {
+    const runtime = instanceManager.get(req.params.instanceId);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true, schedules: schedulerService.getSchedulesForInstance(req.params.instanceId) });
   });
 
@@ -352,6 +375,7 @@ async function startServer() {
 
   // Init manager
   await instanceManager.init();
+  schedulerService.init();
   schedulerService.startLoop();
 
   if (process.env.NODE_ENV !== 'production') {

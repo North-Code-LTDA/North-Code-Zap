@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Server as SocketIOServer } from 'socket.io';
-import type { InstanceManager } from './instances';
+import { MediaService } from './media';
 
 import { renderMessageTemplate } from '../src/utils/template';
 import type { 
@@ -17,8 +17,8 @@ import type {
   WeeklyTimeSlot,
  SchedulePayload } from "../src/types";
 
-const SCHEDULER_DIR =
-  process.env.SCHEDULER_DATA_DIR || path.join(process.cwd(), 'data', 'scheduler');
+import { DATA_DIR, type InstanceManager } from './instances';
+const SCHEDULER_DIR = path.join(DATA_DIR, 'scheduler');
 const SCHEDULES_FILE = path.join(SCHEDULER_DIR, 'schedules.json');
 const SCHEDULES_TMP_FILE = path.join(SCHEDULER_DIR, 'schedules.json.tmp');
 
@@ -72,6 +72,9 @@ export class SchedulerService {
   constructor(instanceManager: InstanceManager) {
     this.instanceManager = instanceManager;
     this.ensureDirectory();
+  }
+
+  public init() {
     this.loadSchedules();
   }
 
@@ -86,161 +89,40 @@ export class SchedulerService {
   }
 
   private loadSchedules() {
-    this.schedules = [];
     try {
       if (fs.existsSync(SCHEDULES_FILE)) {
         const raw = fs.readFileSync(SCHEDULES_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
+          const validSchedules = [];
           for (const s of parsed) {
-            // Strict Schema Validation
-            const hasOwn = (obj: any, prop: string) => Object.prototype.hasOwnProperty.call(obj, prop);
+            if (!s.instanceId || typeof s.instanceId !== 'string') {
+              console.warn(`[Scheduler] Orphaned schedule skipped (no instanceId): ${s.id}`);
+              continue;
+            }
+            if (!this.instanceManager.get(s.instanceId)) {
+              console.warn(`[Scheduler] Schedule skipped (instance not found): ${s.id} for instance ${s.instanceId}`);
+              continue;
+            }
             
-            const requiredFields = [
-              'id', 'name', 'message', 'targets', 'scheduleType', 'scheduledAt', 'nextRunAt',
-              'dailyTimes', 'weeklyTimeSlots', 'media', 'fallbackName', 'deliveryOptions',
-              'status', 'createdAt', 'updatedAt', 'lastRunAt', 'lastResult'
-            ];
-
-            let hasAllFields = true;
-            for (const field of requiredFields) {
-              if (!hasOwn(s, field)) {
-                hasAllFields = false;
-                break;
+            if (s.status === 'running') {
+              s.status = 'error';
+              if (s.lastResult) s.lastResult.error = 'Servidor reiniciado durante execução';
+            }
+            if (s.scheduleType !== 'once') {
+              const expectedNext = this.calculateNextRunAt(s, new Date());
+              if (s.nextRunAt !== expectedNext) {
+                s.nextRunAt = expectedNext;
               }
             }
-
-            if (!hasAllFields) {
-              console.warn(`[Scheduler] Ignoring invalid schedule ${s?.id || 'unknown'} (missing required fields)`);
-              continue;
-            }
-
-            const isValidDateString = (value: unknown): value is string =>
-              typeof value === 'string' && !Number.isNaN(new Date(value).getTime());
-
-            const isValidBase =
-              typeof s.id === 'string' && s.id.trim().length > 0 &&
-              typeof s.name === 'string' && s.name.trim().length > 0 &&
-              typeof s.message === 'string' &&
-              typeof s.fallbackName === 'string' && s.fallbackName.trim().length > 0 &&
-              Array.isArray(s.targets) &&
-              ['once', 'daily', 'weekly'].includes(s.scheduleType) &&
-              Array.isArray(s.dailyTimes) &&
-              Array.isArray(s.weeklyTimeSlots) &&
-              typeof s.deliveryOptions === 'object' && s.deliveryOptions !== null &&
-              ['active', 'paused', 'running', 'completed', 'error'].includes(s.status) &&
-              isValidDateString(s.createdAt) &&
-              isValidDateString(s.updatedAt) &&
-              (s.nextRunAt === null || isValidDateString(s.nextRunAt)) &&
-              (s.lastRunAt === null || isValidDateString(s.lastRunAt)) &&
-              (s.lastResult === null || typeof s.lastResult === 'object');
-
-            if (!isValidBase) {
-              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (base fields invalid)`);
-              continue;
-            }
-
-            // Delivery options validation
-            const delOpt = s.deliveryOptions;
-            if (
-              typeof delOpt.intervalBetweenMessagesMs !== 'number' || !Number.isFinite(delOpt.intervalBetweenMessagesMs) || delOpt.intervalBetweenMessagesMs < 1000 ||
-              typeof delOpt.batchPauseEnabled !== 'boolean' ||
-              typeof delOpt.batchSize !== 'number' || !Number.isInteger(delOpt.batchSize) || delOpt.batchSize < 1 ||
-              typeof delOpt.batchPauseMs !== 'number' || !Number.isFinite(delOpt.batchPauseMs) || delOpt.batchPauseMs < 60000
-            ) {
-              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (deliveryOptions invalid)`);
-              continue;
-            }
-
-            // Targets validation
-            const validSources = ['directory', 'manual', 'import', 'group_member', 'group'];
-            let targetsValid = s.targets.length > 0;
-            for (const t of s.targets) {
-              if (
-                (t.type !== 'person' && t.type !== 'group') ||
-                typeof t.jid !== 'string' || !t.jid.trim() ||
-                typeof t.label !== 'string' || !t.label.trim() ||
-                (!validSources.includes(t.source)) ||
-                (t.type === 'group' && t.source !== 'group') ||
-                (t.source === 'group_member' && t.type !== 'person') ||
-                (t.source === 'directory' && t.type !== 'person') ||
-                (t.source === 'manual' && t.type !== 'person') ||
-                (t.source === 'import' && t.type !== 'person')
-              ) {
-                targetsValid = false;
-                break;
-              }
-            }
-            if (!targetsValid) {
-              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (targets invalid)`);
-              continue;
-            }
-
-            // Media validation
-            let mediaValid = false;
-            if (s.media === null) {
-              mediaValid = true;
-            } else if (typeof s.media === 'object' && s.media !== null && s.media.type === 'image') {
-              if (s.media.source === 'upload' && typeof s.media.localPath === 'string' && s.media.localPath.trim().length > 0) {
-                mediaValid = true;
-              } else if (s.media.source === 'url' && typeof s.media.url === 'string' && /^https?:\/\//i.test(s.media.url)) {
-                mediaValid = true;
-              }
-            }
-            if (!mediaValid) {
-              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (media invalid)`);
-              continue;
-            }
-
-            const hasText = s.message.trim().length > 0;
-            const hasMedia = s.media !== null;
-            if (!hasText && !hasMedia) {
-              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (no text and no media)`);
-              continue;
-            }
-
-            const isValidTime = (t: any) => typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
-
-            let isValidSpecific = false;
-            if (s.scheduleType === 'once') {
-              isValidSpecific =
-                typeof s.scheduledAt === 'string' &&
-                !isNaN(new Date(s.scheduledAt).getTime()) &&
-                s.dailyTimes.length === 0 &&
-                s.weeklyTimeSlots.length === 0;
-            } else if (s.scheduleType === 'daily') {
-              isValidSpecific =
-                s.scheduledAt === null &&
-                s.dailyTimes.length >= 1 &&
-                s.dailyTimes.every(isValidTime) &&
-                s.weeklyTimeSlots.length === 0;
-            } else if (s.scheduleType === 'weekly') {
-              isValidSpecific =
-                s.scheduledAt === null &&
-                s.dailyTimes.length === 0 &&
-                s.weeklyTimeSlots.length >= 1 &&
-                s.weeklyTimeSlots.every((ws: any) =>
-                  typeof ws === 'object' && ws !== null &&
-                  Number.isInteger(ws.day) && ws.day >= 0 && ws.day <= 6 &&
-                  Array.isArray(ws.times) && ws.times.length > 0 &&
-                  ws.times.every(isValidTime)
-                );
-            }
-
-            if (!isValidSpecific) {
-              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (type-specific constraints failed)`);
-              continue;
-            }
-
-            this.schedules.push(s);
+            validSchedules.push(s);
           }
-          console.log(`[Scheduler] loaded valid schedules=${this.schedules.length}`);
-          this.validateAndRepairOnStartup();
-          return;
+          this.schedules = validSchedules;
+          console.log(`[Scheduler] loaded schedules=${this.schedules.length}`);
         }
       }
     } catch (err: any) {
-      console.error('[Scheduler] error reading schedules file, initializing empty:', err?.message);
+      console.error('[Scheduler] error loading schedules file:', err?.message || err);
     }
   }
 
@@ -361,7 +243,7 @@ export class SchedulerService {
     return tempSchedule;
   }
 
-  public update(id: string, instanceId: string, data: SchedulePayload, mediaSvc: any): ScheduledMessage | null {
+  public update(id: string, instanceId: string, data: SchedulePayload, mediaSvc: MediaService): ScheduledMessage | null {
     const index = this.schedules.findIndex((s) => s.id === id && s.instanceId === instanceId);
     if (index === -1) return null;
 
@@ -405,15 +287,15 @@ export class SchedulerService {
       previousMedia.localPath &&
       previousMedia.localPath !== updated.media?.localPath
     ) {
-      mediaSvc.deleteMediaIfUnreferenced(previousMedia.localPath, this.schedules);
+      mediaSvc.deleteMediaIfUnreferenced(previousMedia.localPath, this.getSchedulesForInstance(instanceId));
     }
 
     console.log(`[Scheduler] updated schedule=${updated.id} name="${updated.name}"`);
     return updated;
   }
 
-  public delete(id: string, instanceId: string, mediaSvc: any): boolean {
-    const targetSchedule = this.schedules.find((s) => s.id === id);
+  public delete(id: string, instanceId: string, mediaSvc: MediaService): boolean {
+    const targetSchedule = this.schedules.find((s) => s.id === id && s.instanceId === instanceId);
     if (!targetSchedule) {
       console.warn(`[Scheduler] delete failed schedule=${id} reason=not_found`);
       return false;
@@ -421,7 +303,7 @@ export class SchedulerService {
 
     const mediaToClean = targetSchedule.media;
 
-    this.schedules = this.schedules.filter((s) => s.id !== id);
+    this.schedules = this.schedules.filter((s) => !(s.id === id && s.instanceId === instanceId));
     this.saveSchedules();
     this.emitUpdated();
     console.log(`[Scheduler] deleted schedule=${id}`);
@@ -468,6 +350,26 @@ export class SchedulerService {
   /**
    * Calculate next run timestamp in ISO format for once, daily, and weekly schedules
    */
+  public deleteAllForInstance(instanceId: string, mediaSvc: MediaService): number {
+    const targets = this.schedules.filter(s => s.instanceId === instanceId);
+    this.schedules = this.schedules.filter((s) => s.instanceId !== instanceId);
+    
+    for (const s of targets) {
+      if (this.processingSchedules.has(s.id)) {
+        this.processingSchedules.delete(s.id);
+      }
+    }
+
+    if (targets.length > 0) {
+      this.saveSchedules();
+      if (this.io) {
+        this.io.to(`instance:${instanceId}`).emit('scheduler:updated', []);
+        this.io.to(`instance:${instanceId}`).emit('scheduler:schedules_list', []);
+      }
+    }
+    return targets.length;
+  }
+
   public calculateNextRunAt(schedule: ScheduledMessage, fromDate = new Date()): string | null {
     const nowTime = fromDate.getTime();
 

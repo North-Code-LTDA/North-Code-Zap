@@ -24,7 +24,9 @@ export function InstancesSelector() {
       >
         <option value="" disabled>Selecione uma Instância</option>
         {instances.map(i => (
-          <option key={i.id} value={i.id}>{i.name}</option>
+          <option key={i.id} value={i.id}>
+            {i.name} {i.account?.status === 'connected' ? '(Online)' : i.account?.status === 'disconnected' ? '(Offline)' : ''}
+          </option>
         ))}
       </select>
       
@@ -48,6 +50,22 @@ export function InstancesSelector() {
           title="Nova Instância"
         >
           <Plus className="w-4 h-4" />
+        </button>
+      )}
+      
+      {selectedInstanceId && (
+        <button 
+          onClick={() => {
+            const currentName = instances.find(i => i.id === selectedInstanceId)?.name || '';
+            const newName = prompt('Novo nome da instância:', currentName);
+            if (newName && newName.trim() && newName !== currentName) {
+              renameInstance(selectedInstanceId, newName);
+            }
+          }} 
+          className="p-1.5 text-neutral-500 hover:text-blue-500 rounded-md transition-colors border border-transparent hover:border-blue-200 dark:hover:border-blue-800"
+          title="Renomear Instância"
+        >
+          <Edit2 className="w-4 h-4" />
         </button>
       )}
 

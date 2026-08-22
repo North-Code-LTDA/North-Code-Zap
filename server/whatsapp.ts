@@ -24,6 +24,7 @@ import type {
 const MAX_MESSAGES_IN_MEMORY = 100;
 
 export class WhatsAppService {
+
   private sock: WASocket | null = null;
   private io: SocketIOServer | null = null;
   private isStarting: boolean = false;

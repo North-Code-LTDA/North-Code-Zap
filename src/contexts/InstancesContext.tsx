@@ -17,7 +17,9 @@ const InstancesContext = createContext<InstancesContextData>({} as InstancesCont
 
 export function InstancesProvider({ children }: { children: React.ReactNode }) {
   const [instances, setInstances] = useState<WhatsAppInstanceSummary[]>([]);
-  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(() => {
+    return localStorage.getItem('north-code-zap:selected-instance') || null;
+  });
   const [loading, setLoading] = useState(true);
 
   const refreshInstances = useCallback(async () => {
@@ -25,8 +27,12 @@ export function InstancesProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch('/api/instances');
       const data = await res.json();
       setInstances(data);
-      if (!selectedInstanceId && data.length > 0) {
-        setSelectedInstanceId(data[0].id);
+      if (data.length > 0) {
+        if (!selectedInstanceId || !data.some((i: any) => i.id === selectedInstanceId)) {
+          selectInstance(data[0].id);
+        }
+      } else {
+        selectInstance(null);
       }
     } catch (err) {
       console.error('Failed to fetch instances', err);
@@ -43,19 +49,39 @@ export function InstancesProvider({ children }: { children: React.ReactNode }) {
     if (selectedInstanceId) {
       socket.emit('instance:subscribe', selectedInstanceId);
     }
+    
+    const handleConnect = () => {
+      if (selectedInstanceId) {
+        socket.emit('instance:subscribe', selectedInstanceId);
+      }
+    };
+    
+    socket.on('connect', handleConnect);
+    return () => {
+      socket.off('connect', handleConnect);
+    };
   }, [selectedInstanceId]);
 
-  const selectInstance = (id: string) => {
+  const selectInstance = (id: string | null) => {
     setSelectedInstanceId(id);
+    if (id) {
+      localStorage.setItem('north-code-zap:selected-instance', id);
+    } else {
+      localStorage.removeItem('north-code-zap:selected-instance');
+    }
   };
 
   const createInstance = async (name: string) => {
-    await fetch('/api/instances', {
+    const res = await fetch('/api/instances', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name })
     });
-    await refreshInstances();
+    if (res.ok) {
+      const data = await res.json();
+      await refreshInstances();
+      selectInstance(data.id);
+    }
   };
 
   const renameInstance = async (id: string, name: string) => {

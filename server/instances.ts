@@ -6,6 +6,15 @@ import { ContactsService } from './contacts.ts';
 import { MediaService } from './media.ts';
 import type { Server as SocketIOServer } from 'socket.io';
 
+function isValidUuid(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+function isValidDate(dateStr: string): boolean {
+  const d = new Date(dateStr);
+  return !isNaN(d.getTime());
+}
+
 export const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const INSTANCES_FILE = path.join(DATA_DIR, 'instances.json');
 
@@ -26,7 +35,7 @@ export interface InstanceRuntime {
 export class InstanceManager {
   private runtimes = new Map<string, InstanceRuntime>();
   private io: SocketIOServer | null = null;
-  private schedulerService: any = null;
+  private deletingInstances = new Set<string>();
 
   constructor() {
     this.ensureDirectory();
@@ -34,12 +43,12 @@ export class InstanceManager {
 
   public setSocketIO(io: SocketIOServer) {
     this.io = io;
+    for (const runtime of this.runtimes.values()) {
+      runtime.whatsapp.setSocketIO(io);
+    }
   }
   
-  public setScheduler(schedulerService: any) {
-    this.schedulerService = schedulerService;
-  }
-
+  
   private ensureDirectory() {
     try {
       if (!fs.existsSync(DATA_DIR)) {
@@ -51,23 +60,59 @@ export class InstanceManager {
   }
 
   public async init() {
-    let metadatas: InstanceMetadata[] = [];
+    let metadatas: any[] = [];
     try {
       if (fs.existsSync(INSTANCES_FILE)) {
         const raw = fs.readFileSync(INSTANCES_FILE, 'utf-8');
-        metadatas = JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          metadatas = parsed;
+        } else {
+          console.warn('[InstanceManager] instances.json is not an array. Initializing empty.');
+        }
       }
     } catch (err) {
       console.error('[InstanceManager] error loading instances.json:', err);
     }
 
+    const validMetas: InstanceMetadata[] = [];
+    const seenIds = new Set<string>();
+
     for (const meta of metadatas) {
-      if (typeof meta.id === 'string' && typeof meta.name === 'string') {
-        this.createRuntime(meta);
+      if (!meta || typeof meta.id !== 'string' || !isValidUuid(meta.id)) {
+        console.warn('[InstanceManager] Invalid or missing id in instances.json');
+        continue;
       }
+      if (seenIds.has(meta.id)) {
+        console.warn(`[InstanceManager] Duplicate instance ID found: ${meta.id}. Ignoring duplicate.`);
+        continue;
+      }
+      if (typeof meta.name !== 'string' || !meta.name.trim()) {
+        console.warn(`[InstanceManager] Invalid name for instance: ${meta.id}`);
+        continue;
+      }
+      if (typeof meta.createdAt !== 'string' || !isValidDate(meta.createdAt)) {
+        console.warn(`[InstanceManager] Invalid createdAt for instance: ${meta.id}`);
+        continue;
+      }
+      if (typeof meta.updatedAt !== 'string' || !isValidDate(meta.updatedAt)) {
+        console.warn(`[InstanceManager] Invalid updatedAt for instance: ${meta.id}`);
+        continue;
+      }
+
+      seenIds.add(meta.id);
+      validMetas.push({
+        id: meta.id,
+        name: meta.name.trim(),
+        createdAt: meta.createdAt,
+        updatedAt: meta.updatedAt
+      });
+    }
+
+    for (const meta of validMetas) {
+      this.createRuntime(meta);
     }
     
-    // Auto-connect instances that have credentials
     for (const runtime of this.runtimes.values()) {
       const authDir = path.join(DATA_DIR, 'instances', runtime.metadata.id, 'auth');
       const credsFile = path.join(authDir, 'creds.json');
@@ -123,6 +168,7 @@ export class InstanceManager {
   }
 
   public createInstance(name: string): InstanceMetadata {
+    if (typeof name !== 'string' || !name.trim()) throw new Error('Nome de instância inválido.');
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const meta: InstanceMetadata = {
@@ -138,6 +184,7 @@ export class InstanceManager {
   }
 
   public renameInstance(id: string, newName: string): InstanceMetadata | null {
+    if (typeof newName !== 'string' || !newName.trim()) throw new Error('Nome de instância inválido.');
     const runtime = this.runtimes.get(id);
     if (!runtime) return null;
 
@@ -147,36 +194,31 @@ export class InstanceManager {
     return runtime.metadata;
   }
 
-  public deleteInstance(id: string): boolean {
+  public async deleteInstance(id: string): Promise<boolean> {
+    if (this.deletingInstances.has(id)) return false;
     const runtime = this.runtimes.get(id);
     if (!runtime) return false;
 
-    // Disconnect
-    runtime.whatsapp.disconnect();
-    
-    // Stop reconnect timers
-    runtime.whatsapp.clearReconnectTimer();
+    this.deletingInstances.add(id);
 
-    // Remove from scheduler
-    if (this.schedulerService) {
-      this.schedulerService.deleteAllForInstance(id);
-    }
-
-    // Remove from map
-    this.runtimes.delete(id);
-    this.saveMetadatas();
-
-    // Remove directory
     try {
+      runtime.whatsapp.clearReconnectTimer?.();
+      await runtime.whatsapp.disconnect();
+      
+      this.runtimes.delete(id);
+      this.saveMetadatas();
+
       const instanceDir = path.join(DATA_DIR, 'instances', id);
       if (fs.existsSync(instanceDir)) {
         fs.rmSync(instanceDir, { recursive: true, force: true });
       }
+      return true;
     } catch (err) {
-      console.error(`[InstanceManager] error deleting instance dir \${id}:`, err);
+      console.error(`[InstanceManager] error deleting instance ${id}:`, err);
+      return false;
+    } finally {
+      this.deletingInstances.delete(id);
     }
-
-    return true;
   }
 
   public get(id: string): InstanceRuntime | undefined {

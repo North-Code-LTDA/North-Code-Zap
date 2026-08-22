@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { socket } from '../lib/socket';
 import type { WhatsAppAccountInfo, ReceivedMessage } from '../types';
 
 const INITIAL_STATE: WhatsAppAccountInfo = {
@@ -18,7 +18,7 @@ export function useWhatsApp(instanceId: string | null) {
   const [socketConnected, setSocketConnected] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [logs, setLogs] = useState<Array<{ id: string; time: string; text: string; type: 'info' | 'success' | 'warn' | 'error' }>>([]);
-  const socketRef = useRef<Socket | null>(null);
+  
 
   const addLog = useCallback((text: string, type: 'info' | 'success' | 'warn' | 'error' = 'info') => {
     const time = new Date().toLocaleTimeString('pt-BR');
@@ -27,60 +27,40 @@ export function useWhatsApp(instanceId: string | null) {
   }, []);
 
   useEffect(() => {
+    setState(INITIAL_STATE);
+    setMessages([]);
+    setLogs([]);
+    setLoading(false);
+    
     if (!instanceId) return;
-    const socketInstance: Socket = io({
-      transports: ['websocket', 'polling'],
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
-    });
+    
 
-    socketRef.current = socketInstance;
+    
 
-    socketInstance.on('connect', () => {
+    const onConnect = () => {
       setSocketConnected(true);
-      addLog('Socket.IO conectado ao servidor', 'info');
-      socketInstance.emit('instance:subscribe', instanceId);
-    });
-
-    socketInstance.on('disconnect', () => {
+    };
+    socket.on('connect', onConnect);
+    
+    const onDisconnect = () => {
       setSocketConnected(false);
-      addLog('Socket.IO desconectado do servidor', 'warn');
-    });
+    };
+    socket.on('disconnect', onDisconnect);
 
-    socketInstance.on('whatsapp:state', (newState: WhatsAppAccountInfo) => {
+    
+
+    const onState = (newState: WhatsAppAccountInfo) => {
       setState(newState);
       setLoading(false);
-
-      if (newState.status === 'connecting') {
-        if (newState.qrCode === null && newState.jid === null) {
-          addLog('Iniciando conexão Baileys...', 'info');
-        } else {
-          addLog('Finalizando autenticação Baileys...', 'info');
-        }
-      } else if (newState.status === 'qr') {
-        addLog('QR Code gerado e pronto para leitura', 'info');
-      } else if (newState.status === 'connected') {
-        addLog(`WhatsApp conectado com sucesso (${newState.name || newState.number})`, 'success');
-      } else if (newState.status === 'disconnected') {
-        if (newState.error) {
-          addLog(`Desconectado: ${newState.error}`, 'warn');
-        } else {
-          addLog('WhatsApp desconectado', 'info');
-        }
-      } else if (newState.status === 'error') {
-        addLog(`Erro: ${newState.error || 'Falha na conexão'}`, 'error');
-      }
-    });
+    };
+    socket.on('whatsapp:state', onState);
 
     // Real-time incoming or outgoing message
-    socketInstance.on('whatsapp:message', (newMsg: ReceivedMessage) => {
+    const onMessage = (newMsg: ReceivedMessage) => {
       setMessages((prev) => {
-        if (prev.some((m) => m.id === newMsg.id)) {
-          return prev;
-        }
+        if (prev.some((m) => m.id === newMsg.id)) return prev;
         return [newMsg, ...prev].slice(0, 100);
       });
-
       if (newMsg.direction === 'outgoing') {
         const destDisplay = newMsg.pushName ? `${newMsg.pushName} (${newMsg.number || 'contato'})` : (newMsg.number ? `+${newMsg.number}` : 'destinatário');
         addLog(`Mensagem enviada para ${destDisplay}`, 'success');
@@ -88,13 +68,15 @@ export function useWhatsApp(instanceId: string | null) {
         const senderDisplay = newMsg.pushName ? `${newMsg.pushName} (${newMsg.number || 'desconhecido'})` : (newMsg.number ? `+${newMsg.number}` : 'desconhecido');
         addLog(`Nova mensagem de ${senderDisplay}`, 'success');
       }
-    });
+    };
+    socket.on('whatsapp:message', onMessage);
 
-    socketInstance.on('whatsapp:messages_list', (list: ReceivedMessage[]) => {
-      if (Array.isArray(list)) {
-        setMessages(list);
-      }
-    });
+
+
+    const onMessagesList = (list: ReceivedMessage[]) => {
+      if (Array.isArray(list)) setMessages(list);
+    };
+    socket.on('whatsapp:messages_list', onMessagesList);
 
     // Initial state fetch via REST
     fetch(`/api/instances/${instanceId}/whatsapp/status`)
@@ -121,7 +103,11 @@ export function useWhatsApp(instanceId: string | null) {
       });
 
     return () => {
-      socketInstance.disconnect();
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('whatsapp:state', onState);
+      socket.off('whatsapp:message', onMessage);
+      socket.off('whatsapp:messages_list', onMessagesList);
     };
   }, [addLog, instanceId]);
 
@@ -143,7 +129,7 @@ export function useWhatsApp(instanceId: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [loading, state.status, addLog]);
+  }, [instanceId, loading, state.status, addLog]);
 
   const disconnect = useCallback(async () => {
     if (!instanceId) return;
@@ -161,7 +147,7 @@ export function useWhatsApp(instanceId: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [addLog]);
+  }, [instanceId, addLog]);
 
   const sendMessage = useCallback(
     async (remoteJid: string, text: string): Promise<{ success: boolean; error?: string }> => {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { socket } from '../lib/socket';
 import type { 
   ScheduledMessage, 
   WhatsAppGroup, 
@@ -114,6 +114,12 @@ export function useSchedules(instanceId: string | null) {
   );
 
   useEffect(() => {
+    setSchedules([]);
+    setGroups([]);
+    setContacts([]);
+    setCurrentProgress(null);
+    setExecutingScheduleId(null);
+    
     if (!instanceId) return;
     
     // Initial fetch
@@ -121,36 +127,43 @@ export function useSchedules(instanceId: string | null) {
     fetchGroups();
     fetchContacts();
 
-    const socket: Socket = io({
-      transports: ['websocket', 'polling'],
-    });
+    
 
-    socket.on('scheduler:schedules_list', (list: ScheduledMessage[]) => {
+    const onSchedulesList = (list: ScheduledMessage[]) => {
       if (Array.isArray(list)) setSchedules(list);
-    });
+    };
+    socket.on('scheduler:schedules_list', onSchedulesList);
 
-    socket.on('scheduler:updated', (list: ScheduledMessage[]) => {
+    const onUpdated = (list: ScheduledMessage[]) => {
       if (Array.isArray(list)) setSchedules(list);
-    });
+    };
+    socket.on('scheduler:updated', onUpdated);
 
-    socket.on('scheduler:started', ({ scheduleId }: { scheduleId: string; name: string; targetsCount: number }) => {
+    const onStarted = ({ scheduleId }: { scheduleId: string; name: string; targetsCount: number }) => {
       setExecutingScheduleId(scheduleId);
-    });
+    };
+    socket.on('scheduler:started', onStarted);
 
-    socket.on('scheduler:progress', (progress: SchedulerProgressEvent) => {
+    const onProgress = (progress: SchedulerProgressEvent) => {
       setCurrentProgress(progress);
       setExecutingScheduleId(progress.scheduleId);
-    });
+    };
+    socket.on('scheduler:progress', onProgress);
 
-    socket.on('scheduler:completed', ({ scheduleId }: { scheduleId: string; name: string; result: ScheduleLastResult }) => {
+    const onCompleted = ({ scheduleId }: { scheduleId: string; name: string; result: ScheduleLastResult }) => {
       setExecutingScheduleId((prev) => (prev === scheduleId ? null : prev));
       setTimeout(() => {
         setCurrentProgress((prev) => (prev?.scheduleId === scheduleId ? null : prev));
       }, 8000);
-    });
+    };
+    socket.on('scheduler:completed', onCompleted);
 
     return () => {
-      socket.disconnect();
+      socket.off('scheduler:schedules_list', onSchedulesList);
+      socket.off('scheduler:updated', onUpdated);
+      socket.off('scheduler:started', onStarted);
+      socket.off('scheduler:progress', onProgress);
+      socket.off('scheduler:completed', onCompleted);
     };
   }, [instanceId, fetchSchedules, fetchGroups, fetchContacts]);
 

@@ -2,11 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import type { KnownContact } from '../src/types';
 
-const RECIPIENTS_DIR =
-  process.env.RECIPIENTS_DATA_DIR || path.join(process.cwd(), 'data', 'recipients');
-const CONTACTS_FILE = path.join(RECIPIENTS_DIR, 'contacts.json');
-const CONTACTS_TMP_FILE = path.join(RECIPIENTS_DIR, 'contacts.json.tmp');
-
 export class ContactsService {
   private contactsMap: Map<string, KnownContact> = new Map();
   private saveDebounceTimer: NodeJS.Timeout | null = null;
@@ -88,7 +83,7 @@ export class ContactsService {
   public normalizeJid(rawJid: string): string | null {
     if (!rawJid || typeof rawJid !== 'string') return null;
     const clean = rawJid.trim().toLowerCase();
-
+    
     // Ignore groups, broadcasts, status
     if (
       clean.endsWith('@g.us') ||
@@ -125,7 +120,6 @@ export class ContactsService {
 
     const rawNumber =
       contact.number || normalizedJid.split('@')[0].split(':')[0];
-
     const existing = this.contactsMap.get(normalizedJid);
 
     // Resolve best name: explicit name -> existing name -> number
@@ -159,6 +153,7 @@ export class ContactsService {
 
     this.contactsMap.set(normalizedJid, updated);
     this.scheduleSave();
+
     return updated;
   }
 
@@ -190,12 +185,12 @@ export class ContactsService {
     return list.sort((a, b) => {
       const nameA = (a.name || '').trim();
       const nameB = (b.name || '').trim();
+      
       if (nameA && !nameB) return -1;
       if (!nameA && nameB) return 1;
       if (nameA && nameB) return nameA.localeCompare(nameB);
+      
       return (b.lastSeenAt || '').localeCompare(a.lastSeenAt || '');
     });
   }
 }
-
-

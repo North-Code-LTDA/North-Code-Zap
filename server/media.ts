@@ -2,13 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import type { ScheduledMedia, ScheduledMessage } from '../src/types';
 
-
-
 export class MediaService {
   private mediaDir: string;
 
   constructor(mediaDir: string) {
-    this.mediaDir = mediaDir;
+    this.mediaDir = path.resolve(mediaDir);
     try {
       if (!fs.existsSync(this.mediaDir)) {
         fs.mkdirSync(this.mediaDir, { recursive: true });
@@ -17,17 +15,24 @@ export class MediaService {
       console.error('[Media] Failed to create media directory:', err);
     }
   }
+
   public getMediaDir(): string {
     return this.mediaDir;
   }
 
   public getFilePath(fileName: string): string {
-    return path.join(this.mediaDir, fileName);
+    const safeName = path.basename(fileName);
+    return path.join(this.mediaDir, safeName);
   }
 
   public fileExists(localPath: string): boolean {
+    const candidate = path.resolve(localPath);
+    const root = this.mediaDir + path.sep;
+    if (!candidate.startsWith(root)) {
+      return false;
+    }
     try {
-      return fs.existsSync(localPath);
+      return fs.existsSync(candidate);
     } catch {
       return false;
     }
@@ -35,14 +40,17 @@ export class MediaService {
 
   public deleteMediaIfUnreferenced(localPath: string, allSchedules: ScheduledMessage[]): boolean {
     if (!localPath) return false;
-    try {
-      // Check if any other schedule references this exact localPath
-      const isReferenced = allSchedules.some(
-        (s) => s.media?.localPath === localPath
-      );
+    const candidate = path.resolve(localPath);
+    const root = this.mediaDir + path.sep;
+    if (!candidate.startsWith(root)) {
+      console.warn(`[Media] Attempted to delete external file: ${localPath}`);
+      return false;
+    }
 
-      if (!isReferenced && fs.existsSync(localPath)) {
-        fs.unlinkSync(localPath);
+    try {
+      const isReferenced = allSchedules.some((s) => s.media?.localPath === localPath);
+      if (!isReferenced && fs.existsSync(candidate)) {
+        fs.unlinkSync(candidate);
         console.log(`[Media] Cleaned up unreferenced file: ${localPath}`);
         return true;
       }
@@ -52,5 +60,3 @@ export class MediaService {
     return false;
   }
 }
-
-

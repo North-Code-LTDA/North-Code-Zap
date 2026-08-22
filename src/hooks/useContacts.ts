@@ -28,7 +28,12 @@ export function useContacts(instanceId: string | null) {
   }, []);
 
   useEffect(() => {
-    if (instanceId) fetchContacts();
+    setContacts([]);
+    setError(null);
+    if (!instanceId) {
+      return;
+    }
+    fetchContacts();
   }, [fetchContacts, instanceId]);
 
   return { contacts, loading, error, fetchContacts };
