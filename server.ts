@@ -109,7 +109,7 @@ async function startServer() {
 
   app.get('/api/whatsapp/contacts', (req, res) => {
     try {
-      const contacts = contactsService.getAll();
+      const contacts = contactsService.getDirectoryContacts();
       res.json(contacts);
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Falha ao buscar contatos' });

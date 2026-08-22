@@ -7,6 +7,7 @@ import {
   Pause,
   Trash2,
   Edit2,
+  Copy,
   Users,
   User,
   CheckCircle2,
@@ -239,9 +240,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     fetchGroups();
   };
 
-  // Open Modal - Edit
-  const handleOpenEditModal = (schedule: ScheduledMessage) => {
-    setEditingSchedule(schedule);
+  const hydrateScheduleForm = (schedule: ScheduledMessage) => {
     setFormName(schedule.name);
     setFormMessage(schedule.message || '');
     setFormFallbackName(schedule.fallbackName || 'amigo(a)');
@@ -274,7 +273,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
     // Daily times parsing
     if (schedule.dailyTimes && schedule.dailyTimes.length > 0) {
-      setFormDailyTimes(schedule.dailyTimes);
+      setFormDailyTimes([...schedule.dailyTimes]);
     } else if (schedule.timeOfDay) {
       setFormDailyTimes([schedule.timeOfDay]);
     } else {
@@ -283,8 +282,9 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
     // Weekly slots parsing
     if (schedule.weeklyTimeSlots && schedule.weeklyTimeSlots.length > 0) {
-      setFormWeeklySlots(schedule.weeklyTimeSlots);
-      const days = schedule.weeklyTimeSlots.map((s) => s.day);
+      const clonedSlots = schedule.weeklyTimeSlots.map(s => ({ day: s.day, times: [...s.times] }));
+      setFormWeeklySlots(clonedSlots);
+      const days = clonedSlots.map((s) => s.day);
       setFormWeeklyDays(days);
       setSelectedWeeklyDayForTimes(days[0] ?? 1);
     } else if (schedule.weeklyDays && schedule.weeklyDays.length > 0) {
@@ -293,7 +293,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
         day: d,
         times: [time],
       }));
-      setFormWeeklyDays(schedule.weeklyDays);
+      setFormWeeklyDays([...schedule.weeklyDays]);
       setFormWeeklySlots(slots);
       setSelectedWeeklyDayForTimes(schedule.weeklyDays[0]);
     } else {
@@ -304,10 +304,10 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
     // Media
     if (schedule.media) {
-      setFormMedia(schedule.media);
+      setFormMedia({ ...schedule.media });
       if (schedule.media.source === 'url') {
         setMediaTab('url');
-        setMediaUrlInput(schedule.media.url);
+        setMediaUrlInput(schedule.media.url || '');
       } else {
         setMediaTab('upload');
         setMediaUrlInput('');
@@ -319,7 +319,8 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     }
     setMediaError(null);
 
-    setFormTargets(schedule.targets || []);
+    setFormTargets([...(schedule.targets || [])]);
+
     setFormIntervalSeconds(
       Math.round((schedule.deliveryOptions?.intervalBetweenMessagesMs || 5000) / 1000)
     );
@@ -328,10 +329,49 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     setFormBatchPauseMinutes(
       Math.round((schedule.deliveryOptions?.batchPauseMs || 300000) / 60000)
     );
-    setImportComplianceChecked(true);
+
     setImportRawText('');
     setImportParsedPreview(null);
     setFormError(null);
+  };
+
+  // Open Modal - Edit
+  const handleOpenEditModal = (schedule: ScheduledMessage) => {
+    setEditingSchedule(schedule);
+    hydrateScheduleForm(schedule);
+    setImportComplianceChecked(true);
+    setIsModalOpen(true);
+    fetchContacts();
+    fetchGroups();
+  };
+
+  // Open Modal - Duplicate
+  const handleOpenDuplicateModal = (schedule: ScheduledMessage) => {
+    setEditingSchedule(null);
+    hydrateScheduleForm(schedule);
+    setFormName(`${schedule.name} (cópia)`);
+    
+    // Check if ONCE scheduledAt is in the past
+    if (schedule.scheduleType === 'once' && schedule.scheduledAt) {
+      const dt = new Date(schedule.scheduledAt);
+      if (dt.getTime() <= Date.now()) {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone: schedulerTimezone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).formatToParts(new Date());
+        const dict = parts.reduce((acc, part) => {
+          acc[part.type] = part.value;
+          return acc;
+        }, {} as Record<string, string>);
+        
+        setFormDate(`${dict.year}-${dict.month}-${dict.day}`);
+        setFormTime('');
+      }
+    }
+
+    setImportComplianceChecked(false);
     setIsModalOpen(true);
     fetchContacts();
     fetchGroups();
@@ -1300,6 +1340,16 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                         <Play className="w-3.5 h-3.5 fill-current" />
                       </button>
                     ) : null}
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDuplicateModal(schedule)}
+                      title="Duplicar agendamento"
+                      aria-label="Duplicar agendamento"
+                      className="w-8 h-8 rounded-lg bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-blue-400 hover:text-blue-300 flex items-center justify-center transition-all cursor-pointer select-none"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
 
                     <button
                       type="button"

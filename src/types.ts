@@ -53,6 +53,7 @@ export interface KnownContact {
   notifyName?: string | null;
   source: 'message' | 'history' | 'contact' | 'chat' | 'import';
   lastSeenAt?: string | null;
+  directoryEligible?: boolean;
 }
 
 export interface GroupParticipant {

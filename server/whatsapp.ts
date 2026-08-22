@@ -159,6 +159,7 @@ export class WhatsAppService {
           name: targetPushName,
           source: 'message',
           lastSeenAt: new Date().toISOString(),
+          directoryEligible: true,
         });
       }
 
@@ -396,14 +397,6 @@ export class WhatsAppService {
           // Look up in contactsService
           const known = contactsService.getContact(resolvedJid);
           name = p.name || p.notify || known?.name || `+${number}`;
-          if (name && !name.startsWith('+')) {
-            contactsService.upsertContact({
-              jid: resolvedJid,
-              number,
-              name,
-              source: 'contact',
-            });
-          }
         }
       }
 
@@ -628,9 +621,10 @@ export class WhatsAppService {
             name: pushName,
             source: 'message',
             lastSeenAt: new Date(timestamp).toISOString(),
+            directoryEligible: true,
           });
         } else if (msg.key?.participant) {
-          // If in a group, also record individual sender contact if known
+          // If in a group, also record individual sender contact if known internally, but NOT eligible for directory
           const partJid = msg.key.participant;
           const partNum = partJid.split('@')[0].split(':')[0];
           contactsService.upsertContact({
@@ -639,6 +633,7 @@ export class WhatsAppService {
             name: pushName,
             source: 'message',
             lastSeenAt: new Date(timestamp).toISOString(),
+            directoryEligible: false,
           });
         }
 
@@ -661,6 +656,7 @@ export class WhatsAppService {
               jid: c.id,
               name: c.name || c.notify || null,
               source: 'contact',
+              directoryEligible: !!c.name,
             });
           }
         }
@@ -675,6 +671,7 @@ export class WhatsAppService {
               jid: c.id,
               name: c.name || c.notify || null,
               source: 'contact',
+              directoryEligible: !!c.name,
             });
           }
         }
@@ -690,10 +687,12 @@ export class WhatsAppService {
               jid: c.id,
               name: c.name || c.notify || null,
               source: 'history',
+              directoryEligible: !!c.name,
             });
           }
         }
       }
+
       if (Array.isArray(histChats)) {
         for (const ch of histChats) {
           if (ch?.id && !ch.id.endsWith('@g.us') && !ch.id.includes('@broadcast')) {
@@ -701,6 +700,7 @@ export class WhatsAppService {
               jid: ch.id,
               name: ch.name || null,
               source: 'chat',
+              directoryEligible: true,
             });
           }
         }

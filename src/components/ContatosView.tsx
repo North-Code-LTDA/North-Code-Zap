@@ -86,6 +86,8 @@ export function ContatosView() {
   const { contacts, loading, error, fetchContacts } = useContacts();
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   const metrics = useMemo(() => {
     let withName = 0;
@@ -137,6 +139,48 @@ export function ContatosView() {
       return true;
     });
   }, [contacts, search, sourceFilter]);
+
+  // Reset page when search or filter changes
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [search, sourceFilter, pageSize]);
+
+  // Ensure current page doesn't exceed total pages if filtered list shrinks
+  const totalPages = Math.max(1, Math.ceil(filteredContacts.length / pageSize));
+  React.useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedContacts = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return filteredContacts.slice(startIndex, startIndex + pageSize);
+  }, [filteredContacts, currentPage, pageSize]);
+
+  const getPageNumbers = () => {
+    const pages = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      if (currentPage <= 4) {
+        for (let i = 1; i <= 5; i++) pages.push(i);
+        pages.push('...');
+        pages.push(totalPages);
+      } else if (currentPage >= totalPages - 3) {
+        pages.push(1);
+        pages.push('...');
+        for (let i = totalPages - 4; i <= totalPages; i++) pages.push(i);
+      } else {
+        pages.push(1);
+        pages.push('...');
+        for (let i = currentPage - 1; i <= currentPage + 1; i++) pages.push(i);
+        pages.push('...');
+        pages.push(totalPages);
+      }
+    }
+    return pages;
+  };
 
   if (loading && contacts.length === 0) {
     return (
@@ -258,10 +302,33 @@ export function ContatosView() {
       </div>
 
       {/* Counter */}
-      <div className="text-xs font-medium text-neutral-400 px-1">
-        {search || sourceFilter !== 'all' 
-          ? `${filteredContacts.length} de ${contacts.length} contatos` 
-          : `${contacts.length} contatos`}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-1">
+        <div className="text-xs font-medium text-neutral-400">
+          {filteredContacts.length > 0 ? (
+            <>
+              Exibindo {Math.min((currentPage - 1) * pageSize + 1, filteredContacts.length)}–
+              {Math.min(currentPage * pageSize, filteredContacts.length)} de {filteredContacts.length} resultados
+              {search || sourceFilter !== 'all' ? ` • ${contacts.length} contatos no diretório` : ''}
+            </>
+          ) : (
+            <>
+              0 resultados {search || sourceFilter !== 'all' ? ` • ${contacts.length} contatos no diretório` : ''}
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-neutral-500">Resultados por página:</span>
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-white px-2 py-1 focus:outline-none focus:border-emerald-500"
+          >
+            <option value={10}>10</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </div>
       </div>
 
       {/* List */}
@@ -285,7 +352,7 @@ export function ContatosView() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-800/80">
-                {filteredContacts.map((c, i) => (
+                {paginatedContacts.map((c, i) => (
                   <tr key={c.jid || i} className="hover:bg-neutral-800/20 transition-colors group">
                     <td className="px-5 py-3 align-middle">
                       <div className="flex items-center gap-3">
@@ -320,6 +387,50 @@ export function ContatosView() {
               </tbody>
             </table>
           </div>
+          
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="border-t border-neutral-800/80 p-4 flex items-center justify-between sm:justify-center gap-4 bg-neutral-950/30">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 text-xs font-medium text-neutral-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Anterior
+              </button>
+              
+              <div className="hidden sm:flex items-center gap-1">
+                {getPageNumbers().map((pageNum, idx) => (
+                  <button
+                    key={idx}
+                    disabled={pageNum === '...'}
+                    onClick={() => typeof pageNum === 'number' && setCurrentPage(pageNum)}
+                    className={`min-w-[28px] h-7 px-2 rounded flex items-center justify-center text-xs font-medium transition-colors ${
+                      pageNum === currentPage
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                        : pageNum === '...'
+                        ? 'text-neutral-500 cursor-default'
+                        : 'text-neutral-400 hover:bg-neutral-800 hover:text-white border border-transparent'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                ))}
+              </div>
+
+              <span className="sm:hidden text-xs text-neutral-400">
+                Página {currentPage} de {totalPages}
+              </span>
+
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 text-xs font-medium text-neutral-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Próxima
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
