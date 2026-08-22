@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import type {
   ScheduledMessage,
+  SchedulePayload,
   ScheduledTarget,
   ScheduleType,
   WhatsAppGroup,
@@ -182,18 +183,7 @@ export function useSchedules() {
 
   // Actions
   const createSchedule = useCallback(
-    async (data: {
-      name: string;
-      message?: string;
-      targets: ScheduledTarget[];
-      scheduleType: ScheduleType;
-      scheduledAt: string | null;
-      dailyTimes?: string[];
-      weeklyTimeSlots?: WeeklyTimeSlot[];
-      media?: ScheduledMedia | null;
-      fallbackName?: string;
-      deliveryOptions?: DeliveryOptions;
-    }): Promise<{ success: boolean; schedule?: ScheduledMessage; error?: string }> => {
+    async (data: SchedulePayload): Promise<{ success: boolean; schedule?: ScheduledMessage; error?: string }> => {
       try {
         const res = await fetch('/api/schedules', {
           method: 'POST',
@@ -216,7 +206,7 @@ export function useSchedules() {
   const updateSchedule = useCallback(
     async (
       id: string,
-      data: Partial<ScheduledMessage>
+      data: SchedulePayload
     ): Promise<{ success: boolean; schedule?: ScheduledMessage; error?: string }> => {
       try {
         const res = await fetch(`/api/schedules/${id}`, {

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { 
   Users, RefreshCw, Search, Loader2, UserCircle2, 
-  MessageSquare, History, UserPlus, MessageCircle, FileDown
+  MessageSquare, UserPlus, MessageCircle
 } from 'lucide-react';
 import { useContacts } from '../hooks/useContacts';
 import { Button } from './ui/Button';
@@ -34,10 +34,8 @@ function getDisplayName(contact: KnownContact): string {
 function getSourceLabel(source: string): string {
   switch (source) {
     case 'message': return 'Mensagens';
-    case 'history': return 'Histórico';
     case 'contact': return 'Contatos';
     case 'chat': return 'Conversas';
-    case 'import': return 'Importados';
     default: return source;
   }
 }
@@ -45,10 +43,8 @@ function getSourceLabel(source: string): string {
 function getSourceIcon(source: string) {
   switch (source) {
     case 'message': return <MessageSquare className="w-3 h-3" />;
-    case 'history': return <History className="w-3 h-3" />;
     case 'contact': return <UserPlus className="w-3 h-3" />;
     case 'chat': return <MessageCircle className="w-3 h-3" />;
-    case 'import': return <FileDown className="w-3 h-3" />;
     default: return <Users className="w-3 h-3" />;
   }
 }
@@ -282,7 +278,7 @@ export function ContatosView() {
             />
           </div>
           <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0 hide-scrollbar">
-            {['all', 'message', 'history', 'contact', 'chat', 'import'].map((src) => (
+            {['all', 'message', 'contact', 'chat'].map((src) => (
               <button
                 key={src}
                 onClick={() => setSourceFilter(src)}

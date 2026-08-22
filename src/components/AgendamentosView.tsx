@@ -550,7 +550,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           jid: contact.jid,
           label: contact.name || `+${contact.number || contact.jid.split('@')[0]}`,
           name: contact.name || undefined,
-          source: contact.source,
+          source: 'directory',
         },
       ];
     });
@@ -654,7 +654,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           jid: group.id,
           label: `Grupo: ${group.subject}`,
           name: group.subject,
-          source: 'chat',
+          source: 'group',
         },
       ];
     });
@@ -835,9 +835,9 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
       batchPauseMs: Math.max(60000, formBatchPauseMinutes * 60000),
     };
 
-    let scheduledAt = new Date().toISOString();
-    let payloadDailyTimes: string[] | undefined = undefined;
-    let payloadWeeklySlots: WeeklyTimeSlot[] | undefined = undefined;
+    let scheduledAt: string | null = null;
+    let payloadDailyTimes: string[] = [];
+    let payloadWeeklySlots: WeeklyTimeSlot[] = [];
 
     if (formType === 'once') {
       const combined = `${formDate}T${formTime}:00`;
@@ -936,10 +936,10 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
   const getSourceBadge = (source?: string) => {
     switch (source) {
-      case 'chat':
+      case 'group':
         return (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-            Conversa
+            Grupo
           </span>
         );
       case 'group_member':
@@ -960,10 +960,16 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
             Avulso
           </span>
         );
-      default:
+      case 'directory':
         return (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400">
             Diretório
+          </span>
+        );
+      default:
+        return (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
+            Desconhecido
           </span>
         );
     }

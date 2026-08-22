@@ -109,6 +109,19 @@ export interface ScheduledMedia {
   size?: number;
 }
 
+export interface SchedulePayload {
+  name: string;
+  message: string;
+  targets: ScheduledTarget[];
+  scheduleType: ScheduleType;
+  scheduledAt: string | null;
+  dailyTimes: string[];
+  weeklyTimeSlots: WeeklyTimeSlot[];
+  media?: ScheduledMedia | null;
+  fallbackName: string;
+  deliveryOptions: DeliveryOptions;
+}
+
 export interface ScheduledMessage {
   id: string;
   name: string;

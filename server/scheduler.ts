@@ -84,13 +84,57 @@ export class SchedulerService {
   }
 
   private loadSchedules() {
+    this.schedules = [];
     try {
       if (fs.existsSync(SCHEDULES_FILE)) {
         const raw = fs.readFileSync(SCHEDULES_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          this.schedules = parsed;
-          console.log(`[Scheduler] loaded schedules=${this.schedules.length}`);
+          for (const s of parsed) {
+            // Strict Schema Validation
+            const isValidBase =
+              s &&
+              typeof s.id === 'string' &&
+              typeof s.name === 'string' &&
+              Array.isArray(s.targets) &&
+              ['once', 'daily', 'weekly'].includes(s.scheduleType) &&
+              Array.isArray(s.dailyTimes) &&
+              Array.isArray(s.weeklyTimeSlots) &&
+              typeof s.deliveryOptions === 'object' &&
+              s.deliveryOptions !== null &&
+              ['active', 'paused', 'running', 'completed', 'error'].includes(s.status);
+
+            if (!isValidBase) {
+              console.warn(`[Scheduler] Ignoring invalid schedule ${s?.id || 'unknown'} (base fields invalid)`);
+              continue;
+            }
+
+            let isValidSpecific = false;
+            if (s.scheduleType === 'once') {
+              isValidSpecific =
+                typeof s.scheduledAt === 'string' &&
+                s.dailyTimes.length === 0 &&
+                s.weeklyTimeSlots.length === 0;
+            } else if (s.scheduleType === 'daily') {
+              isValidSpecific =
+                s.scheduledAt === null &&
+                s.dailyTimes.length >= 1 &&
+                s.weeklyTimeSlots.length === 0;
+            } else if (s.scheduleType === 'weekly') {
+              isValidSpecific =
+                s.scheduledAt === null &&
+                s.dailyTimes.length === 0 &&
+                s.weeklyTimeSlots.length >= 1;
+            }
+
+            if (!isValidSpecific) {
+              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (type-specific constraints failed)`);
+              continue;
+            }
+
+            this.schedules.push(s);
+          }
+          console.log(`[Scheduler] loaded valid schedules=${this.schedules.length}`);
           this.validateAndRepairOnStartup();
           return;
         }
@@ -98,7 +142,6 @@ export class SchedulerService {
     } catch (err: any) {
       console.error('[Scheduler] error reading schedules file, initializing empty:', err?.message);
     }
-    this.schedules = [];
   }
 
   private saveSchedules() {
@@ -241,7 +284,6 @@ export class SchedulerService {
       media: ScheduledMedia | null;
       fallbackName: string;
       deliveryOptions: DeliveryOptions;
-      status: ScheduleStatus;
     }>
   ): ScheduledMessage | null {
     const index = this.schedules.findIndex((s) => s.id === id);
@@ -288,8 +330,7 @@ export class SchedulerService {
       data.scheduledAt !== undefined ||
       data.scheduleType !== undefined ||
       data.dailyTimes !== undefined ||
-      data.weeklyTimeSlots !== undefined ||
-      data.status === 'active'
+      data.weeklyTimeSlots !== undefined
     ) {
       if (updated.status === 'active') {
         updated.nextRunAt = this.calculateNextRunAt(updated);

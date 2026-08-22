@@ -31,17 +31,20 @@ export class ContactsService {
       if (fs.existsSync(CONTACTS_FILE)) {
         const raw = fs.readFileSync(CONTACTS_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
+        const validSources = ['message', 'contact', 'chat'];
         if (Array.isArray(parsed)) {
           for (const item of parsed) {
-            if (item && item.jid) {
+            if (item && typeof item.jid === 'string') {
+              if (!validSources.includes(item.source)) {
+                continue;
+              }
               const normalizedJid = this.normalizeJid(item.jid);
               if (normalizedJid) {
-                const source = (item.source === 'contact' || item.source === 'chat') ? item.source : 'message';
                 this.contactsMap.set(normalizedJid, {
                   jid: normalizedJid,
                   number: item.number || normalizedJid.split('@')[0].split(':')[0],
                   name: item.name || null,
-                  source: source,
+                  source: item.source,
                   lastSeenAt: item.lastSeenAt || null,
                 });
               }
