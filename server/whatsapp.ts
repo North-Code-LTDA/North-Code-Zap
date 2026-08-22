@@ -159,7 +159,7 @@ export class WhatsAppService {
           name: targetPushName,
           source: 'message',
           lastSeenAt: new Date().toISOString(),
-          directoryEligible: true,
+          
         });
       }
 
@@ -621,19 +621,6 @@ export class WhatsAppService {
             name: pushName,
             source: 'message',
             lastSeenAt: new Date(timestamp).toISOString(),
-            directoryEligible: true,
-          });
-        } else if (msg.key?.participant) {
-          // If in a group, also record individual sender contact if known internally, but NOT eligible for directory
-          const partJid = msg.key.participant;
-          const partNum = partJid.split('@')[0].split(':')[0];
-          contactsService.upsertContact({
-            jid: partJid,
-            number: partNum || null,
-            name: pushName,
-            source: 'message',
-            lastSeenAt: new Date(timestamp).toISOString(),
-            directoryEligible: false,
           });
         }
 
@@ -651,12 +638,11 @@ export class WhatsAppService {
     this.sock.ev.on('contacts.upsert', (newContacts: any[]) => {
       if (Array.isArray(newContacts)) {
         for (const c of newContacts) {
-          if (c?.id) {
+          if (c?.id && typeof c.name === 'string' && c.name.trim().length > 0) {
             contactsService.upsertContact({
               jid: c.id,
-              name: c.name || c.notify || null,
+              name: c.name,
               source: 'contact',
-              directoryEligible: !!c.name,
             });
           }
         }
@@ -666,12 +652,11 @@ export class WhatsAppService {
     this.sock.ev.on('contacts.update', (updates: any[]) => {
       if (Array.isArray(updates)) {
         for (const c of updates) {
-          if (c?.id) {
+          if (c?.id && typeof c.name === 'string' && c.name.trim().length > 0) {
             contactsService.upsertContact({
               jid: c.id,
-              name: c.name || c.notify || null,
+              name: c.name,
               source: 'contact',
-              directoryEligible: !!c.name,
             });
           }
         }
@@ -682,12 +667,11 @@ export class WhatsAppService {
     this.sock.ev.on('messaging-history.set', ({ contacts: histContacts, chats: histChats }: any) => {
       if (Array.isArray(histContacts)) {
         for (const c of histContacts) {
-          if (c?.id) {
+          if (c?.id && typeof c.name === 'string' && c.name.trim().length > 0) {
             contactsService.upsertContact({
               jid: c.id,
-              name: c.name || c.notify || null,
-              source: 'history',
-              directoryEligible: !!c.name,
+              name: c.name,
+              source: 'contact',
             });
           }
         }
@@ -700,7 +684,6 @@ export class WhatsAppService {
               jid: ch.id,
               name: ch.name || null,
               source: 'chat',
-              directoryEligible: true,
             });
           }
         }

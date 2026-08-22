@@ -19,8 +19,8 @@ function formatBrazilianNumber(number: string | null): string {
   return `+${digits}`;
 }
 
-function getInitial(name: string | null, notifyName?: string | null): string {
-  const n = name || notifyName;
+function getInitial(name: string | null): string {
+  const n = name;
   if (!n) return '?';
   const clean = n.replace(/[^a-zA-ZÀ-ÿ0-9]/g, '');
   return clean.charAt(0).toUpperCase() || '?';
@@ -28,7 +28,6 @@ function getInitial(name: string | null, notifyName?: string | null): string {
 
 function getDisplayName(contact: KnownContact): string {
   if (contact.name && contact.name.trim()) return contact.name;
-  if (contact.notifyName && contact.notifyName.trim()) return contact.notifyName;
   return 'Contato sem nome';
 }
 
@@ -129,9 +128,8 @@ export function ContatosView() {
       if (search.trim()) {
         const term = search.toLowerCase();
         const n = (c.name || '').toLowerCase();
-        const nn = (c.notifyName || '').toLowerCase();
         const num = (c.number || '').toLowerCase();
-        if (!n.includes(term) && !nn.includes(term) && !num.includes(term)) {
+        if (!n.includes(term) && !num.includes(term)) {
           return false;
         }
       }
@@ -357,7 +355,7 @@ export function ContatosView() {
                     <td className="px-5 py-3 align-middle">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-neutral-800 flex items-center justify-center text-xs font-bold text-neutral-300 shrink-0">
-                          {getInitial(c.name, c.notifyName)}
+                          {getInitial(c.name)}
                         </div>
                         <div className="flex flex-col min-w-0" title={c.jid}>
                           <span className={`text-sm font-semibold truncate ${c.name ? 'text-white' : 'text-neutral-400'}`}>

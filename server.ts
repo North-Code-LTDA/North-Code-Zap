@@ -109,7 +109,7 @@ async function startServer() {
 
   app.get('/api/whatsapp/contacts', (req, res) => {
     try {
-      const contacts = contactsService.getDirectoryContacts();
+      const contacts = contactsService.getAll();
       res.json(contacts);
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Falha ao buscar contatos' });
@@ -198,16 +198,17 @@ async function startServer() {
   }
 
   function validateDaily(times: any[]): boolean {
-    if (!Array.isArray(times)) return false;
-    return times.some(isValidTime);
+    if (!Array.isArray(times) || times.length === 0) return false;
+    return times.every(isValidTime);
   }
 
   function validateWeekly(slots: any[]): boolean {
-    if (!Array.isArray(slots)) return false;
-    return slots.some(s => 
+    if (!Array.isArray(slots) || slots.length === 0) return false;
+    return slots.every(s => 
       typeof s === 'object' && s !== null &&
       Number.isInteger(s.day) && s.day >= 0 && s.day <= 6 &&
-      Array.isArray(s.times) && s.times.some(isValidTime)
+      Array.isArray(s.times) && s.times.length > 0 &&
+      s.times.every(isValidTime)
     );
   }
 
@@ -222,8 +223,6 @@ async function startServer() {
         dailyTimes,
         weeklyTimeSlots,
         media,
-        weeklyDays,
-        timeOfDay,
         fallbackName,
         deliveryOptions,
       } = req.body || {};
@@ -289,8 +288,6 @@ async function startServer() {
         dailyTimes,
         weeklyTimeSlots,
         media,
-        weeklyDays,
-        timeOfDay,
         fallbackName,
         deliveryOptions,
       });
@@ -323,10 +320,7 @@ async function startServer() {
           return res.status(400).json({ success: false, error: 'Adicione pelo menos um horário diário válido.' });
         }
       } else if (scheduleType === 'weekly') {
-        // If we have weeklyDays and timeOfDay, we allow it to pass ONLY if weeklyTimeSlots is missing/invalid
-        // This preserves strict validation for any modern edits
-        const hasLegacyFields = Array.isArray(req.body.weeklyDays) && req.body.weeklyDays.length > 0;
-        if (!validateWeekly(weeklyTimeSlots) && !hasLegacyFields) {
+        if (!validateWeekly(weeklyTimeSlots)) {
           return res.status(400).json({ success: false, error: 'Configure pelo menos um dia e horário semanal válido.' });
         }
       }

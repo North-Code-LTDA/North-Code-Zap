@@ -43,17 +43,15 @@ export interface ScheduledTarget {
   jid: string;
   label: string;
   name?: string;
-  source?: 'message' | 'history' | 'contact' | 'chat' | 'import' | 'manual' | 'group_member';
+  source?: 'directory' | 'manual' | 'import' | 'group_member' | 'group';
 }
 
 export interface KnownContact {
   jid: string;
   number: string | null;
   name: string | null;
-  notifyName?: string | null;
-  source: 'message' | 'history' | 'contact' | 'chat' | 'import';
+  source: 'message' | 'contact' | 'chat';
   lastSeenAt?: string | null;
-  directoryEligible?: boolean;
 }
 
 export interface GroupParticipant {
@@ -75,7 +73,6 @@ export interface DeliveryOptions {
   batchPauseEnabled: boolean;
   batchSize: number; // e.g. 3
   batchPauseMs: number; // e.g. 300000 ms (5 min)
-  retryAttempts?: number;
 }
 
 export interface ScheduleExecutionDetail {
@@ -118,15 +115,13 @@ export interface ScheduledMessage {
   message: string;
   targets: ScheduledTarget[];
   scheduleType: ScheduleType;
-  scheduledAt: string; // ISO string e.g. "2026-08-17T08:00"
+  scheduledAt: string | null; // ISO string e.g. "2026-08-17T08:00"
   nextRunAt: string | null; // ISO string or null
-  dailyTimes?: string[]; // ["08:00", "12:00", "18:00"]
-  weeklyTimeSlots?: WeeklyTimeSlot[];
+  dailyTimes: string[]; // ["08:00", "12:00", "18:00"]
+  weeklyTimeSlots: WeeklyTimeSlot[];
   media?: ScheduledMedia | null;
-  weeklyDays?: number[]; // Legacy compatibility
-  timeOfDay?: string; // Legacy compatibility
-  fallbackName?: string; // "amigo(a)"
-  deliveryOptions?: DeliveryOptions;
+  fallbackName: string; // "amigo(a)"
+  deliveryOptions: DeliveryOptions;
   status: ScheduleStatus;
   createdAt: string;
   updatedAt: string;

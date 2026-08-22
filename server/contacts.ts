@@ -36,16 +36,13 @@ export class ContactsService {
             if (item && item.jid) {
               const normalizedJid = this.normalizeJid(item.jid);
               if (normalizedJid) {
-                let dirEligible = item.directoryEligible;
-                if (typeof dirEligible !== 'boolean') {
-                  // Non-destructive migration
-                  dirEligible = item.source === 'chat';
-                }
-                
+                const source = (item.source === 'contact' || item.source === 'chat') ? item.source : 'message';
                 this.contactsMap.set(normalizedJid, {
-                  ...item,
                   jid: normalizedJid,
-                  directoryEligible: dirEligible,
+                  number: item.number || normalizedJid.split('@')[0].split(':')[0],
+                  name: item.name || null,
+                  source: source,
+                  lastSeenAt: item.lastSeenAt || null,
                 });
               }
             }
@@ -111,10 +108,8 @@ export class ContactsService {
     jid: string;
     number?: string | null;
     name?: string | null;
-    notifyName?: string | null;
-    source: 'message' | 'history' | 'contact' | 'chat' | 'import';
+    source: 'message' | 'contact' | 'chat';
     lastSeenAt?: string | null;
-    directoryEligible?: boolean;
   }): KnownContact | null {
     const normalizedJid = this.normalizeJid(contact.jid);
     if (!normalizedJid) return null;
@@ -124,8 +119,8 @@ export class ContactsService {
 
     const existing = this.contactsMap.get(normalizedJid);
 
-    // Resolve best name: explicit name -> pushName/notifyName -> existing name -> number
-    let chosenName = contact.name || contact.notifyName || null;
+    // Resolve best name: explicit name -> existing name -> number
+    let chosenName = contact.name || null;
     if (!chosenName && existing?.name) {
       chosenName = existing.name;
     }
@@ -136,19 +131,21 @@ export class ContactsService {
       }
     }
 
-    const isEligible = existing?.directoryEligible || contact.directoryEligible || false;
-    const resolvedSource = (!existing?.directoryEligible && contact.directoryEligible) 
-      ? contact.source 
-      : (existing ? existing.source : contact.source);
+    let resolvedSource = contact.source;
+    if (existing) {
+      if (existing.source === 'contact') {
+        resolvedSource = 'contact';
+      } else if (existing.source === 'chat' && contact.source === 'message') {
+        resolvedSource = 'chat';
+      }
+    }
 
     const updated: KnownContact = {
       jid: normalizedJid,
       number: rawNumber,
       name: chosenName,
-      notifyName: contact.notifyName || existing?.notifyName || null,
       source: resolvedSource,
-      lastSeenAt: contact.lastSeenAt || existing?.lastSeenAt || new Date().toISOString(),
-      directoryEligible: isEligible,
+      lastSeenAt: contact.lastSeenAt ?? existing?.lastSeenAt ?? null,
     };
 
     this.contactsMap.set(normalizedJid, updated);
@@ -160,10 +157,8 @@ export class ContactsService {
     jid: string;
     number?: string | null;
     name?: string | null;
-    notifyName?: string | null;
-    source: 'message' | 'history' | 'contact' | 'chat' | 'import';
+    source: 'message' | 'contact' | 'chat';
     lastSeenAt?: string | null;
-    directoryEligible?: boolean;
   }>): number {
     let count = 0;
     for (const c of contacts) {
@@ -178,19 +173,6 @@ export class ContactsService {
     const normalized = this.normalizeJid(jid);
     if (!normalized) return undefined;
     return this.contactsMap.get(normalized);
-  }
-
-  public getDirectoryContacts(): KnownContact[] {
-    const list = Array.from(this.contactsMap.values()).filter(c => c.directoryEligible === true);
-    // Sort: contacts with names first (alphabetical), then by lastSeenAt desc
-    return list.sort((a, b) => {
-      const nameA = (a.name || '').trim();
-      const nameB = (b.name || '').trim();
-      if (nameA && !nameB) return -1;
-      if (!nameA && nameB) return 1;
-      if (nameA && nameB) return nameA.localeCompare(nameB);
-      return (b.lastSeenAt || '').localeCompare(a.lastSeenAt || '');
-    });
   }
 
   public getAll(): KnownContact[] {

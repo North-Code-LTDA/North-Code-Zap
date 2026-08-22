@@ -46,9 +46,7 @@ function normalizeTimeList(times: string[] | undefined): string[] {
  * Utility to normalize weekly time slots
  */
 function normalizeWeeklySlots(
-  slots?: WeeklyTimeSlot[],
-  legacyDays?: number[],
-  legacyTime?: string
+  slots?: WeeklyTimeSlot[]
 ): WeeklyTimeSlot[] {
   if (Array.isArray(slots) && slots.length > 0) {
     return slots
@@ -60,16 +58,6 @@ function normalizeWeeklySlots(
       .filter(s => s.times.length > 0)
       .sort((a, b) => a.day - b.day);
   }
-  
-  // Legacy fallback ONLY for older schedules
-  if (Array.isArray(legacyDays) && legacyDays.length > 0) {
-    const defaultTime = legacyTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(legacyTime) ? legacyTime : '08:00';
-    return legacyDays.map((day) => ({
-      day,
-      times: [defaultTime],
-    }));
-  }
-  
   return [];
 }
 
@@ -182,12 +170,10 @@ export class SchedulerService {
     message?: string;
     targets: ScheduledTarget[];
     scheduleType: ScheduleType;
-    scheduledAt: string;
-    dailyTimes?: string[];
-    weeklyTimeSlots?: WeeklyTimeSlot[];
+    scheduledAt: string | null;
+    dailyTimes: string[];
+    weeklyTimeSlots: WeeklyTimeSlot[];
     media?: ScheduledMedia | null;
-    weeklyDays?: number[];
-    timeOfDay?: string;
     fallbackName?: string;
     deliveryOptions?: DeliveryOptions;
   }): ScheduledMessage {
@@ -196,13 +182,13 @@ export class SchedulerService {
 
     const normalizedDailyTimes =
       data.scheduleType === 'daily'
-        ? normalizeTimeList(data.dailyTimes || (data.timeOfDay ? [data.timeOfDay] : []))
-        : undefined;
+        ? normalizeTimeList(data.dailyTimes)
+        : [];
 
     const normalizedWeeklySlots =
       data.scheduleType === 'weekly'
-        ? normalizeWeeklySlots(data.weeklyTimeSlots, data.weeklyDays, data.timeOfDay)
-        : undefined;
+        ? normalizeWeeklySlots(data.weeklyTimeSlots)
+        : [];
 
     const tempSchedule: ScheduledMessage = {
       id,
@@ -210,13 +196,11 @@ export class SchedulerService {
       message: (data.message || '').trim(),
       targets: data.targets || [],
       scheduleType: data.scheduleType,
-      scheduledAt: data.scheduledAt,
+      scheduledAt: data.scheduleType === 'once' ? data.scheduledAt : null,
       nextRunAt: null,
       dailyTimes: normalizedDailyTimes,
       weeklyTimeSlots: normalizedWeeklySlots,
       media: data.media || null,
-      weeklyDays: data.weeklyDays,
-      timeOfDay: data.timeOfDay,
       fallbackName: data.fallbackName ? data.fallbackName.trim() : 'amigo(a)',
       deliveryOptions: data.deliveryOptions || {
         intervalBetweenMessagesMs: 5000,
@@ -236,7 +220,7 @@ export class SchedulerService {
     this.schedules.push(tempSchedule);
     this.saveSchedules();
     this.emitUpdated();
-
+    
     console.log(
       `[Scheduler] created schedule=${tempSchedule.id} name="${tempSchedule.name}" nextRunAt=${tempSchedule.nextRunAt}`
     );
@@ -251,12 +235,10 @@ export class SchedulerService {
       message: string;
       targets: ScheduledTarget[];
       scheduleType: ScheduleType;
-      scheduledAt: string;
+      scheduledAt: string | null;
       dailyTimes: string[];
       weeklyTimeSlots: WeeklyTimeSlot[];
       media: ScheduledMedia | null;
-      weeklyDays: number[];
-      timeOfDay: string;
       fallbackName: string;
       deliveryOptions: DeliveryOptions;
       status: ScheduleStatus;
@@ -275,24 +257,23 @@ export class SchedulerService {
         ? normalizeTimeList(
             data.dailyTimes !== undefined
               ? data.dailyTimes
-              : current.dailyTimes || (current.timeOfDay ? [current.timeOfDay] : [])
+              : current.dailyTimes
           )
-        : undefined;
+        : [];
 
     const updatedWeeklySlots =
       effectiveScheduleType === 'weekly'
         ? normalizeWeeklySlots(
-            data.weeklyTimeSlots !== undefined ? data.weeklyTimeSlots : current.weeklyTimeSlots,
-            data.weeklyDays !== undefined ? data.weeklyDays : current.weeklyDays,
-            data.timeOfDay !== undefined ? data.timeOfDay : current.timeOfDay
+            data.weeklyTimeSlots !== undefined ? data.weeklyTimeSlots : current.weeklyTimeSlots
           )
-        : undefined;
+        : [];
 
     const updated: ScheduledMessage = {
       ...current,
       ...data,
       name: data.name !== undefined ? data.name.trim() : current.name,
       message: data.message !== undefined ? data.message.trim() : current.message,
+      scheduledAt: effectiveScheduleType === 'once' ? (data.scheduledAt !== undefined ? data.scheduledAt : current.scheduledAt) : null,
       dailyTimes: updatedDailyTimes,
       weeklyTimeSlots: updatedWeeklySlots,
       media: data.media !== undefined ? data.media : current.media,
@@ -308,8 +289,6 @@ export class SchedulerService {
       data.scheduleType !== undefined ||
       data.dailyTimes !== undefined ||
       data.weeklyTimeSlots !== undefined ||
-      data.weeklyDays !== undefined ||
-      data.timeOfDay !== undefined ||
       data.status === 'active'
     ) {
       if (updated.status === 'active') {

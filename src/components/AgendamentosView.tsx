@@ -274,8 +274,6 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     // Daily times parsing
     if (schedule.dailyTimes && schedule.dailyTimes.length > 0) {
       setFormDailyTimes([...schedule.dailyTimes]);
-    } else if (schedule.timeOfDay) {
-      setFormDailyTimes([schedule.timeOfDay]);
     } else {
       setFormDailyTimes(['08:00']);
     }
@@ -287,15 +285,6 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
       const days = clonedSlots.map((s) => s.day);
       setFormWeeklyDays(days);
       setSelectedWeeklyDayForTimes(days[0] ?? 1);
-    } else if (schedule.weeklyDays && schedule.weeklyDays.length > 0) {
-      const time = schedule.timeOfDay || '08:00';
-      const slots: WeeklyTimeSlot[] = schedule.weeklyDays.map((d) => ({
-        day: d,
-        times: [time],
-      }));
-      setFormWeeklyDays([...schedule.weeklyDays]);
-      setFormWeeklySlots(slots);
-      setSelectedWeeklyDayForTimes(schedule.weeklyDays[0]);
     } else {
       setFormWeeklyDays([1]);
       setFormWeeklySlots([{ day: 1, times: ['08:00'] }]);
@@ -844,7 +833,6 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
       batchPauseEnabled: formBatchPauseEnabled,
       batchSize: Math.max(1, formBatchSize),
       batchPauseMs: Math.max(60000, formBatchPauseMinutes * 60000),
-      retryAttempts: 2,
     };
 
     let scheduledAt = new Date().toISOString();
@@ -1108,19 +1096,12 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
             const dailyTimesList =
               schedule.dailyTimes && schedule.dailyTimes.length > 0
                 ? schedule.dailyTimes
-                : schedule.timeOfDay
-                ? [schedule.timeOfDay]
                 : ['08:00'];
 
             // Weekly slots display
             const weeklySlotsList =
               schedule.weeklyTimeSlots && schedule.weeklyTimeSlots.length > 0
                 ? schedule.weeklyTimeSlots
-                : schedule.weeklyDays
-                ? schedule.weeklyDays.map((d) => ({
-                    day: d,
-                    times: [schedule.timeOfDay || '08:00'],
-                  }))
                 : [];
 
             return (

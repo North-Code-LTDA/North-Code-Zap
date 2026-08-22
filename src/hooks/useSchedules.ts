@@ -187,12 +187,10 @@ export function useSchedules() {
       message?: string;
       targets: ScheduledTarget[];
       scheduleType: ScheduleType;
-      scheduledAt: string;
+      scheduledAt: string | null;
       dailyTimes?: string[];
       weeklyTimeSlots?: WeeklyTimeSlot[];
       media?: ScheduledMedia | null;
-      weeklyDays?: number[];
-      timeOfDay?: string;
       fallbackName?: string;
       deliveryOptions?: DeliveryOptions;
     }): Promise<{ success: boolean; schedule?: ScheduledMessage; error?: string }> => {
