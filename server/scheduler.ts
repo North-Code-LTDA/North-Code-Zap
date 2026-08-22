@@ -4,7 +4,7 @@ import type { Server as SocketIOServer } from 'socket.io';
 import { whatsAppService, type WhatsAppService } from './whatsapp';
 import { mediaService } from './media';
 import { renderMessageTemplate } from '../src/utils/template';
-import type {
+import type { 
   ScheduledMessage,
   ScheduledTarget,
   ScheduleType,
@@ -15,7 +15,7 @@ import type {
   DeliveryOptions,
   ScheduledMedia,
   WeeklyTimeSlot,
-} from '../src/types';
+ SchedulePayload } from "../src/types";
 
 const SCHEDULER_DIR =
   process.env.SCHEDULER_DATA_DIR || path.join(process.cwd(), 'data', 'scheduler');
@@ -109,22 +109,77 @@ export class SchedulerService {
               continue;
             }
 
+            // Delivery options validation
+            const delOpt = s.deliveryOptions;
+            if (
+              typeof delOpt.intervalBetweenMessagesMs !== 'number' || delOpt.intervalBetweenMessagesMs < 1000 ||
+              typeof delOpt.batchPauseEnabled !== 'boolean' ||
+              typeof delOpt.batchSize !== 'number' || !Number.isInteger(delOpt.batchSize) || delOpt.batchSize < 1 ||
+              typeof delOpt.batchPauseMs !== 'number' || delOpt.batchPauseMs < 60000
+            ) {
+              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (deliveryOptions invalid)`);
+              continue;
+            }
+
+            // Targets validation
+            const validSources = ['directory', 'manual', 'import', 'group_member', 'group'];
+            let targetsValid = s.targets.length > 0;
+            for (const t of s.targets) {
+              if (
+                (t.type !== 'person' && t.type !== 'group') ||
+                typeof t.jid !== 'string' || !t.jid.trim() ||
+                typeof t.label !== 'string' || !t.label.trim() ||
+                (t.source && !validSources.includes(t.source)) ||
+                (t.type === 'group' && t.source !== 'group') ||
+                (t.source === 'group_member' && t.type !== 'person')
+              ) {
+                targetsValid = false;
+                break;
+              }
+            }
+            if (!targetsValid) {
+              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (targets invalid)`);
+              continue;
+            }
+
+            // Media validation
+            if (s.media !== null && s.media !== undefined) {
+              if (
+                typeof s.media !== 'object' ||
+                s.media.type !== 'image' ||
+                (s.media.source === 'upload' ? !s.media.localPath : !s.media.url)
+              ) {
+                console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (media invalid)`);
+                continue;
+              }
+            }
+
+            const isValidTime = (t: any) => typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
+
             let isValidSpecific = false;
             if (s.scheduleType === 'once') {
               isValidSpecific =
                 typeof s.scheduledAt === 'string' &&
+                !isNaN(new Date(s.scheduledAt).getTime()) &&
                 s.dailyTimes.length === 0 &&
                 s.weeklyTimeSlots.length === 0;
             } else if (s.scheduleType === 'daily') {
               isValidSpecific =
                 s.scheduledAt === null &&
                 s.dailyTimes.length >= 1 &&
+                s.dailyTimes.every(isValidTime) &&
                 s.weeklyTimeSlots.length === 0;
             } else if (s.scheduleType === 'weekly') {
               isValidSpecific =
                 s.scheduledAt === null &&
                 s.dailyTimes.length === 0 &&
-                s.weeklyTimeSlots.length >= 1;
+                s.weeklyTimeSlots.length >= 1 &&
+                s.weeklyTimeSlots.every((ws: any) =>
+                  typeof ws === 'object' && ws !== null &&
+                  Number.isInteger(ws.day) && ws.day >= 0 && ws.day <= 6 &&
+                  Array.isArray(ws.times) && ws.times.length > 0 &&
+                  ws.times.every(isValidTime)
+                );
             }
 
             if (!isValidSpecific) {
@@ -208,18 +263,7 @@ export class SchedulerService {
     return this.schedules.find((s) => s.id === id);
   }
 
-  public create(data: {
-    name: string;
-    message?: string;
-    targets: ScheduledTarget[];
-    scheduleType: ScheduleType;
-    scheduledAt: string | null;
-    dailyTimes: string[];
-    weeklyTimeSlots: WeeklyTimeSlot[];
-    media?: ScheduledMedia | null;
-    fallbackName?: string;
-    deliveryOptions?: DeliveryOptions;
-  }): ScheduledMessage {
+  public create(data: SchedulePayload): ScheduledMessage {
     const id = `sched_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const nowIso = new Date().toISOString();
 
@@ -245,12 +289,7 @@ export class SchedulerService {
       weeklyTimeSlots: normalizedWeeklySlots,
       media: data.media || null,
       fallbackName: data.fallbackName ? data.fallbackName.trim() : 'amigo(a)',
-      deliveryOptions: data.deliveryOptions || {
-        intervalBetweenMessagesMs: 5000,
-        batchPauseEnabled: false,
-        batchSize: 5,
-        batchPauseMs: 300000,
-      },
+      deliveryOptions: data.deliveryOptions,
       status: 'active',
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -271,70 +310,37 @@ export class SchedulerService {
     return tempSchedule;
   }
 
-  public update(
-    id: string,
-    data: Partial<{
-      name: string;
-      message: string;
-      targets: ScheduledTarget[];
-      scheduleType: ScheduleType;
-      scheduledAt: string | null;
-      dailyTimes: string[];
-      weeklyTimeSlots: WeeklyTimeSlot[];
-      media: ScheduledMedia | null;
-      fallbackName: string;
-      deliveryOptions: DeliveryOptions;
-    }>
-  ): ScheduledMessage | null {
+  public update(id: string, data: SchedulePayload): ScheduledMessage | null {
     const index = this.schedules.findIndex((s) => s.id === id);
     if (index === -1) return null;
 
     const current = this.schedules[index];
     const previousMedia = current.media;
 
-    const effectiveScheduleType = data.scheduleType || current.scheduleType;
-
-    const updatedDailyTimes =
-      effectiveScheduleType === 'daily'
-        ? normalizeTimeList(
-            data.dailyTimes !== undefined
-              ? data.dailyTimes
-              : current.dailyTimes
-          )
-        : [];
-
-    const updatedWeeklySlots =
-      effectiveScheduleType === 'weekly'
-        ? normalizeWeeklySlots(
-            data.weeklyTimeSlots !== undefined ? data.weeklyTimeSlots : current.weeklyTimeSlots
-          )
-        : [];
+    const updatedDailyTimes = data.scheduleType === 'daily' ? normalizeTimeList(data.dailyTimes) : [];
+    const updatedWeeklySlots = data.scheduleType === 'weekly' ? normalizeWeeklySlots(data.weeklyTimeSlots) : [];
 
     const updated: ScheduledMessage = {
-      ...current,
-      ...data,
-      name: data.name !== undefined ? data.name.trim() : current.name,
-      message: data.message !== undefined ? data.message.trim() : current.message,
-      scheduledAt: effectiveScheduleType === 'once' ? (data.scheduledAt !== undefined ? data.scheduledAt : current.scheduledAt) : null,
+      id: current.id,
+      name: data.name,
+      message: data.message,
+      targets: data.targets,
+      scheduleType: data.scheduleType,
+      scheduledAt: data.scheduleType === 'once' ? data.scheduledAt : null,
       dailyTimes: updatedDailyTimes,
       weeklyTimeSlots: updatedWeeklySlots,
-      media: data.media !== undefined ? data.media : current.media,
-      fallbackName:
-        data.fallbackName !== undefined ? data.fallbackName.trim() : current.fallbackName || 'amigo(a)',
-      deliveryOptions:
-        data.deliveryOptions !== undefined ? data.deliveryOptions : current.deliveryOptions,
+      media: data.media,
+      fallbackName: data.fallbackName,
+      deliveryOptions: data.deliveryOptions,
+      status: current.status,
+      createdAt: current.createdAt,
       updatedAt: new Date().toISOString(),
+      lastRunAt: current.lastRunAt,
+      lastResult: current.lastResult,
+      nextRunAt: current.nextRunAt,
     };
-
-    if (
-      data.scheduledAt !== undefined ||
-      data.scheduleType !== undefined ||
-      data.dailyTimes !== undefined ||
-      data.weeklyTimeSlots !== undefined
-    ) {
-      if (updated.status === 'active') {
-        updated.nextRunAt = this.calculateNextRunAt(updated);
-      }
+    if (updated.status === 'active') {
+      updated.nextRunAt = this.calculateNextRunAt(updated);
     }
 
     this.schedules[index] = updated;

@@ -212,178 +212,149 @@ async function startServer() {
     );
   }
 
-  app.post('/api/schedules', (req, res) => {
-    try {
-      const {
-        name,
-        message,
-        targets,
-        scheduleType,
-        scheduledAt,
-        dailyTimes,
-        weeklyTimeSlots,
-        media,
-        fallbackName,
-        deliveryOptions,
-      } = req.body || {};
 
-      if (!name || typeof name !== 'string' || !name.trim()) {
-        return res.status(400).json({ success: false, error: 'Nome do agendamento é obrigatório.' });
+  function validateSchedulePayload(body: any): { valid: boolean; error?: string; payload?: any } {
+    const {
+      name,
+      message,
+      targets,
+      scheduleType,
+      scheduledAt,
+      dailyTimes,
+      weeklyTimeSlots,
+      media,
+      fallbackName,
+      deliveryOptions,
+    } = body || {};
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return { valid: false, error: 'Nome do agendamento é obrigatório.' };
+    }
+
+    const hasText = Boolean(message && typeof message === 'string' && message.trim().length > 0);
+    const hasMedia = Boolean(
+      media &&
+        media.type === 'image' &&
+        (media.source === 'upload' ? Boolean(media.localPath) : Boolean(media.url))
+    );
+
+    if (!hasText && !hasMedia) {
+      return { valid: false, error: 'O agendamento precisa ter pelo menos uma mensagem de texto ou uma imagem.' };
+    }
+    
+    if (media !== null && !hasMedia) {
+      return { valid: false, error: 'Mídia inválida.' };
+    }
+
+    if (!Array.isArray(targets) || targets.length === 0) {
+      return { valid: false, error: 'Pelo menos um destinatário é obrigatório.' };
+    }
+
+    const validSources = ['directory', 'manual', 'import', 'group_member', 'group'];
+    for (const t of targets) {
+      if (t.type !== 'person' && t.type !== 'group') return { valid: false, error: 'Tipo de destinatário inválido.' };
+      if (typeof t.jid !== 'string' || !t.jid.trim()) return { valid: false, error: 'JID de destinatário inválido.' };
+      if (typeof t.label !== 'string' || !t.label.trim()) return { valid: false, error: 'Label de destinatário inválido.' };
+      if (t.source && !validSources.includes(t.source)) return { valid: false, error: 'Source de destinatário inválido.' };
+      if (t.type === 'group' && t.source !== 'group') return { valid: false, error: 'Source de grupo inválido.' };
+      if (t.source === 'group_member' && t.type !== 'person') return { valid: false, error: 'Source de group_member deve ser person.' };
+    }
+
+    if (!deliveryOptions || typeof deliveryOptions !== 'object') {
+      return { valid: false, error: 'Opções de entrega ausentes ou inválidas.' };
+    }
+    if (typeof deliveryOptions.intervalBetweenMessagesMs !== 'number' || deliveryOptions.intervalBetweenMessagesMs < 1000) {
+      return { valid: false, error: 'Intervalo de entrega inválido.' };
+    }
+    if (typeof deliveryOptions.batchPauseEnabled !== 'boolean') {
+      return { valid: false, error: 'batchPauseEnabled inválido.' };
+    }
+    if (typeof deliveryOptions.batchSize !== 'number' || !Number.isInteger(deliveryOptions.batchSize) || deliveryOptions.batchSize < 1) {
+      return { valid: false, error: 'batchSize inválido.' };
+    }
+    if (typeof deliveryOptions.batchPauseMs !== 'number' || deliveryOptions.batchPauseMs < 60000) {
+      return { valid: false, error: 'batchPauseMs inválido.' };
+    }
+
+    if (!['once', 'daily', 'weekly'].includes(scheduleType)) {
+      return { valid: false, error: 'Tipo de agendamento inválido.' };
+    }
+
+    let parsedScheduledAt = scheduledAt;
+
+    if (scheduleType === 'once') {
+      if (!scheduledAt || typeof scheduledAt !== 'string') {
+        return { valid: false, error: 'Informe uma data e horário válidos para o agendamento único.' };
       }
-
-      const hasText = Boolean(message && typeof message === 'string' && message.trim().length > 0);
-      const hasMedia = Boolean(
-        media &&
-          media.type === 'image' &&
-          (media.source === 'upload' ? Boolean(media.localPath) : Boolean(media.url))
-      );
-
-      if (!hasText && !hasMedia) {
-        return res.status(400).json({
-          success: false,
-          error: 'O agendamento precisa ter pelo menos uma mensagem de texto ou uma imagem.',
-        });
+      const parsedDate = new Date(scheduledAt);
+      if (isNaN(parsedDate.getTime())) {
+        return { valid: false, error: 'Data e horário inválidos.' };
       }
-
-      if (!Array.isArray(targets) || targets.length === 0) {
-        return res
-          .status(400)
-          .json({ success: false, error: 'Pelo menos um destinatário é obrigatório.' });
+      if (parsedDate.getTime() <= Date.now()) {
+        return { valid: false, error: 'O horário do agendamento deve estar no futuro.' };
       }
-
-      if (!['once', 'daily', 'weekly'].includes(scheduleType)) {
-        return res.status(400).json({ success: false, error: 'Tipo de agendamento inválido.' });
+      if (Array.isArray(dailyTimes) && dailyTimes.length > 0) return { valid: false, error: 'dailyTimes deve ser vazio para once.' };
+      if (Array.isArray(weeklyTimeSlots) && weeklyTimeSlots.length > 0) return { valid: false, error: 'weeklyTimeSlots deve ser vazio para once.' };
+      parsedScheduledAt = parsedDate.toISOString();
+    } else if (scheduleType === 'daily') {
+      if (scheduledAt !== null) return { valid: false, error: 'scheduledAt deve ser null para daily.' };
+      if (!validateDaily(dailyTimes)) {
+        return { valid: false, error: 'Adicione pelo menos um horário diário válido.' };
       }
-
-      let parsedScheduledAt = scheduledAt;
-      
-      if (scheduleType === 'once') {
-        if (!scheduledAt) {
-          return res.status(400).json({ success: false, error: 'Informe uma data e horário válidos para o agendamento único.' });
-        }
-        const parsedDate = new Date(scheduledAt);
-        if (isNaN(parsedDate.getTime())) {
-          return res.status(400).json({ success: false, error: 'Data e horário inválidos.' });
-        }
-        if (parsedDate.getTime() <= Date.now()) {
-          return res.status(400).json({ success: false, error: 'O horário do agendamento deve estar no futuro.' });
-        }
-        parsedScheduledAt = parsedDate.toISOString();
-      } else if (scheduleType === 'daily') {
-        if (!validateDaily(dailyTimes)) {
-          return res.status(400).json({ success: false, error: 'Adicione pelo menos um horário diário válido.' });
-        }
-      } else if (scheduleType === 'weekly') {
-        if (!validateWeekly(weeklyTimeSlots)) {
-          return res.status(400).json({ success: false, error: 'Configure pelo menos um dia e horário semanal válido.' });
-        }
+      if (Array.isArray(weeklyTimeSlots) && weeklyTimeSlots.length > 0) return { valid: false, error: 'weeklyTimeSlots deve ser vazio para daily.' };
+    } else if (scheduleType === 'weekly') {
+      if (scheduledAt !== null) return { valid: false, error: 'scheduledAt deve ser null para weekly.' };
+      if (Array.isArray(dailyTimes) && dailyTimes.length > 0) return { valid: false, error: 'dailyTimes deve ser vazio para weekly.' };
+      if (!validateWeekly(weeklyTimeSlots)) {
+        return { valid: false, error: 'Configure pelo menos um dia e horário semanal válido.' };
       }
+    }
 
-      const newSchedule = schedulerService.create({
+    return {
+      valid: true,
+      payload: {
         name,
         message: message || '',
         targets,
         scheduleType,
         scheduledAt: parsedScheduledAt,
-        dailyTimes,
-        weeklyTimeSlots,
-        media,
-        fallbackName,
+        dailyTimes: dailyTimes || [],
+        weeklyTimeSlots: weeklyTimeSlots || [],
+        media: media === undefined ? null : media,
+        fallbackName: fallbackName || 'amigo(a)',
         deliveryOptions,
-      });
+      }
+    };
+  }
+  app.post('/api/schedules', (req, res) => {
+    try {
+      const validation = validateSchedulePayload(req.body);
+      if (!validation.valid) {
+        return res.status(400).json({ success: false, error: validation.error });
+      }
 
-      res.status(201).json({ success: true, schedule: newSchedule });
+      const schedule = schedulerService.create(validation.payload);
+      res.status(201).json({ success: true, schedule });
     } catch (err: any) {
+      console.error('[API] create schedule error:', err);
       res.status(500).json({ success: false, error: err?.message || 'Falha ao criar agendamento' });
     }
   });
 
   app.put('/api/schedules/:id', (req, res) => {
     try {
-      const {
-        name,
-        message,
-        targets,
-        scheduleType,
-        scheduledAt,
-        dailyTimes,
-        weeklyTimeSlots,
-        media,
-        fallbackName,
-        deliveryOptions,
-      } = req.body || {};
-
-      if (!name || typeof name !== 'string' || !name.trim()) {
-        return res.status(400).json({ success: false, error: 'Nome do agendamento é obrigatório.' });
+      const validation = validateSchedulePayload(req.body);
+      if (!validation.valid) {
+        return res.status(400).json({ success: false, error: validation.error });
       }
 
-      const hasText = Boolean(message && typeof message === 'string' && message.trim().length > 0);
-      const hasMedia = Boolean(
-        media &&
-          media.type === 'image' &&
-          (media.source === 'upload' ? Boolean(media.localPath) : Boolean(media.url))
-      );
-
-      if (!hasText && !hasMedia) {
-        return res.status(400).json({
-          success: false,
-          error: 'O agendamento precisa ter pelo menos uma mensagem de texto ou uma imagem.',
-        });
-      }
-
-      if (!Array.isArray(targets) || targets.length === 0) {
-        return res
-          .status(400)
-          .json({ success: false, error: 'Pelo menos um destinatário é obrigatório.' });
-      }
-
-      if (!['once', 'daily', 'weekly'].includes(scheduleType)) {
-        return res.status(400).json({ success: false, error: 'Tipo de agendamento inválido.' });
-      }
-
-      let parsedScheduledAt = scheduledAt;
-
-      if (scheduleType === 'once') {
-        if (!scheduledAt) {
-          return res.status(400).json({ success: false, error: 'Informe uma data e horário válidos para o agendamento único.' });
-        }
-        const parsedDate = new Date(scheduledAt);
-        if (isNaN(parsedDate.getTime())) {
-          return res.status(400).json({ success: false, error: 'Data e horário inválidos.' });
-        }
-        if (parsedDate.getTime() <= Date.now()) {
-          return res.status(400).json({ success: false, error: 'O horário do agendamento deve estar no futuro.' });
-        }
-        parsedScheduledAt = parsedDate.toISOString();
-      } else if (scheduleType === 'daily') {
-        if (!validateDaily(dailyTimes)) {
-          return res.status(400).json({ success: false, error: 'Adicione pelo menos um horário diário válido.' });
-        }
-      } else if (scheduleType === 'weekly') {
-        if (!validateWeekly(weeklyTimeSlots)) {
-          return res.status(400).json({ success: false, error: 'Configure pelo menos um dia e horário semanal válido.' });
-        }
-      }
-
-      const updated = schedulerService.update(req.params.id, {
-        name,
-        message: message || '',
-        targets,
-        scheduleType,
-        scheduledAt: parsedScheduledAt,
-        dailyTimes,
-        weeklyTimeSlots,
-        media,
-        fallbackName,
-        deliveryOptions,
-      });
-
+      const updated = schedulerService.update(req.params.id, validation.payload);
       if (!updated) {
         return res.status(404).json({ success: false, error: 'Agendamento não encontrado' });
       }
-
       res.json({ success: true, schedule: updated });
     } catch (err: any) {
+      console.error('[API] update schedule error:', err);
       res.status(500).json({ success: false, error: err?.message || 'Falha ao atualizar agendamento' });
     }
   });

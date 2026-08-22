@@ -275,7 +275,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     if (schedule.dailyTimes && schedule.dailyTimes.length > 0) {
       setFormDailyTimes([...schedule.dailyTimes]);
     } else {
-      setFormDailyTimes(['08:00']);
+      setFormDailyTimes([]);
     }
 
     // Weekly slots parsing
@@ -286,8 +286,8 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
       setFormWeeklyDays(days);
       setSelectedWeeklyDayForTimes(days[0] ?? 1);
     } else {
-      setFormWeeklyDays([1]);
-      setFormWeeklySlots([{ day: 1, times: ['08:00'] }]);
+      setFormWeeklyDays([]);
+      setFormWeeklySlots([]);
       setSelectedWeeklyDayForTimes(1);
     }
 
@@ -1099,10 +1099,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
             const isRunning = executingScheduleId === schedule.id || schedule.status === 'running';
 
             // Daily times display list
-            const dailyTimesList =
-              schedule.dailyTimes && schedule.dailyTimes.length > 0
-                ? schedule.dailyTimes
-                : ['08:00'];
+            const dailyTimesList = schedule.dailyTimes || [];
 
             // Weekly slots display
             const weeklySlotsList =
@@ -1226,31 +1223,39 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                     {schedule.scheduleType === 'daily' && (
                       <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
                         <span className="text-[11px] text-neutral-500">Horários diários:</span>
-                        {dailyTimesList.map((t, idx) => (
-                          <span
-                            key={idx}
-                            className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-[11px] text-emerald-300 font-mono"
-                          >
-                            {t}
-                          </span>
-                        ))}
+                        {dailyTimesList.length > 0 ? (
+                          dailyTimesList.map((t, idx) => (
+                            <span
+                              key={idx}
+                              className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-[11px] text-emerald-300 font-mono"
+                            >
+                              {t}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[11px] text-red-400">Sem horário configurado</span>
+                        )}
                       </div>
                     )}
 
                     {schedule.scheduleType === 'weekly' && (
                       <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
                         <span className="text-[11px] text-neutral-500">Dias e horários:</span>
-                        {weeklySlotsList.map((slot) => {
-                          const dayObj = WEEK_DAYS.find((d) => d.id === slot.day);
-                          return (
-                            <span
-                              key={slot.day}
-                              className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-[11px] text-neutral-200"
-                            >
-                              <strong className="text-emerald-400">{dayObj?.label}:</strong> {slot.times.join(', ')}
-                            </span>
-                          );
-                        })}
+                        {weeklySlotsList.length > 0 ? (
+                          weeklySlotsList.map((slot) => {
+                            const dayObj = WEEK_DAYS.find((d) => d.id === slot.day);
+                            return (
+                              <span
+                                key={slot.day}
+                                className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-[11px] text-neutral-200"
+                              >
+                                <strong className="text-emerald-400">{dayObj?.label}:</strong> {slot.times.length > 0 ? slot.times.join(', ') : 'Sem horário'}
+                              </span>
+                            );
+                          })
+                        ) : (
+                          <span className="text-[11px] text-red-400">Sem horário configurado</span>
+                        )}
                       </div>
                     )}
 

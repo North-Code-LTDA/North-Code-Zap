@@ -117,7 +117,7 @@ export interface SchedulePayload {
   scheduledAt: string | null;
   dailyTimes: string[];
   weeklyTimeSlots: WeeklyTimeSlot[];
-  media?: ScheduledMedia | null;
+  media: ScheduledMedia | null;
   fallbackName: string;
   deliveryOptions: DeliveryOptions;
 }
