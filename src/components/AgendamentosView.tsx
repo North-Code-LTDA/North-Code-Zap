@@ -43,6 +43,7 @@ import type {
   WeeklyTimeSlot,
 } from '../types';
 import { useSchedules } from '../hooks/useSchedules';
+import { useInstances } from '../contexts/InstancesContext';
 import { renderMessageTemplate } from '../utils/template';
 import { Button } from './ui/Button';
 
@@ -61,6 +62,7 @@ const WEEK_DAYS = [
 ];
 
 export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
+  const { selectedInstanceId } = useInstances();
   const {
     schedules,
     groups,
@@ -81,7 +83,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     resumeSchedule,
     runNow,
     schedulerTimezone,
-  } = useSchedules();
+  } = useSchedules(selectedInstanceId);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<ScheduledMessage | null>(null);

@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import type { Server as SocketIOServer } from 'socket.io';
-import { whatsAppService, type WhatsAppService } from './whatsapp';
-import { mediaService } from './media';
+import type { InstanceManager } from './instances';
+
 import { renderMessageTemplate } from '../src/utils/template';
 import type { 
   ScheduledMessage,
@@ -65,10 +65,12 @@ export class SchedulerService {
   private schedules: ScheduledMessage[] = [];
   private processingSchedules: Set<string> = new Set();
   private io: SocketIOServer | null = null;
+  private instanceManager: InstanceManager;
   private loopTimer: NodeJS.Timeout | null = null;
-  private whatsapp: WhatsAppService = whatsAppService;
 
-  constructor() {
+  
+  constructor(instanceManager: InstanceManager) {
+    this.instanceManager = instanceManager;
     this.ensureDirectory();
     this.loadSchedules();
   }
@@ -260,21 +262,23 @@ export class SchedulerService {
 
   private setupSocketEvents() {
     if (!this.io) return;
-
     this.io.on('connection', (clientSocket) => {
-      // Send current schedules on new client connection
-      clientSocket.emit('scheduler:schedules_list', this.schedules);
-
-      clientSocket.on('scheduler:get_schedules', () => {
-        clientSocket.emit('scheduler:schedules_list', this.schedules);
-      });
+      // The frontend will now explicitly request schedules when selecting an instance.
     });
   }
 
   private emitUpdated() {
-    if (this.io) {
-      this.io.emit('scheduler:updated', this.schedules);
-      this.io.emit('scheduler:schedules_list', this.schedules);
+    if (!this.io) return;
+    const byInstance = new Map<string, typeof this.schedules>();
+    for (const s of this.schedules) {
+      if (!byInstance.has(s.instanceId)) {
+        byInstance.set(s.instanceId, []);
+      }
+      byInstance.get(s.instanceId)!.push(s);
+    }
+    for (const [instanceId, schedules] of byInstance.entries()) {
+      this.io.to(`instance:${instanceId}`).emit('scheduler:updated', schedules);
+      this.io.to(`instance:${instanceId}`).emit('scheduler:schedules_list', schedules);
     }
   }
 
@@ -301,12 +305,16 @@ export class SchedulerService {
   public getAll(): ScheduledMessage[] {
     return this.schedules;
   }
+  
+  public getSchedulesForInstance(instanceId: string): ScheduledMessage[] {
+    return this.schedules.filter(s => s.instanceId === instanceId);
+  }
 
   public getById(id: string): ScheduledMessage | undefined {
     return this.schedules.find((s) => s.id === id);
   }
 
-  public create(data: SchedulePayload): ScheduledMessage {
+  public create(instanceId: string, data: SchedulePayload): ScheduledMessage {
     const id = `sched_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const nowIso = new Date().toISOString();
 
@@ -338,6 +346,7 @@ export class SchedulerService {
       updatedAt: nowIso,
       lastRunAt: null,
       lastResult: null,
+      instanceId,
     };
     tempSchedule.nextRunAt = this.calculateNextRunAt(tempSchedule);
 
@@ -352,8 +361,8 @@ export class SchedulerService {
     return tempSchedule;
   }
 
-  public update(id: string, data: SchedulePayload): ScheduledMessage | null {
-    const index = this.schedules.findIndex((s) => s.id === id);
+  public update(id: string, instanceId: string, data: SchedulePayload, mediaSvc: any): ScheduledMessage | null {
+    const index = this.schedules.findIndex((s) => s.id === id && s.instanceId === instanceId);
     if (index === -1) return null;
 
     const current = this.schedules[index];
@@ -380,6 +389,7 @@ export class SchedulerService {
       lastRunAt: current.lastRunAt,
       lastResult: current.lastResult,
       nextRunAt: current.nextRunAt,
+      instanceId,
     };
     if (updated.status === 'active') {
       updated.nextRunAt = this.calculateNextRunAt(updated);
@@ -395,14 +405,14 @@ export class SchedulerService {
       previousMedia.localPath &&
       previousMedia.localPath !== updated.media?.localPath
     ) {
-      mediaService.deleteMediaIfUnreferenced(previousMedia.localPath, this.schedules);
+      mediaSvc.deleteMediaIfUnreferenced(previousMedia.localPath, this.schedules);
     }
 
     console.log(`[Scheduler] updated schedule=${updated.id} name="${updated.name}"`);
     return updated;
   }
 
-  public delete(id: string): boolean {
+  public delete(id: string, instanceId: string, mediaSvc: any): boolean {
     const targetSchedule = this.schedules.find((s) => s.id === id);
     if (!targetSchedule) {
       console.warn(`[Scheduler] delete failed schedule=${id} reason=not_found`);
@@ -419,7 +429,7 @@ export class SchedulerService {
     // Cleanup associated uploaded media if no longer referenced
     if (mediaToClean?.source === 'upload' && mediaToClean.localPath) {
       try {
-        mediaService.deleteMediaIfUnreferenced(mediaToClean.localPath, this.schedules);
+        mediaSvc.deleteMediaIfUnreferenced(mediaToClean.localPath, this.schedules);
       } catch (mediaErr: any) {
         console.warn(`[Scheduler] media cleanup error on delete schedule=${id}:`, mediaErr?.message);
       }
@@ -428,8 +438,8 @@ export class SchedulerService {
     return true;
   }
 
-  public pause(id: string): ScheduledMessage | null {
-    const schedule = this.schedules.find((s) => s.id === id);
+  public pause(id: string, instanceId: string): ScheduledMessage | null {
+    const schedule = this.schedules.find((s) => s.id === id && s.instanceId === instanceId);
     if (!schedule) return null;
 
     schedule.status = 'paused';
@@ -441,8 +451,8 @@ export class SchedulerService {
     return schedule;
   }
 
-  public resume(id: string): ScheduledMessage | null {
-    const schedule = this.schedules.find((s) => s.id === id);
+  public resume(id: string, instanceId: string): ScheduledMessage | null {
+    const schedule = this.schedules.find((s) => s.id === id && s.instanceId === instanceId);
     if (!schedule) return null;
 
     schedule.status = 'active';
@@ -640,9 +650,9 @@ export class SchedulerService {
    * Triggers immediate execution of a schedule (Run Now)
    */
   public async runNow(
-    id: string
+    id: string, instanceId: string
   ): Promise<{ success: boolean; result?: ScheduleLastResult; error?: string }> {
-    const schedule = this.schedules.find((s) => s.id === id);
+    const schedule = this.schedules.find((s) => s.id === id && s.instanceId === instanceId);
     if (!schedule) {
       return { success: false, error: 'Agendamento não encontrado.' };
     }
@@ -654,7 +664,11 @@ export class SchedulerService {
       };
     }
 
-    const state = this.whatsapp.getState();
+    const instance = this.instanceManager.get(schedule.instanceId);
+    if (!instance || !instance.whatsapp) {
+      return { success: false, error: 'Instância não encontrada ou WhatsApp indisponível.' };
+    }
+    const state = instance.whatsapp.getState();
     if (state.status !== 'connected') {
       return {
         success: false,
@@ -700,8 +714,9 @@ export class SchedulerService {
     this.emitUpdated();
 
     if (this.io) {
-      this.io.emit('scheduler:started', {
+      this.io.to(`instance:${schedule.instanceId}`).emit('scheduler:started', {
         scheduleId: schedule.id,
+        instanceId: schedule.instanceId,
         name: schedule.name,
         targetsCount: schedule.targets.length,
         isRunNow,
@@ -759,6 +774,7 @@ export class SchedulerService {
       // Emit progress
       const progressEvent: SchedulerProgressEvent = {
         scheduleId: schedule.id,
+        instanceId: schedule.instanceId,
         scheduleName: schedule.name,
         currentIndex: i + 1,
         totalTargets: schedule.targets.length,
@@ -770,11 +786,24 @@ export class SchedulerService {
         failedCount,
       };
       if (this.io) {
-        this.io.emit('scheduler:progress', progressEvent);
+        this.io.to(`instance:${schedule.instanceId}`).emit('scheduler:progress', progressEvent);
       }
 
       // Check WhatsApp connection
-      const state = this.whatsapp.getState();
+      const instance = this.instanceManager.get(schedule.instanceId);
+      if (!instance || !instance.whatsapp) {
+        console.log(`[Scheduler] WhatsApp not found for instance=${schedule.instanceId}`);
+        failedCount++;
+        details.push({
+          targetJid: target.jid,
+          targetLabel: target.label,
+          status: 'failed',
+          renderedPreview: renderedMessage,
+          error: 'Instância desconectada/inexistente',
+        });
+        continue;
+      }
+      const state = instance.whatsapp.getState();
       if (state.status !== 'connected') {
         console.log(
           `[Scheduler] WhatsApp disconnected during schedule=${schedule.id} target=${target.label}`
@@ -798,7 +827,7 @@ export class SchedulerService {
       for (let attempt = 1; attempt <= MAX_SEND_RETRIES; attempt++) {
         try {
           if (schedule.media && schedule.media.type === 'image') {
-            const sendRes = await this.whatsapp.sendImageMessage(
+            const sendRes = await instance.whatsapp.sendImageMessage(
               target.jid,
               schedule.media,
               renderedMessage
@@ -811,7 +840,7 @@ export class SchedulerService {
               lastError = sendRes.error || 'Falha no envio da imagem';
             }
           } else {
-            const sendRes = await this.whatsapp.sendTextMessage(target.jid, renderedMessage);
+            const sendRes = await instance.whatsapp.sendTextMessage(target.jid, renderedMessage);
             if (sendRes.success) {
               attemptSuccess = true;
               messageId = sendRes.message?.id;
@@ -859,7 +888,7 @@ export class SchedulerService {
 
       // Update progress with completion of current target
       if (this.io) {
-        this.io.emit('scheduler:progress', {
+        this.io.to(`instance:${schedule.instanceId}`).emit('scheduler:progress', {
           ...progressEvent,
           status: attemptSuccess ? 'sent' : 'failed',
           phase: 'sending',
@@ -881,8 +910,9 @@ export class SchedulerService {
           );
 
           if (this.io) {
-            this.io.emit('scheduler:progress', {
+            this.io.to(`instance:${schedule.instanceId}`).emit('scheduler:progress', {
               scheduleId: schedule.id,
+        instanceId: schedule.instanceId,
               scheduleName: schedule.name,
               currentIndex: itemsProcessed,
               totalTargets: schedule.targets.length,
@@ -952,8 +982,9 @@ export class SchedulerService {
     this.emitUpdated();
 
     if (this.io) {
-      this.io.emit('scheduler:completed', {
+      this.io.to(`instance:${schedule.instanceId}`).emit('scheduler:completed', {
         scheduleId: schedule.id,
+        instanceId: schedule.instanceId,
         name: schedule.name,
         result: executionResult,
       });
@@ -963,5 +994,5 @@ export class SchedulerService {
   }
 }
 
-export const schedulerService = new SchedulerService();
+
 

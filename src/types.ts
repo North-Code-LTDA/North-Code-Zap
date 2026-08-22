@@ -38,6 +38,17 @@ export type ScheduleStatus =
   | 'completed'
   | 'error';
 
+export interface WhatsAppInstance {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WhatsAppInstanceSummary extends WhatsAppInstance {
+  account: WhatsAppAccountInfo;
+}
+
 export interface ScheduledTarget {
   type: 'person' | 'group';
   jid: string;
@@ -124,6 +135,7 @@ export interface SchedulePayload {
 
 export interface ScheduledMessage {
   id: string;
+  instanceId: string;
   name: string;
   message: string;
   targets: ScheduledTarget[];
@@ -152,6 +164,7 @@ export interface WhatsAppGroup {
 
 export interface SchedulerProgressEvent {
   scheduleId: string;
+  instanceId: string;
   scheduleName: string;
   currentIndex: number;
   totalTargets: number;

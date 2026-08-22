@@ -21,6 +21,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useWhatsApp } from './hooks/useWhatsApp';
+import { InstancesProvider, useInstances } from './contexts/InstancesContext';
+import { InstancesSelector } from './components/InstancesSelector';
 import { NorthCodeLogo } from './components/NorthCodeLogo';
 import { ConnectionCard } from './components/ConnectionCard';
 import { DiagnosticLogs } from './components/DiagnosticLogs';
@@ -31,8 +33,9 @@ import { ContatosView } from './components/ContatosView';
 import { PlaceholderView } from './components/PlaceholderView';
 import type { NavigationTab } from './types';
 
-export default function App() {
-  const { state, messages, messagesCount, socketConnected, loading, logs, connect, disconnect, sendMessage } = useWhatsApp();
+function AppContent() {
+  const { selectedInstanceId } = useInstances();
+  const { state, messages, messagesCount, socketConnected, loading, logs, connect, disconnect, sendMessage } = useWhatsApp(selectedInstanceId);
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -230,5 +233,14 @@ export default function App() {
         </main>
       </div>
     </div>
+  );
+}
+
+
+export default function App() {
+  return (
+    <InstancesProvider>
+      <AppContent />
+    </InstancesProvider>
   );
 }

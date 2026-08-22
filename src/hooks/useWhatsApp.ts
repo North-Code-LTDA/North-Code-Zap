@@ -12,7 +12,7 @@ const INITIAL_STATE: WhatsAppAccountInfo = {
   connectedAt: null,
 };
 
-export function useWhatsApp() {
+export function useWhatsApp(instanceId: string | null) {
   const [state, setState] = useState<WhatsAppAccountInfo>(INITIAL_STATE);
   const [messages, setMessages] = useState<ReceivedMessage[]>([]);
   const [socketConnected, setSocketConnected] = useState<boolean>(false);
@@ -27,7 +27,7 @@ export function useWhatsApp() {
   }, []);
 
   useEffect(() => {
-    // Connect to Socket.IO on current host
+    if (!instanceId) return;
     const socketInstance: Socket = io({
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 10,
@@ -39,8 +39,7 @@ export function useWhatsApp() {
     socketInstance.on('connect', () => {
       setSocketConnected(true);
       addLog('Socket.IO conectado ao servidor', 'info');
-      socketInstance.emit('whatsapp:get_state');
-      socketInstance.emit('whatsapp:get_messages');
+      socketInstance.emit('instance:subscribe', instanceId);
     });
 
     socketInstance.on('disconnect', () => {
@@ -98,7 +97,7 @@ export function useWhatsApp() {
     });
 
     // Initial state fetch via REST
-    fetch('/api/whatsapp/status')
+    fetch(`/api/instances/${instanceId}/whatsapp/status`)
       .then((res) => res.json())
       .then((data: WhatsAppAccountInfo) => {
         if (data && data.status) {
@@ -110,7 +109,7 @@ export function useWhatsApp() {
       });
 
     // Initial messages fetch via REST
-    fetch('/api/whatsapp/messages')
+    fetch(`/api/instances/${instanceId}/whatsapp/messages`)
       .then((res) => res.json())
       .then((data: ReceivedMessage[]) => {
         if (Array.isArray(data)) {
@@ -124,16 +123,17 @@ export function useWhatsApp() {
     return () => {
       socketInstance.disconnect();
     };
-  }, [addLog]);
+  }, [addLog, instanceId]);
 
   const connect = useCallback(async () => {
+    if (!instanceId) return;
     if (loading || state.status === 'connected') return;
 
     setLoading(true);
     addLog('Solicitando conexão ao WhatsApp...', 'info');
 
     try {
-      const res = await fetch('/api/whatsapp/connect', { method: 'POST' });
+      const res = await fetch(`/api/instances/${instanceId}/whatsapp/connect`, { method: 'POST' });
       const data = await res.json();
       if (!data.success) {
         addLog(`Erro ao conectar: ${data.error}`, 'error');
@@ -146,11 +146,12 @@ export function useWhatsApp() {
   }, [loading, state.status, addLog]);
 
   const disconnect = useCallback(async () => {
+    if (!instanceId) return;
     setLoading(true);
     addLog('Desconectando WhatsApp...', 'info');
 
     try {
-      const res = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+      const res = await fetch(`/api/instances/${instanceId}/whatsapp/disconnect`, { method: 'POST' });
       const data = await res.json();
       if (!data.success) {
         addLog(`Erro ao desconectar: ${data.error}`, 'error');
@@ -164,12 +165,13 @@ export function useWhatsApp() {
 
   const sendMessage = useCallback(
     async (remoteJid: string, text: string): Promise<{ success: boolean; error?: string }> => {
+      if (!instanceId) return { success: false, error: 'Sem instância selecionada' };
       if (!remoteJid || !text.trim()) {
         return { success: false, error: 'Dados inválidos para envio' };
       }
 
       try {
-        const res = await fetch('/api/whatsapp/messages/send', {
+        const res = await fetch(`/api/instances/${instanceId}/whatsapp/messages/send`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

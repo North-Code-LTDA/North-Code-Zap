@@ -4,6 +4,7 @@ import {
   MessageSquare, UserPlus, MessageCircle
 } from 'lucide-react';
 import { useContacts } from '../hooks/useContacts';
+import { useInstances } from '../contexts/InstancesContext';
 import { Button } from './ui/Button';
 import type { KnownContact } from '../types';
 
@@ -78,7 +79,8 @@ function formatLastSeen(dateString?: string | null): string {
 }
 
 export function ContatosView() {
-  const { contacts, loading, error, fetchContacts } = useContacts();
+  const { selectedInstanceId } = useInstances();
+  const { contacts, loading, error, fetchContacts } = useContacts(selectedInstanceId);
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);

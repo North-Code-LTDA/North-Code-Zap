@@ -1,16 +1,17 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { KnownContact } from '../types';
 
-export function useContacts() {
+export function useContacts(instanceId: string | null) {
   const [contacts, setContacts] = useState<KnownContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchContacts = useCallback(async () => {
+    if (!instanceId) return;
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch('/api/whatsapp/contacts');
+      const res = await fetch('`/api/instances/${instanceId}/contacts`');
       if (!res.ok) {
         throw new Error('Falha ao carregar contatos');
       }
@@ -27,8 +28,8 @@ export function useContacts() {
   }, []);
 
   useEffect(() => {
-    fetchContacts();
-  }, [fetchContacts]);
+    if (instanceId) fetchContacts();
+  }, [fetchContacts, instanceId]);
 
   return { contacts, loading, error, fetchContacts };
 }

@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import QRCode from 'qrcode';
 import type { Server as SocketIOServer } from 'socket.io';
-import { contactsService } from './contacts';
+import { type ContactsService } from './contacts';
 import type {
   GroupParticipant,
   GroupParticipantsResponse,
@@ -20,7 +20,7 @@ import type {
   ScheduledMedia,
 } from '../src/types';
 
-const AUTH_DIR = process.env.AUTH_DIR || path.join(process.cwd(), 'data', 'auth');
+
 const MAX_MESSAGES_IN_MEMORY = 100;
 
 export class WhatsAppService {
@@ -44,37 +44,31 @@ export class WhatsAppService {
   private groupCache: Map<string, { data: any; expiresAt: number }> = new Map();
   private groupsListCache: { data: WhatsAppGroup[]; expiresAt: number } | null = null;
 
-  constructor() {
+  
+  public instanceId: string;
+  private authDir: string;
+  private contactsService: any;
+
+  constructor(instanceId: string, authDir: string, contactsService: any) {
+    this.instanceId = instanceId;
+    this.authDir = authDir;
+    this.contactsService = contactsService;
     this.ensureAuthDir();
   }
 
+
   private ensureAuthDir() {
-    if (!fs.existsSync(AUTH_DIR)) {
-      fs.mkdirSync(AUTH_DIR, { recursive: true });
+    if (!fs.existsSync(this.authDir)) {
+      fs.mkdirSync(this.authDir, { recursive: true });
     }
   }
 
   public setSocketIO(io: SocketIOServer) {
     this.io = io;
-    this.setupSocketEvents();
+    
   }
 
-  private setupSocketEvents() {
-    if (!this.io) return;
-
-    this.io.on('connection', (clientSocket) => {
-      // Send current state to newly connected frontend client ONLY (do not start WhatsApp)
-      clientSocket.emit('whatsapp:state', this.getState());
-
-      clientSocket.on('whatsapp:get_state', () => {
-        clientSocket.emit('whatsapp:state', this.getState());
-      });
-
-      clientSocket.on('whatsapp:get_messages', () => {
-        clientSocket.emit('whatsapp:messages_list', this.messages);
-      });
-    });
-  }
+  
 
   public getState(): WhatsAppAccountInfo {
     return {
@@ -153,7 +147,7 @@ export class WhatsAppService {
 
       // Save to contacts directory if private chat
       if (!isGroupTarget && !targetJid.includes('@broadcast')) {
-        contactsService.upsertContact({
+        this.contactsService.upsertContact({
           jid: targetJid,
           number: rawNumber || null,
           name: targetPushName,
@@ -168,7 +162,7 @@ export class WhatsAppService {
 
       // Emit to frontend via Socket.IO ONLY if private chat
       if (this.io && !isGroupTarget) {
-        this.io.emit('whatsapp:message', outgoingMessage);
+        this.io.to(`instance:${this.instanceId}`).emit('whatsapp:message', outgoingMessage);
       }
 
       return { success: true, message: outgoingMessage };
@@ -258,7 +252,7 @@ export class WhatsAppService {
 
       // Save to contacts directory if private chat
       if (!isGroupTarget && !targetJid.includes('@broadcast')) {
-        contactsService.upsertContact({
+        this.contactsService.upsertContact({
           jid: targetJid,
           number: rawNumber || null,
           name: targetPushName,
@@ -271,7 +265,7 @@ export class WhatsAppService {
 
       // Emit to frontend via Socket.IO ONLY if private chat
       if (this.io && !isGroupTarget) {
-        this.io.emit('whatsapp:message', outgoingMessage);
+        this.io.to(`instance:${this.instanceId}`).emit('whatsapp:message', outgoingMessage);
       }
 
       return { success: true, message: outgoingMessage };
@@ -395,7 +389,7 @@ export class WhatsAppService {
           name = `${this.accountInfo.name || 'Você'} (Você)`;
         } else {
           // Look up in contactsService
-          const known = contactsService.getContact(resolvedJid);
+          const known = this.contactsService.getContact(resolvedJid);
           name = p.name || p.notify || known?.name || `+${number}`;
         }
       }
@@ -429,7 +423,7 @@ export class WhatsAppService {
 
     const payload = this.getState();
     if (this.io) {
-      this.io.emit('whatsapp:state', payload);
+      this.io.to(`instance:${this.instanceId}`).emit('whatsapp:state', payload);
     }
   }
 
@@ -472,7 +466,7 @@ export class WhatsAppService {
     }
 
     this.ensureAuthDir();
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     const logger = pino({ level: 'silent' });
 
     // Clean up previous socket listeners if existing
@@ -615,7 +609,7 @@ export class WhatsAppService {
 
         // Record contact in Contacts Directory
         if (!isGroupMessage && !remoteJid.includes('@broadcast')) {
-          contactsService.upsertContact({
+          this.contactsService.upsertContact({
             jid: remoteJid,
             number: rawNumber || null,
             name: pushName,
@@ -629,7 +623,7 @@ export class WhatsAppService {
 
         // Emit to frontend via Socket.IO ONLY if private chat
         if (this.io && !isGroupMessage && !remoteJid.includes('@broadcast')) {
-          this.io.emit('whatsapp:message', receivedMessage);
+          this.io.to(`instance:${this.instanceId}`).emit('whatsapp:message', receivedMessage);
         }
       }
     });
@@ -639,7 +633,7 @@ export class WhatsAppService {
       if (Array.isArray(newContacts)) {
         for (const c of newContacts) {
           if (c?.id && typeof c.name === 'string' && c.name.trim().length > 0) {
-            contactsService.upsertContact({
+            this.contactsService.upsertContact({
               jid: c.id,
               name: c.name,
               source: 'contact',
@@ -653,7 +647,7 @@ export class WhatsAppService {
       if (Array.isArray(updates)) {
         for (const c of updates) {
           if (c?.id && typeof c.name === 'string' && c.name.trim().length > 0) {
-            contactsService.upsertContact({
+            this.contactsService.upsertContact({
               jid: c.id,
               name: c.name,
               source: 'contact',
@@ -668,7 +662,7 @@ export class WhatsAppService {
       if (Array.isArray(histContacts)) {
         for (const c of histContacts) {
           if (c?.id && typeof c.name === 'string' && c.name.trim().length > 0) {
-            contactsService.upsertContact({
+            this.contactsService.upsertContact({
               jid: c.id,
               name: c.name,
               source: 'contact',
@@ -680,7 +674,7 @@ export class WhatsAppService {
       if (Array.isArray(histChats)) {
         for (const ch of histChats) {
           if (ch?.id && !ch.id.endsWith('@g.us') && !ch.id.includes('@broadcast')) {
-            contactsService.upsertContact({
+            this.contactsService.upsertContact({
               jid: ch.id,
               name: ch.name || null,
               source: 'chat',
@@ -871,15 +865,21 @@ export class WhatsAppService {
 
   private clearSessionFiles() {
     try {
-      if (fs.existsSync(AUTH_DIR)) {
-        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-        fs.mkdirSync(AUTH_DIR, { recursive: true });
+      if (fs.existsSync(this.authDir)) {
+        fs.rmSync(this.authDir, { recursive: true, force: true });
+        fs.mkdirSync(this.authDir, { recursive: true });
         console.log('[WhatsApp] auth directory cleared');
       }
     } catch (err: any) {
       console.error('[WhatsApp] error clearing auth dir:', err?.message);
     }
   }
-}
 
-export const whatsAppService = new WhatsAppService();
+  public clearReconnectTimer() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+}

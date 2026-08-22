@@ -10,16 +10,22 @@ const CONTACTS_TMP_FILE = path.join(RECIPIENTS_DIR, 'contacts.json.tmp');
 export class ContactsService {
   private contactsMap: Map<string, KnownContact> = new Map();
   private saveDebounceTimer: NodeJS.Timeout | null = null;
+  private contactsFile: string;
+  private contactsTmpFile: string;
+  private recipientsDir: string;
 
-  constructor() {
+  constructor(contactsFile: string) {
+    this.contactsFile = contactsFile;
+    this.contactsTmpFile = contactsFile + '.tmp';
+    this.recipientsDir = path.dirname(contactsFile);
     this.ensureDirectory();
     this.loadContacts();
   }
 
   private ensureDirectory() {
     try {
-      if (!fs.existsSync(RECIPIENTS_DIR)) {
-        fs.mkdirSync(RECIPIENTS_DIR, { recursive: true });
+      if (!fs.existsSync(this.recipientsDir)) {
+        fs.mkdirSync(this.recipientsDir, { recursive: true });
       }
     } catch (err: any) {
       console.error('[Contacts] error creating recipients directory:', err?.message || err);
@@ -28,8 +34,8 @@ export class ContactsService {
 
   private loadContacts() {
     try {
-      if (fs.existsSync(CONTACTS_FILE)) {
-        const raw = fs.readFileSync(CONTACTS_FILE, 'utf-8');
+      if (fs.existsSync(this.contactsFile)) {
+        const raw = fs.readFileSync(this.contactsFile, 'utf-8');
         const parsed = JSON.parse(raw);
         const validSources = ['message', 'contact', 'chat'];
         if (Array.isArray(parsed)) {
@@ -72,8 +78,8 @@ export class ContactsService {
     try {
       const list = Array.from(this.contactsMap.values());
       const data = JSON.stringify(list, null, 2);
-      fs.writeFileSync(CONTACTS_TMP_FILE, data, 'utf-8');
-      fs.renameSync(CONTACTS_TMP_FILE, CONTACTS_FILE);
+      fs.writeFileSync(this.contactsTmpFile, data, 'utf-8');
+      fs.renameSync(this.contactsTmpFile, this.contactsFile);
     } catch (err: any) {
       console.error('[Contacts] error saving contacts file:', err?.message || err);
     }
@@ -192,4 +198,4 @@ export class ContactsService {
   }
 }
 
-export const contactsService = new ContactsService();
+
