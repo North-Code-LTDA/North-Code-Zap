@@ -5,7 +5,7 @@ import { socket } from '../lib/socket';
 interface InstancesContextData {
   instances: WhatsAppInstanceSummary[];
   selectedInstanceId: string | null;
-  selectInstance: (id: string) => void;
+  selectInstance: (id: string | null) => void;
   createInstance: (name: string) => Promise<void>;
   renameInstance: (id: string, name: string) => Promise<void>;
   deleteInstance: (id: string) => Promise<void>;

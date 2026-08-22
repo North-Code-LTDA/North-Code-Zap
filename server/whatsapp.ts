@@ -48,9 +48,9 @@ export class WhatsAppService {
   
   public instanceId: string;
   private authDir: string;
-  private contactsService: any;
+  private contactsService: ContactsService;
 
-  constructor(instanceId: string, authDir: string, contactsService: any) {
+  constructor(instanceId: string, authDir: string, contactsService: ContactsService) {
     this.instanceId = instanceId;
     this.authDir = authDir;
     this.contactsService = contactsService;

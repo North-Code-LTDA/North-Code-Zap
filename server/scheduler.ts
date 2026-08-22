@@ -90,37 +90,123 @@ export class SchedulerService {
 
   private loadSchedules() {
     try {
-      if (fs.existsSync(SCHEDULES_FILE)) {
-        const raw = fs.readFileSync(SCHEDULES_FILE, 'utf-8');
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          const validSchedules = [];
-          for (const s of parsed) {
-            if (!s.instanceId || typeof s.instanceId !== 'string') {
-              console.warn(`[Scheduler] Orphaned schedule skipped (no instanceId): ${s.id}`);
-              continue;
-            }
-            if (!this.instanceManager.get(s.instanceId)) {
-              console.warn(`[Scheduler] Schedule skipped (instance not found): ${s.id} for instance ${s.instanceId}`);
-              continue;
-            }
-            
-            if (s.status === 'running') {
-              s.status = 'error';
-              if (s.lastResult) s.lastResult.error = 'Servidor reiniciado durante execução';
-            }
-            if (s.scheduleType !== 'once') {
-              const expectedNext = this.calculateNextRunAt(s, new Date());
-              if (s.nextRunAt !== expectedNext) {
-                s.nextRunAt = expectedNext;
-              }
-            }
-            validSchedules.push(s);
-          }
-          this.schedules = validSchedules;
-          console.log(`[Scheduler] loaded schedules=${this.schedules.length}`);
+      if (!fs.existsSync(SCHEDULES_FILE)) return;
+      const raw = fs.readFileSync(SCHEDULES_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+
+      const validSchedules: ScheduledMessage[] = [];
+      for (const s of parsed) {
+        if (!s || typeof s !== 'object') continue;
+
+        // Base fields
+        if (!s.id || typeof s.id !== 'string') continue;
+        if (!s.instanceId || typeof s.instanceId !== 'string') continue;
+        if (!s.name || typeof s.name !== 'string') continue;
+        if (typeof s.message !== 'string') continue;
+        if (!s.fallbackName || typeof s.fallbackName !== 'string') continue;
+        if (!Array.isArray(s.targets) || s.targets.length === 0) continue;
+        if (!['once', 'daily', 'weekly'].includes(s.scheduleType)) continue;
+        if (!Array.isArray(s.dailyTimes)) continue;
+        if (!Array.isArray(s.weeklyTimeSlots)) continue;
+        
+        const validStatuses = ['active', 'paused', 'completed', 'error', 'running'];
+        if (!validStatuses.includes(s.status)) continue;
+
+        if (isNaN(Date.parse(s.createdAt))) continue;
+        if (isNaN(Date.parse(s.updatedAt))) continue;
+        if (s.nextRunAt !== null && isNaN(Date.parse(s.nextRunAt))) continue;
+        if (s.lastRunAt !== null && isNaN(Date.parse(s.lastRunAt))) continue;
+        if (s.lastResult !== null && typeof s.lastResult !== 'object') continue;
+
+        // Instance Check
+        if (!this.instanceManager.get(s.instanceId)) {
+          console.warn(`[Scheduler] Schedule skipped (instance not found): ${s.id} for instance ${s.instanceId}`);
+          continue;
         }
+
+        // Targets Validation
+        let validTargets = true;
+        for (const t of s.targets) {
+          if (!t.jid || typeof t.jid !== 'string') validTargets = false;
+          if (!t.label || typeof t.label !== 'string') validTargets = false;
+          if (!['person', 'group'].includes(t.type)) validTargets = false;
+          
+          if (!['directory', 'manual', 'import', 'group_member', 'group'].includes(t.source)) {
+            validTargets = false;
+          } else {
+             if (t.source === 'group' && t.type !== 'group') validTargets = false;
+             if (t.source !== 'group' && t.type !== 'person') validTargets = false;
+          }
+        }
+        if (!validTargets) continue;
+
+        // Delivery Validation
+        if (!s.deliveryOptions || typeof s.deliveryOptions !== 'object') continue;
+        const d = s.deliveryOptions;
+        if (!Number.isFinite(d.intervalBetweenMessagesMs) || d.intervalBetweenMessagesMs < 1000) continue;
+        if (typeof d.batchPauseEnabled !== 'boolean') continue;
+        if (!Number.isInteger(d.batchSize) || d.batchSize < 1) continue;
+        if (!Number.isFinite(d.batchPauseMs) || d.batchPauseMs < 60000) continue;
+
+        // Media Validation
+        let mediaValid = true;
+        if (s.media !== null) {
+          if (typeof s.media !== 'object') mediaValid = false;
+          else if (s.media.type !== 'image') mediaValid = false;
+          else if (s.media.source === 'upload' && (!s.media.localPath || typeof s.media.localPath !== 'string')) mediaValid = false;
+          else if (s.media.source === 'url' && (!s.media.url || typeof s.media.url !== 'string' || !/^https?:\/\//i.test(s.media.url))) mediaValid = false;
+          else if (s.media.source !== 'upload' && s.media.source !== 'url') mediaValid = false;
+        }
+        if (!mediaValid) continue;
+
+        // Text / Media requirement
+        if (s.message.trim().length === 0 && s.media === null) continue;
+
+        // ScheduleType specific
+        let scheduleTypeValid = true;
+        if (s.scheduleType === 'once') {
+          if (!s.scheduledAt || isNaN(Date.parse(s.scheduledAt))) scheduleTypeValid = false;
+          if (s.dailyTimes.length !== 0 || s.weeklyTimeSlots.length !== 0) scheduleTypeValid = false;
+        } else if (s.scheduleType === 'daily') {
+          if (s.scheduledAt !== null) scheduleTypeValid = false;
+          if (s.weeklyTimeSlots.length !== 0) scheduleTypeValid = false;
+          if (s.dailyTimes.length < 1) scheduleTypeValid = false;
+          for (const dt of s.dailyTimes) {
+            if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dt)) scheduleTypeValid = false;
+          }
+        } else if (s.scheduleType === 'weekly') {
+          if (s.scheduledAt !== null) scheduleTypeValid = false;
+          if (s.dailyTimes.length !== 0) scheduleTypeValid = false;
+          if (s.weeklyTimeSlots.length < 1) scheduleTypeValid = false;
+          for (const ws of s.weeklyTimeSlots) {
+             if (typeof ws.day !== 'number' || ws.day < 0 || ws.day > 6) scheduleTypeValid = false;
+             if (!Array.isArray(ws.times) || ws.times.length < 1) scheduleTypeValid = false;
+             for (const dt of ws.times) {
+               if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dt)) scheduleTypeValid = false;
+             }
+          }
+        }
+        if (!scheduleTypeValid) continue;
+
+        // Reset running state
+        if (s.status === 'running') {
+          s.status = 'error';
+          if (s.lastResult) s.lastResult.error = 'Servidor reiniciado durante execução';
+        }
+
+        if (s.scheduleType !== 'once') {
+          const expectedNext = this.calculateNextRunAt(s, new Date());
+          if (s.nextRunAt !== expectedNext) {
+            s.nextRunAt = expectedNext;
+          }
+        }
+
+        validSchedules.push(s as ScheduledMessage);
       }
+      
+      this.schedules = validSchedules;
+      console.log(`[Scheduler] loaded schedules=${this.schedules.length}`);
     } catch (err: any) {
       console.error('[Scheduler] error loading schedules file:', err?.message || err);
     }
@@ -192,11 +278,14 @@ export class SchedulerService {
     return this.schedules.filter(s => s.instanceId === instanceId);
   }
 
-  public getById(id: string): ScheduledMessage | undefined {
-    return this.schedules.find((s) => s.id === id);
+  public getById(id: string, instanceId: string): ScheduledMessage | undefined {
+    return this.schedules.find((s) => s.id === id && s.instanceId === instanceId);
   }
 
   public create(instanceId: string, data: SchedulePayload): ScheduledMessage {
+    if (!this.instanceManager.get(instanceId)) {
+      throw new Error('Instância não encontrada');
+    }
     const id = `sched_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const nowIso = new Date().toISOString();
 
@@ -244,6 +333,9 @@ export class SchedulerService {
   }
 
   public update(id: string, instanceId: string, data: SchedulePayload, mediaSvc: MediaService): ScheduledMessage | null {
+    if (!this.instanceManager.get(instanceId)) {
+      throw new Error('Instância não encontrada');
+    }
     const index = this.schedules.findIndex((s) => s.id === id && s.instanceId === instanceId);
     if (index === -1) return null;
 
@@ -350,7 +442,7 @@ export class SchedulerService {
   /**
    * Calculate next run timestamp in ISO format for once, daily, and weekly schedules
    */
-  public deleteAllForInstance(instanceId: string, mediaSvc: MediaService): number {
+  public deleteAllForInstance(instanceId: string): number {
     const targets = this.schedules.filter(s => s.instanceId === instanceId);
     this.schedules = this.schedules.filter((s) => s.instanceId !== instanceId);
     

@@ -204,10 +204,14 @@ async function startServer() {
 
   app.delete('/api/instances/:id', async (req, res) => {
     const runtime = instanceManager.get(req.params.id);
-    if (!runtime) return res.status(404).json({ error: 'Instância não encontrada' });
+    if (!runtime) return res.status(404).json({ success: false, error: 'Instância não encontrada' });
     
-    schedulerService.deleteAllForInstance(req.params.id, runtime.media);
-    await instanceManager.deleteInstance(req.params.id);
+    const deleted = await instanceManager.deleteInstance(req.params.id);
+    if (!deleted) {
+      return res.status(500).json({ success: false, error: 'Erro ao remover instância' });
+    }
+    
+    schedulerService.deleteAllForInstance(req.params.id);
     res.json({ success: true });
   });
 
@@ -309,7 +313,7 @@ async function startServer() {
     const runtime = instanceManager.get(req.params.instanceId);
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     try {
-      runtime.whatsapp.disconnect();
+      await runtime.whatsapp.disconnect();
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
@@ -326,6 +330,11 @@ async function startServer() {
       if (!runtime) return res.status(404).json({ error: 'Not found' });
       const validation = validateSchedulePayload(req.body);
       if (validation.valid === false) return res.status(400).json({ success: false, error: validation.error });
+      if (validation.payload.media?.source === 'upload') {
+        if (!runtime.media.fileExists(validation.payload.media.localPath)) {
+          return res.status(400).json({ success: false, error: 'Mídia de upload inválida para esta instância.' });
+        }
+      }
       const schedule = schedulerService.create(req.params.instanceId, validation.payload);
       res.status(201).json({ success: true, schedule });
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }

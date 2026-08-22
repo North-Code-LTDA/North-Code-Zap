@@ -25,7 +25,12 @@ export function useSchedules(instanceId: string | null) {
   const schedulerTimezone = 'America/Belem'; // Ou fetch caso precise futuramente
 
   const fetchSchedules = useCallback(async () => {
-    if (!instanceId) return;
+    if (!instanceId) {
+      setLoadingSchedules(false);
+      setLoadingGroups(false);
+      setLoadingContacts(false);
+      return;
+    }
     try {
       setLoadingSchedules(true);
       const res = await fetch(`/api/instances/${instanceId}/schedules`);
@@ -44,13 +49,13 @@ export function useSchedules(instanceId: string | null) {
 
   const fetchGroups = useCallback(async () => {
     if (!instanceId) return;
+    setLoadingGroups(true);
     try {
-      setLoadingGroups(true);
       const res = await fetch(`/api/instances/${instanceId}/whatsapp/groups`);
       if (res.ok) {
         const data = await res.json();
-        if (data && Array.isArray(data.groups)) {
-          setGroups(data.groups);
+        if (Array.isArray(data)) {
+          setGroups(data);
         }
       }
     } catch (err) {
@@ -62,13 +67,13 @@ export function useSchedules(instanceId: string | null) {
 
   const fetchContacts = useCallback(async () => {
     if (!instanceId) return;
+    setLoadingContacts(true);
     try {
-      setLoadingContacts(true);
       const res = await fetch(`/api/instances/${instanceId}/contacts`);
       if (res.ok) {
         const data = await res.json();
-        if (data && Array.isArray(data.contacts)) {
-          setContacts(data.contacts);
+        if (Array.isArray(data)) {
+          setContacts(data);
         }
       }
     } catch (err) {
@@ -92,7 +97,7 @@ export function useSchedules(instanceId: string | null) {
   }, [instanceId]);
 
   const uploadMedia = useCallback(
-    async (file: File): Promise<{ success: boolean; url?: string; localPath?: string; error?: string }> => {
+    async (file: File): Promise<{ success: boolean; media?: ScheduledMedia; error?: string }> => {
       if (!instanceId) return { success: false, error: 'No instance selected' };
       try {
         const formData = new FormData();
@@ -105,7 +110,7 @@ export function useSchedules(instanceId: string | null) {
         if (!res.ok || !result.success) {
           return { success: false, error: result.error || 'Falha no upload da imagem.' };
         }
-        return { success: true, url: result.url, localPath: result.localPath };
+        return { success: true, media: result.media };
       } catch (err: any) {
         return { success: false, error: err?.message || 'Erro ao enviar imagem.' };
       }

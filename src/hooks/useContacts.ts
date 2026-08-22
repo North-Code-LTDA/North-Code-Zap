@@ -11,7 +11,7 @@ export function useContacts(instanceId: string | null) {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch('`/api/instances/${instanceId}/contacts`');
+      const res = await fetch(`/api/instances/${instanceId}/contacts`);
       if (!res.ok) {
         throw new Error('Falha ao carregar contatos');
       }
@@ -25,12 +25,13 @@ export function useContacts(instanceId: string | null) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [instanceId]);
 
   useEffect(() => {
     setContacts([]);
     setError(null);
     if (!instanceId) {
+      setLoading(false);
       return;
     }
     fetchContacts();

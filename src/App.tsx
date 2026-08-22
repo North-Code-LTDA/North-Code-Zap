@@ -78,6 +78,9 @@ function AppContent() {
           </div>
 
           <div className="flex items-center gap-3">
+            <div className="hidden sm:block">
+              <InstancesSelector />
+            </div>
             {/* Live Socket & Connection Pulse Indicator */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs">
               <span
@@ -92,7 +95,9 @@ function AppContent() {
                 }`}
               />
               <span className="text-neutral-300 font-mono text-[11px]">
-                {state.status === 'connected'
+                {!selectedInstanceId
+                  ? 'SEM INSTÂNCIA'
+                  : state.status === 'connected'
                   ? 'ONLINE'
                   : state.status === 'qr'
                   ? 'QR ATIVO'
@@ -122,6 +127,9 @@ function AppContent() {
           }`}
         >
           <div className="space-y-4">
+            <div className="sm:hidden mb-4">
+              <InstancesSelector />
+            </div>
             <div className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 font-mono">
               Plataforma
             </div>
@@ -176,6 +184,19 @@ function AppContent() {
 
         {/* Main Content Area */}
         <main className="flex-1 flex flex-col min-w-0">
+          {!selectedInstanceId ? (
+            <div className="flex flex-col items-center justify-center h-full text-center p-6 border border-neutral-800 border-dashed rounded-2xl bg-neutral-900/20">
+              <div className="w-16 h-16 rounded-full bg-neutral-900 flex items-center justify-center border border-neutral-800 mb-6 shadow-sm">
+                <LayoutDashboard className="w-8 h-8 text-neutral-500" />
+              </div>
+              <h2 className="text-xl font-bold text-white mb-2 tracking-tight">Nenhuma instância configurada</h2>
+              <p className="text-sm text-neutral-400 mb-8 max-w-sm">
+                Crie uma instância para começar a gerenciar seus envios e atendimentos.
+              </p>
+              <InstancesSelector />
+            </div>
+          ) : (
+            <>
           {/* TAB 1: DASHBOARD */}
           {currentTab === 'dashboard' && (
             <DashboardView
@@ -230,6 +251,8 @@ function AppContent() {
             currentTab !== 'contatos' && (
               <PlaceholderView tab={currentTab} />
             )}
+            </>
+          )}
         </main>
       </div>
     </div>
