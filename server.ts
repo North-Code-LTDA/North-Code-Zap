@@ -346,6 +346,11 @@ async function startServer() {
       if (!runtime) return res.status(404).json({ error: 'Not found' });
       const validation = validateSchedulePayload(req.body);
       if (validation.valid === false) return res.status(400).json({ success: false, error: validation.error });
+      if (validation.payload.media?.source === 'upload') {
+        if (!runtime.media.fileExists(validation.payload.media.localPath)) {
+          return res.status(400).json({ success: false, error: 'Mídia de upload inválida para esta instância.' });
+        }
+      }
       const updated = schedulerService.update(req.params.id, req.params.instanceId, validation.payload, runtime.media);
       if (!updated) return res.status(404).json({ success: false, error: 'Agendamento não encontrado' });
       res.json({ success: true, schedule: updated });

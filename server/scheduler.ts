@@ -61,6 +61,9 @@ function normalizeWeeklySlots(
   return [];
 }
 
+const isValidDateString = (value: unknown): value is string =>
+  typeof value === 'string' && !Number.isNaN(new Date(value).getTime());
+
 export class SchedulerService {
   private schedules: ScheduledMessage[] = [];
   private processingSchedules: Set<string> = new Set();
@@ -76,6 +79,7 @@ export class SchedulerService {
 
   public init() {
     this.loadSchedules();
+    this.validateAndRepairOnStartup();
   }
 
   private ensureDirectory() {
@@ -96,111 +100,122 @@ export class SchedulerService {
       if (!Array.isArray(parsed)) return;
 
       const validSchedules: ScheduledMessage[] = [];
+      const requiredFields = [
+        'id', 'instanceId', 'name', 'message', 'targets', 'scheduleType',
+        'scheduledAt', 'nextRunAt', 'dailyTimes', 'weeklyTimeSlots', 'media',
+        'fallbackName', 'deliveryOptions', 'status', 'createdAt', 'updatedAt',
+        'lastRunAt', 'lastResult'
+      ];
+
       for (const s of parsed) {
-        if (!s || typeof s !== 'object') continue;
+        if (!s || typeof s !== 'object' || Array.isArray(s)) continue;
 
-        // Base fields
-        if (!s.id || typeof s.id !== 'string') continue;
-        if (!s.instanceId || typeof s.instanceId !== 'string') continue;
-        if (!s.name || typeof s.name !== 'string') continue;
-        if (typeof s.message !== 'string') continue;
-        if (!s.fallbackName || typeof s.fallbackName !== 'string') continue;
-        if (!Array.isArray(s.targets) || s.targets.length === 0) continue;
-        if (!['once', 'daily', 'weekly'].includes(s.scheduleType)) continue;
-        if (!Array.isArray(s.dailyTimes)) continue;
-        if (!Array.isArray(s.weeklyTimeSlots)) continue;
-        
+        let hasAllFields = true;
+        for (const field of requiredFields) {
+          if (!Object.prototype.hasOwnProperty.call(s, field)) {
+            console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id || 'unknown'} reason=missing_${field}`);
+            hasAllFields = false;
+            break;
+          }
+        }
+        if (!hasAllFields) continue;
+
+        // Base strings
+        if (typeof s.id !== 'string' || s.id.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=unknown reason=invalid_id`); continue; }
+        if (typeof s.instanceId !== 'string' || s.instanceId.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_instanceId`); continue; }
+        if (typeof s.name !== 'string' || s.name.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_name`); continue; }
+        if (typeof s.message !== 'string') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_message`); continue; }
+        if (typeof s.fallbackName !== 'string' || s.fallbackName.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_fallbackName`); continue; }
+
+        if (!['once', 'daily', 'weekly'].includes(s.scheduleType)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_scheduleType`); continue; }
         const validStatuses = ['active', 'paused', 'completed', 'error', 'running'];
-        if (!validStatuses.includes(s.status)) continue;
+        if (!validStatuses.includes(s.status)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_status`); continue; }
 
-        if (isNaN(Date.parse(s.createdAt))) continue;
-        if (isNaN(Date.parse(s.updatedAt))) continue;
-        if (s.nextRunAt !== null && isNaN(Date.parse(s.nextRunAt))) continue;
-        if (s.lastRunAt !== null && isNaN(Date.parse(s.lastRunAt))) continue;
-        if (s.lastResult !== null && typeof s.lastResult !== 'object') continue;
+        // Dates
+        if (!isValidDateString(s.createdAt)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_createdAt`); continue; }
+        if (!isValidDateString(s.updatedAt)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_updatedAt`); continue; }
+        if (s.nextRunAt !== null && !isValidDateString(s.nextRunAt)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_nextRunAt`); continue; }
+        if (s.lastRunAt !== null && !isValidDateString(s.lastRunAt)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_lastRunAt`); continue; }
+
+        if (s.lastResult !== null && (typeof s.lastResult !== 'object' || Array.isArray(s.lastResult))) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_lastResult`); continue; }
 
         // Instance Check
         if (!this.instanceManager.get(s.instanceId)) {
-          console.warn(`[Scheduler] Schedule skipped (instance not found): ${s.id} for instance ${s.instanceId}`);
+          console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=orphan_instance_${s.instanceId}`);
           continue;
         }
 
-        // Targets Validation
+        // Targets
+        if (!Array.isArray(s.targets) || s.targets.length === 0) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_targets_array`); continue; }
         let validTargets = true;
         for (const t of s.targets) {
-          if (!t.jid || typeof t.jid !== 'string') validTargets = false;
-          if (!t.label || typeof t.label !== 'string') validTargets = false;
-          if (!['person', 'group'].includes(t.type)) validTargets = false;
+          if (!t || typeof t !== 'object' || Array.isArray(t)) { validTargets = false; break; }
+          if (typeof t.jid !== 'string' || t.jid.trim() === '') { validTargets = false; break; }
+          if (typeof t.label !== 'string' || t.label.trim() === '') { validTargets = false; break; }
+          if (t.type !== 'person' && t.type !== 'group') { validTargets = false; break; }
           
           if (!['directory', 'manual', 'import', 'group_member', 'group'].includes(t.source)) {
-            validTargets = false;
+            validTargets = false; break;
           } else {
-             if (t.source === 'group' && t.type !== 'group') validTargets = false;
-             if (t.source !== 'group' && t.type !== 'person') validTargets = false;
+             if (t.source === 'group' && t.type !== 'group') { validTargets = false; break; }
+             if (t.source !== 'group' && t.type !== 'person') { validTargets = false; break; }
           }
         }
-        if (!validTargets) continue;
+        if (!validTargets) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_target_item`); continue; }
 
         // Delivery Validation
-        if (!s.deliveryOptions || typeof s.deliveryOptions !== 'object') continue;
+        if (!s.deliveryOptions || typeof s.deliveryOptions !== 'object' || Array.isArray(s.deliveryOptions)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_deliveryOptions`); continue; }
         const d = s.deliveryOptions;
-        if (!Number.isFinite(d.intervalBetweenMessagesMs) || d.intervalBetweenMessagesMs < 1000) continue;
-        if (typeof d.batchPauseEnabled !== 'boolean') continue;
-        if (!Number.isInteger(d.batchSize) || d.batchSize < 1) continue;
-        if (!Number.isFinite(d.batchPauseMs) || d.batchPauseMs < 60000) continue;
+        if (!Number.isFinite(d.intervalBetweenMessagesMs) || d.intervalBetweenMessagesMs < 1000) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_intervalBetweenMessagesMs`); continue; }
+        if (typeof d.batchPauseEnabled !== 'boolean') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_batchPauseEnabled`); continue; }
+        if (!Number.isInteger(d.batchSize) || d.batchSize < 1) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_batchSize`); continue; }
+        if (!Number.isFinite(d.batchPauseMs) || d.batchPauseMs < 60000) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_batchPauseMs`); continue; }
 
         // Media Validation
         let mediaValid = true;
         if (s.media !== null) {
-          if (typeof s.media !== 'object') mediaValid = false;
-          else if (s.media.type !== 'image') mediaValid = false;
-          else if (s.media.source === 'upload' && (!s.media.localPath || typeof s.media.localPath !== 'string')) mediaValid = false;
-          else if (s.media.source === 'url' && (!s.media.url || typeof s.media.url !== 'string' || !/^https?:\/\//i.test(s.media.url))) mediaValid = false;
-          else if (s.media.source !== 'upload' && s.media.source !== 'url') mediaValid = false;
+          if (typeof s.media !== 'object' || Array.isArray(s.media)) { mediaValid = false; }
+          else if (s.media.type !== 'image') { mediaValid = false; }
+          else if (s.media.source === 'upload' && (typeof s.media.localPath !== 'string' || s.media.localPath.trim() === '')) { mediaValid = false; }
+          else if (s.media.source === 'url' && (typeof s.media.url !== 'string' || !/^https?:\/\//i.test(s.media.url))) { mediaValid = false; }
+          else if (s.media.source !== 'upload' && s.media.source !== 'url') { mediaValid = false; }
         }
-        if (!mediaValid) continue;
+        if (!mediaValid) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_media`); continue; }
 
         // Text / Media requirement
-        if (s.message.trim().length === 0 && s.media === null) continue;
+        if (s.message.trim().length === 0 && s.media === null) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=empty_message_and_media`); continue; }
 
         // ScheduleType specific
         let scheduleTypeValid = true;
-        if (s.scheduleType === 'once') {
-          if (!s.scheduledAt || isNaN(Date.parse(s.scheduledAt))) scheduleTypeValid = false;
-          if (s.dailyTimes.length !== 0 || s.weeklyTimeSlots.length !== 0) scheduleTypeValid = false;
-        } else if (s.scheduleType === 'daily') {
-          if (s.scheduledAt !== null) scheduleTypeValid = false;
-          if (s.weeklyTimeSlots.length !== 0) scheduleTypeValid = false;
-          if (s.dailyTimes.length < 1) scheduleTypeValid = false;
-          for (const dt of s.dailyTimes) {
-            if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dt)) scheduleTypeValid = false;
-          }
-        } else if (s.scheduleType === 'weekly') {
-          if (s.scheduledAt !== null) scheduleTypeValid = false;
-          if (s.dailyTimes.length !== 0) scheduleTypeValid = false;
-          if (s.weeklyTimeSlots.length < 1) scheduleTypeValid = false;
-          for (const ws of s.weeklyTimeSlots) {
-             if (typeof ws.day !== 'number' || ws.day < 0 || ws.day > 6) scheduleTypeValid = false;
-             if (!Array.isArray(ws.times) || ws.times.length < 1) scheduleTypeValid = false;
-             for (const dt of ws.times) {
-               if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dt)) scheduleTypeValid = false;
-             }
-          }
-        }
-        if (!scheduleTypeValid) continue;
-
-        // Reset running state
-        if (s.status === 'running') {
-          s.status = 'error';
-          if (s.lastResult) s.lastResult.error = 'Servidor reiniciado durante execução';
-        }
-
-        if (s.scheduleType !== 'once') {
-          const expectedNext = this.calculateNextRunAt(s, new Date());
-          if (s.nextRunAt !== expectedNext) {
-            s.nextRunAt = expectedNext;
+        if (!Array.isArray(s.dailyTimes)) { scheduleTypeValid = false; }
+        if (!Array.isArray(s.weeklyTimeSlots)) { scheduleTypeValid = false; }
+        
+        if (scheduleTypeValid) {
+          if (s.scheduleType === 'once') {
+            if (!isValidDateString(s.scheduledAt)) { scheduleTypeValid = false; }
+            if (s.dailyTimes.length !== 0 || s.weeklyTimeSlots.length !== 0) { scheduleTypeValid = false; }
+          } else if (s.scheduleType === 'daily') {
+            if (s.scheduledAt !== null) { scheduleTypeValid = false; }
+            if (s.weeklyTimeSlots.length !== 0) { scheduleTypeValid = false; }
+            if (s.dailyTimes.length < 1) { scheduleTypeValid = false; }
+            for (const dt of s.dailyTimes) {
+              if (typeof dt !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(dt)) { scheduleTypeValid = false; break; }
+            }
+          } else if (s.scheduleType === 'weekly') {
+            if (s.scheduledAt !== null) { scheduleTypeValid = false; }
+            if (s.dailyTimes.length !== 0) { scheduleTypeValid = false; }
+            if (s.weeklyTimeSlots.length < 1) { scheduleTypeValid = false; }
+            for (const ws of s.weeklyTimeSlots) {
+               if (!ws || typeof ws !== 'object' || Array.isArray(ws)) { scheduleTypeValid = false; break; }
+               if (!Number.isInteger(ws.day) || ws.day < 0 || ws.day > 6) { scheduleTypeValid = false; break; }
+               if (!Array.isArray(ws.times) || ws.times.length < 1) { scheduleTypeValid = false; break; }
+               for (const dt of ws.times) {
+                 if (typeof dt !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(dt)) { scheduleTypeValid = false; break; }
+               }
+            }
           }
         }
+        if (!scheduleTypeValid) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_scheduletype_structure`); continue; }
 
         validSchedules.push(s as ScheduledMessage);
       }
@@ -211,6 +226,7 @@ export class SchedulerService {
       console.error('[Scheduler] error loading schedules file:', err?.message || err);
     }
   }
+
 
   private saveSchedules() {
     this.ensureDirectory();
@@ -534,7 +550,21 @@ export class SchedulerService {
 
     for (const schedule of this.schedules) {
       if (schedule.status === 'running') {
-        schedule.status = 'active';
+        schedule.status = 'error';
+        schedule.nextRunAt = null;
+        schedule.lastResult = {
+          totalTargets: schedule.targets.length,
+          sentCount: 0,
+          failedCount: schedule.targets.length,
+          skippedCount: schedule.targets.length,
+          executedAt: new Date().toISOString(),
+          details: schedule.targets.map((t) => ({
+            targetJid: t.jid,
+            targetLabel: t.label,
+            status: 'skipped',
+            error: 'Servidor reiniciado durante execução',
+          })),
+        };
         modified = true;
       }
 

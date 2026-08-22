@@ -27,8 +27,6 @@ export function useSchedules(instanceId: string | null) {
   const fetchSchedules = useCallback(async () => {
     if (!instanceId) {
       setLoadingSchedules(false);
-      setLoadingGroups(false);
-      setLoadingContacts(false);
       return;
     }
     try {
@@ -125,7 +123,12 @@ export function useSchedules(instanceId: string | null) {
     setCurrentProgress(null);
     setExecutingScheduleId(null);
     
-    if (!instanceId) return;
+    if (!instanceId) {
+      setLoadingSchedules(false);
+      setLoadingGroups(false);
+      setLoadingContacts(false);
+      return;
+    }
     
     // Initial fetch
     fetchSchedules();

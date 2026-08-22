@@ -178,7 +178,7 @@ export function useWhatsApp(instanceId: string | null) {
         return { success: false, error: errMsg };
       }
     },
-    [addLog]
+    [instanceId, addLog]
   );
 
   return {
