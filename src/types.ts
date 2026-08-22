@@ -43,7 +43,7 @@ export interface ScheduledTarget {
   jid: string;
   label: string;
   name?: string;
-  source?: 'directory' | 'manual' | 'import' | 'group_member' | 'group';
+  source: 'directory' | 'manual' | 'import' | 'group_member' | 'group';
 }
 
 export interface KnownContact {
@@ -132,14 +132,14 @@ export interface ScheduledMessage {
   nextRunAt: string | null; // ISO string or null
   dailyTimes: string[]; // ["08:00", "12:00", "18:00"]
   weeklyTimeSlots: WeeklyTimeSlot[];
-  media?: ScheduledMedia | null;
+  media: ScheduledMedia | null;
   fallbackName: string; // "amigo(a)"
   deliveryOptions: DeliveryOptions;
   status: ScheduleStatus;
   createdAt: string;
   updatedAt: string;
-  lastRunAt?: string | null;
-  lastResult?: ScheduleLastResult | null;
+  lastRunAt: string | null;
+  lastResult: ScheduleLastResult | null;
 }
 
 export interface WhatsAppGroup {

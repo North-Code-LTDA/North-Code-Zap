@@ -92,30 +92,55 @@ export class SchedulerService {
         if (Array.isArray(parsed)) {
           for (const s of parsed) {
             // Strict Schema Validation
+            const hasOwn = (obj: any, prop: string) => Object.prototype.hasOwnProperty.call(obj, prop);
+            
+            const requiredFields = [
+              'id', 'name', 'message', 'targets', 'scheduleType', 'scheduledAt',
+              'dailyTimes', 'weeklyTimeSlots', 'media', 'fallbackName', 'deliveryOptions',
+              'status', 'createdAt', 'updatedAt', 'lastRunAt', 'lastResult'
+            ];
+
+            let hasAllFields = true;
+            for (const field of requiredFields) {
+              if (!hasOwn(s, field)) {
+                hasAllFields = false;
+                break;
+              }
+            }
+
+            if (!hasAllFields) {
+              console.warn(`[Scheduler] Ignoring invalid schedule ${s?.id || 'unknown'} (missing required fields)`);
+              continue;
+            }
+
             const isValidBase =
-              s &&
-              typeof s.id === 'string' &&
-              typeof s.name === 'string' &&
+              typeof s.id === 'string' && s.id.trim().length > 0 &&
+              typeof s.name === 'string' && s.name.trim().length > 0 &&
+              typeof s.message === 'string' &&
+              typeof s.fallbackName === 'string' && s.fallbackName.trim().length > 0 &&
               Array.isArray(s.targets) &&
               ['once', 'daily', 'weekly'].includes(s.scheduleType) &&
               Array.isArray(s.dailyTimes) &&
               Array.isArray(s.weeklyTimeSlots) &&
-              typeof s.deliveryOptions === 'object' &&
-              s.deliveryOptions !== null &&
-              ['active', 'paused', 'running', 'completed', 'error'].includes(s.status);
+              typeof s.deliveryOptions === 'object' && s.deliveryOptions !== null &&
+              ['active', 'paused', 'running', 'completed', 'error'].includes(s.status) &&
+              typeof s.createdAt === 'string' &&
+              typeof s.updatedAt === 'string' &&
+              (s.lastRunAt === null || typeof s.lastRunAt === 'string') &&
+              (s.lastResult === null || typeof s.lastResult === 'object');
 
             if (!isValidBase) {
-              console.warn(`[Scheduler] Ignoring invalid schedule ${s?.id || 'unknown'} (base fields invalid)`);
+              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (base fields invalid)`);
               continue;
             }
 
             // Delivery options validation
             const delOpt = s.deliveryOptions;
             if (
-              typeof delOpt.intervalBetweenMessagesMs !== 'number' || delOpt.intervalBetweenMessagesMs < 1000 ||
+              typeof delOpt.intervalBetweenMessagesMs !== 'number' || !Number.isFinite(delOpt.intervalBetweenMessagesMs) || delOpt.intervalBetweenMessagesMs < 1000 ||
               typeof delOpt.batchPauseEnabled !== 'boolean' ||
               typeof delOpt.batchSize !== 'number' || !Number.isInteger(delOpt.batchSize) || delOpt.batchSize < 1 ||
-              typeof delOpt.batchPauseMs !== 'number' || delOpt.batchPauseMs < 60000
+              typeof delOpt.batchPauseMs !== 'number' || !Number.isFinite(delOpt.batchPauseMs) || delOpt.batchPauseMs < 60000
             ) {
               console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (deliveryOptions invalid)`);
               continue;
@@ -129,9 +154,12 @@ export class SchedulerService {
                 (t.type !== 'person' && t.type !== 'group') ||
                 typeof t.jid !== 'string' || !t.jid.trim() ||
                 typeof t.label !== 'string' || !t.label.trim() ||
-                (t.source && !validSources.includes(t.source)) ||
+                (!validSources.includes(t.source)) ||
                 (t.type === 'group' && t.source !== 'group') ||
-                (t.source === 'group_member' && t.type !== 'person')
+                (t.source === 'group_member' && t.type !== 'person') ||
+                (t.source === 'directory' && t.type !== 'person') ||
+                (t.source === 'manual' && t.type !== 'person') ||
+                (t.source === 'import' && t.type !== 'person')
               ) {
                 targetsValid = false;
                 break;
@@ -143,15 +171,26 @@ export class SchedulerService {
             }
 
             // Media validation
-            if (s.media !== null && s.media !== undefined) {
-              if (
-                typeof s.media !== 'object' ||
-                s.media.type !== 'image' ||
-                (s.media.source === 'upload' ? !s.media.localPath : !s.media.url)
-              ) {
-                console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (media invalid)`);
-                continue;
+            let mediaValid = false;
+            if (s.media === null) {
+              mediaValid = true;
+            } else if (typeof s.media === 'object' && s.media !== null && s.media.type === 'image') {
+              if (s.media.source === 'upload' && typeof s.media.localPath === 'string' && s.media.localPath.trim().length > 0) {
+                mediaValid = true;
+              } else if (s.media.source === 'url' && typeof s.media.url === 'string' && /^https?:\/\//i.test(s.media.url)) {
+                mediaValid = true;
               }
+            }
+            if (!mediaValid) {
+              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (media invalid)`);
+              continue;
+            }
+
+            const hasText = s.message.trim().length > 0;
+            const hasMedia = s.media !== null;
+            if (!hasText && !hasMedia) {
+              console.warn(`[Scheduler] Ignoring invalid schedule ${s.id} (no text and no media)`);
+              continue;
             }
 
             const isValidTime = (t: any) => typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
@@ -279,16 +318,16 @@ export class SchedulerService {
 
     const tempSchedule: ScheduledMessage = {
       id,
-      name: data.name.trim(),
-      message: (data.message || '').trim(),
-      targets: data.targets || [],
+      name: data.name,
+      message: data.message,
+      targets: data.targets,
       scheduleType: data.scheduleType,
       scheduledAt: data.scheduleType === 'once' ? data.scheduledAt : null,
       nextRunAt: null,
       dailyTimes: normalizedDailyTimes,
       weeklyTimeSlots: normalizedWeeklySlots,
-      media: data.media || null,
-      fallbackName: data.fallbackName ? data.fallbackName.trim() : 'amigo(a)',
+      media: data.media,
+      fallbackName: data.fallbackName,
       deliveryOptions: data.deliveryOptions,
       status: 'active',
       createdAt: nowIso,
@@ -296,7 +335,6 @@ export class SchedulerService {
       lastRunAt: null,
       lastResult: null,
     };
-
     tempSchedule.nextRunAt = this.calculateNextRunAt(tempSchedule);
 
     this.schedules.push(tempSchedule);
