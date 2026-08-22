@@ -95,7 +95,7 @@ export class SchedulerService {
             const hasOwn = (obj: any, prop: string) => Object.prototype.hasOwnProperty.call(obj, prop);
             
             const requiredFields = [
-              'id', 'name', 'message', 'targets', 'scheduleType', 'scheduledAt',
+              'id', 'name', 'message', 'targets', 'scheduleType', 'scheduledAt', 'nextRunAt',
               'dailyTimes', 'weeklyTimeSlots', 'media', 'fallbackName', 'deliveryOptions',
               'status', 'createdAt', 'updatedAt', 'lastRunAt', 'lastResult'
             ];
@@ -113,6 +113,9 @@ export class SchedulerService {
               continue;
             }
 
+            const isValidDateString = (value: unknown): value is string =>
+              typeof value === 'string' && !Number.isNaN(new Date(value).getTime());
+
             const isValidBase =
               typeof s.id === 'string' && s.id.trim().length > 0 &&
               typeof s.name === 'string' && s.name.trim().length > 0 &&
@@ -124,9 +127,10 @@ export class SchedulerService {
               Array.isArray(s.weeklyTimeSlots) &&
               typeof s.deliveryOptions === 'object' && s.deliveryOptions !== null &&
               ['active', 'paused', 'running', 'completed', 'error'].includes(s.status) &&
-              typeof s.createdAt === 'string' &&
-              typeof s.updatedAt === 'string' &&
-              (s.lastRunAt === null || typeof s.lastRunAt === 'string') &&
+              isValidDateString(s.createdAt) &&
+              isValidDateString(s.updatedAt) &&
+              (s.nextRunAt === null || isValidDateString(s.nextRunAt)) &&
+              (s.lastRunAt === null || isValidDateString(s.lastRunAt)) &&
               (s.lastResult === null || typeof s.lastResult === 'object');
 
             if (!isValidBase) {

@@ -365,11 +365,11 @@ async function startServer() {
   app.post('/api/schedules', (req, res) => {
     try {
       const validation = validateSchedulePayload(req.body);
-      if (!validation.valid) {
-        return res.status(400).json({ success: false, error: (validation as any).error });
+      if (validation.valid === false) {
+        return res.status(400).json({ success: false, error: validation.error });
       }
 
-      const schedule = schedulerService.create((validation as any).payload);
+      const schedule = schedulerService.create(validation.payload);
       res.status(201).json({ success: true, schedule });
     } catch (err: any) {
       console.error('[API] create schedule error:', err);
@@ -380,11 +380,11 @@ async function startServer() {
   app.put('/api/schedules/:id', (req, res) => {
     try {
       const validation = validateSchedulePayload(req.body);
-      if (!validation.valid) {
-        return res.status(400).json({ success: false, error: (validation as any).error });
+      if (validation.valid === false) {
+        return res.status(400).json({ success: false, error: validation.error });
       }
 
-      const updated = schedulerService.update(req.params.id, (validation as any).payload);
+      const updated = schedulerService.update(req.params.id, validation.payload);
       if (!updated) {
         return res.status(404).json({ success: false, error: 'Agendamento não encontrado' });
       }
