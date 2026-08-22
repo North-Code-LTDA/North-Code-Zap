@@ -1,5 +1,4 @@
 import {
-  Users,
   Zap,
   Layers,
   Send,
@@ -26,18 +25,6 @@ const TAB_CONFIG: Record<
     features: string[];
   }
 > = {
-  contatos: {
-    title: 'Gerenciamento de Contatos',
-    description: 'Gerencie em uma interface dedicada os contatos já reconhecidos e persistidos pela plataforma.',
-    icon: Users,
-    statusLabel: 'Interface em desenvolvimento',
-    features: [
-      'Sincronização automática de contatos recebidos',
-      'Etiquetas personalizadas e filtros avançados',
-      'Exportação e importação de listas CSV',
-      'Histórico individual de atendimentos',
-    ],
-  },
   automacoes: {
     title: 'Automações & Gatilhos',
     description: 'Crie regras inteligentes para disparo automático de mensagens baseadas em eventos.',
@@ -160,7 +147,7 @@ export function PlaceholderView({ tab }: PlaceholderViewProps) {
 
         <div className="p-4 rounded-xl bg-neutral-950/60 border border-neutral-800 text-xs text-neutral-400 flex items-center justify-between">
           <span>
-            Módulos ativos no momento: <strong className="text-emerald-400 font-mono">Dashboard</strong>, <strong className="text-emerald-400 font-mono">WhatsApp</strong>, <strong className="text-emerald-400 font-mono">Conversas</strong> e <strong className="text-emerald-400 font-mono">Agendamentos</strong>
+            Módulos ativos no momento: <strong className="text-emerald-400 font-mono">Dashboard</strong>, <strong className="text-emerald-400 font-mono">WhatsApp</strong>, <strong className="text-emerald-400 font-mono">Conversas</strong>, <strong className="text-emerald-400 font-mono">Agendamentos</strong> e <strong className="text-emerald-400 font-mono">Contatos</strong>
           </span>
         </div>
       </div>

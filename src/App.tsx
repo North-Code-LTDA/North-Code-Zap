@@ -27,6 +27,7 @@ import { DiagnosticLogs } from './components/DiagnosticLogs';
 import { DashboardView } from './components/DashboardView';
 import { ConversasView } from './components/ConversasView';
 import { AgendamentosView } from './components/AgendamentosView';
+import { ContatosView } from './components/ContatosView';
 import { PlaceholderView } from './components/PlaceholderView';
 import type { NavigationTab } from './types';
 
@@ -46,7 +47,7 @@ export default function App() {
     { id: 'whatsapp', label: 'WhatsApp', icon: Smartphone, isReal: true },
     { id: 'conversas', label: 'Conversas', icon: MessageSquare, badge: messagesCount > 0 ? messagesCount : undefined, isReal: true },
     { id: 'agendamentos', label: 'Agendamentos', icon: Calendar, isReal: true },
-    { id: 'contatos', label: 'Contatos', icon: Users },
+    { id: 'contatos', label: 'Contatos', icon: Users, isReal: true },
     { id: 'automacoes', label: 'Automações', icon: Zap },
     { id: 'fluxos', label: 'Fluxos', icon: Layers },
     { id: 'campanhas', label: 'Campanhas', icon: Send },
@@ -213,11 +214,17 @@ export default function App() {
             />
           )}
 
+          {/* TAB 5: CONTATOS (DIRETÓRIO) */}
+          {currentTab === 'contatos' && (
+            <ContatosView />
+          )}
+
           {/* OTHER PLACEHOLDER TABS */}
           {currentTab !== 'dashboard' &&
             currentTab !== 'whatsapp' &&
             currentTab !== 'conversas' &&
-            currentTab !== 'agendamentos' && (
+            currentTab !== 'agendamentos' &&
+            currentTab !== 'contatos' && (
               <PlaceholderView tab={currentTab} />
             )}
         </main>
