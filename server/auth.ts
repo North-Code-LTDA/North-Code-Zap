@@ -171,11 +171,12 @@ export class AuthService {
       if (!s.createdAt || typeof s.createdAt !== 'string' || !isValidDate(s.createdAt)) throw new Error('Session createdAt inválido.');
       if (!s.expiresAt || typeof s.expiresAt !== 'string' || !isValidDate(s.expiresAt)) throw new Error('Session expiresAt inválido.');
 
+      ids.add(s.id);
+      tokenHashes.add(s.tokenHash);
+
       // Expired sessions can be discarded quietly
       if (new Date(s.expiresAt).getTime() <= Date.now()) continue;
 
-      ids.add(s.id);
-      tokenHashes.add(s.tokenHash);
       validSessions.push(s as Session);
     }
     this.sessions = validSessions;

@@ -250,7 +250,7 @@ async function startServer() {
       const session = authService.getSessionByToken(token);
       if (session) {
         authService.logoutBySessionId(session.id);
-        io.to('session:' + session.id).disconnectSockets();
+        io.to('session:' + session.id).disconnectSockets(true);
       }
     }
     res.clearCookie('ncz_session', { path: '/', sameSite: 'lax' });
@@ -320,8 +320,10 @@ async function startServer() {
   });
 
   app.delete('/api/instances/:id', async (req, res) => {
-    const runtime = instanceManager.get(req.params.id);
-    if (!runtime) return res.status(404).json({ success: false, error: 'Instância não encontrada' });
+    const runtime = instanceManager.getForWorkspace(req.params.id, req.auth!.workspace.id);
+    if (!runtime) {
+      return res.status(404).json({ success: false, error: 'Instância não encontrada' });
+    }
     
     const deleted = await instanceManager.deleteInstance(req.params.id);
     if (!deleted) {
