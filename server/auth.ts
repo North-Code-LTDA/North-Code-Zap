@@ -263,12 +263,15 @@ export class AuthService {
     return crypto.createHash('sha256').update(token).digest('hex');
   }
 
-  public async register(name: string, email: string, password: string) {
+  public async register(name: any, email: any, password: any) {
+    if (typeof name !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
+      throw new Error('Parâmetros inválidos.');
+    }
     name = name.trim();
     email = email.trim().toLowerCase();
 
     if (!name || name.length > 100) throw new Error('Nome inválido.');
-    if (!email || email.length > 255 || !/^\\S+@\\S+\\.\\S+$/.test(email)) throw new Error('Email inválido.');
+    if (!email || email.length > 255 || !/^\S+@\S+\.\S+$/.test(email)) throw new Error('Email inválido.');
     if (!password || password.length < 8 || password.length > 128) throw new Error('Senha deve ter entre 8 e 128 caracteres.');
 
     if (this.users.find(u => u.email === email)) {
@@ -309,7 +312,10 @@ export class AuthService {
     return this.createSession(userId);
   }
 
-  public async login(email: string, password: string) {
+  public async login(email: any, password: any) {
+    if (typeof email !== 'string' || typeof password !== 'string') {
+      throw new Error('Parâmetros inválidos.');
+    }
     email = email.trim().toLowerCase();
     const user = this.users.find(u => u.email === email);
     if (!user) {

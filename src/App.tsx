@@ -37,9 +37,9 @@ import { PlaceholderView } from './components/PlaceholderView';
 import type { NavigationTab } from './types';
 
 function AppContent() {
+  const { identity, logout } = useAuth();
   const { selectedInstanceId } = useInstances();
   const { state, messages, messagesCount, socketConnected, loading, logs, connect, disconnect, sendMessage } = useWhatsApp(selectedInstanceId);
-  const { logout } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -183,6 +183,20 @@ function AppContent() {
                 {socketConnected ? 'Sincronização ativa' : 'Conectando ao servidor...'}
               </p>
             </div>
+            
+            <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800 text-xs text-neutral-400 flex flex-col gap-2">
+              <div className="truncate">
+                <div className="font-semibold text-neutral-200 truncate">{identity?.user?.name}</div>
+                <div className="text-[10px] text-neutral-500 truncate">{identity?.user?.email}</div>
+              </div>
+              <button
+                onClick={logout}
+                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg border border-neutral-700/50 bg-neutral-800/50 hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+              >
+                <LogOut className="w-3 h-3" />
+                <span>Sair</span>
+              </button>
+            </div>
           </div>
         </aside>
 
@@ -269,8 +283,8 @@ function AppRoot() {
   
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-gray-500">Carregando...</div>
+      <div className="min-h-screen flex items-center justify-center bg-neutral-950">
+        <div className="text-neutral-400 font-medium tracking-wide">Carregando...</div>
       </div>
     );
   }

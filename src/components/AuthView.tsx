@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { LogIn, UserPlus } from 'lucide-react';
+import { NorthCodeLogo } from './NorthCodeLogo';
+import { Button } from './ui/Button';
 
 export const AuthView: React.FC = () => {
-  const { setIdentity } = useAuth();
+  const { login, register } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   
   const [name, setName] = useState('');
@@ -16,26 +18,12 @@ export const AuthView: React.FC = () => {
     e.preventDefault();
     setError('');
     setLoading(true);
-
     try {
-      const url = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
-      const body = mode === 'login' 
-        ? { email, password } 
-        : { name, email, password };
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-
-      const data = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(data.error || 'Erro na autenticação');
+      if (mode === 'login') {
+        await login(email, password);
+      } else {
+        await register(name, email, password);
       }
-
-      setIdentity(data);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -44,94 +32,100 @@ export const AuthView: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          North Code Zap
+    <div className="min-h-screen bg-neutral-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+      <div className="sm:mx-auto sm:w-full sm:max-w-md flex flex-col items-center">
+        <NorthCodeLogo className="h-12 w-auto mb-2 scale-110" />
+        <h2 className="mt-6 text-center text-3xl font-extrabold text-white">
+          {mode === 'login' ? 'Entrar' : 'Criar conta'}
         </h2>
-        <p className="mt-2 text-center text-sm text-gray-600">
-          {mode === 'login' ? 'Entre na sua conta' : 'Crie sua conta'}
+        <p className="mt-2 text-center text-sm text-neutral-400">
+          Gerencie seus agendamentos no WhatsApp
         </p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+        <div className="bg-neutral-900 py-8 px-4 shadow sm:rounded-2xl sm:px-10 border border-neutral-800">
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
-              <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm">
+              <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 px-4 py-3 rounded-xl text-sm">
                 {error}
               </div>
             )}
 
             {mode === 'register' && (
               <div>
-                <label className="block text-sm font-medium text-gray-700">Nome</label>
-                <div className="mt-1">
+                <label className="block text-sm font-medium text-neutral-300 mb-1">Nome</label>
+                <div>
                   <input
                     type="text"
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                    className="appearance-none block w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm"
                   />
                 </div>
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-gray-700">E-mail</label>
-              <div className="mt-1">
+              <label className="block text-sm font-medium text-neutral-300 mb-1">E-mail</label>
+              <div>
                 <input
                   type="email"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                  className="appearance-none block w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700">Senha</label>
-              <div className="mt-1">
+              <label className="block text-sm font-medium text-neutral-300 mb-1">Senha</label>
+              <div>
                 <input
                   type="password"
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                  className="appearance-none block w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm"
                 />
               </div>
             </div>
 
             <div>
-              <button
+              <Button
                 type="submit"
-                disabled={loading}
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                variant="primary"
+                className="w-full justify-center"
+                isLoading={loading}
+                leftIcon={mode === 'login' ? <LogIn className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
               >
-                {loading ? 'Aguarde...' : (mode === 'login' ? 'Entrar' : 'Criar conta')}
-              </button>
+                {mode === 'login' ? 'Entrar' : 'Criar conta'}
+              </Button>
             </div>
           </form>
 
           <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
+                <div className="w-full border-t border-neutral-800" />
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">Ou</span>
+                <span className="px-2 bg-neutral-900 text-neutral-500">Ou</span>
               </div>
             </div>
 
             <div className="mt-6">
-              <button
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full justify-center"
                 onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
-                className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                disabled={loading}
               >
                 {mode === 'login' ? 'Não possui conta? Criar conta' : 'Já possui conta? Entrar'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
