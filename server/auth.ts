@@ -72,110 +72,114 @@ export class AuthService {
   }
 
   private loadWorkspaces() {
-    try {
-      if (!fs.existsSync(WORKSPACES_FILE)) return;
-      const raw = fs.readFileSync(WORKSPACES_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return;
-
-      const validWorkspaces: Workspace[] = [];
-      const ids = new Set<string>();
-
-      for (const w of parsed) {
-        if (!w || typeof w !== 'object') continue;
-        if (!w.id || typeof w.id !== 'string' || !isValidUuid(w.id)) continue;
-        if (ids.has(w.id)) continue;
-        if (!w.name || typeof w.name !== 'string') continue;
-        if (!w.createdAt || typeof w.createdAt !== 'string' || !isValidDate(w.createdAt)) continue;
-        if (!w.updatedAt || typeof w.updatedAt !== 'string' || !isValidDate(w.updatedAt)) continue;
-
-        ids.add(w.id);
-        validWorkspaces.push(w as Workspace);
-      }
-      this.workspaces = validWorkspaces;
-      console.log(`[AuthService] loaded workspaces=${this.workspaces.length}`);
-    } catch (err: any) {
-      console.error('[AuthService] error loading workspaces:', err?.message || err);
+    if (!fs.existsSync(WORKSPACES_FILE)) {
+      this.workspaces = [];
+      return;
     }
+    const raw = fs.readFileSync(WORKSPACES_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error('WORKSPACES_FILE deve ser um array.');
+
+    const validWorkspaces: Workspace[] = [];
+    const ids = new Set<string>();
+
+    for (const w of parsed) {
+      if (!w || typeof w !== 'object') throw new Error('Workspace inválido.');
+      if (!w.id || typeof w.id !== 'string' || !isValidUuid(w.id)) throw new Error('Workspace id inválido.');
+      if (ids.has(w.id)) throw new Error('Workspace id duplicado.');
+
+      if (!w.name || typeof w.name !== 'string' || !w.name.trim()) throw new Error('Workspace name inválido.');
+      if (!w.createdAt || typeof w.createdAt !== 'string' || !isValidDate(w.createdAt)) throw new Error('Workspace createdAt inválido.');
+      if (!w.updatedAt || typeof w.updatedAt !== 'string' || !isValidDate(w.updatedAt)) throw new Error('Workspace updatedAt inválido.');
+
+      ids.add(w.id);
+      validWorkspaces.push(w as Workspace);
+    }
+    this.workspaces = validWorkspaces;
+    console.log(`[AuthService] loaded workspaces=${this.workspaces.length}`);
   }
 
   private loadUsers() {
-    try {
-      if (!fs.existsSync(USERS_FILE)) return;
-      const raw = fs.readFileSync(USERS_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return;
-
-      const validUsers: User[] = [];
-      const ids = new Set<string>();
-      const emails = new Set<string>();
-
-      for (const u of parsed) {
-        if (!u || typeof u !== 'object') continue;
-        if (!u.id || typeof u.id !== 'string' || !isValidUuid(u.id)) continue;
-        if (ids.has(u.id)) continue;
-        if (!u.name || typeof u.name !== 'string') continue;
-        if (!u.email || typeof u.email !== 'string') continue;
-        const emailLower = u.email.toLowerCase();
-        if (emails.has(emailLower)) continue;
-        
-        if (!u.passwordSalt || typeof u.passwordSalt !== 'string') continue;
-        if (!u.passwordHash || typeof u.passwordHash !== 'string') continue;
-        if (!u.workspaceId || typeof u.workspaceId !== 'string' || !isValidUuid(u.workspaceId)) continue;
-        if (!this.workspaces.find(w => w.id === u.workspaceId)) continue;
-        
-        if (!u.createdAt || typeof u.createdAt !== 'string' || !isValidDate(u.createdAt)) continue;
-        if (!u.updatedAt || typeof u.updatedAt !== 'string' || !isValidDate(u.updatedAt)) continue;
-
-        ids.add(u.id);
-        emails.add(emailLower);
-        
-        validUsers.push({
-          ...u,
-          email: emailLower
-        } as User);
-      }
-      this.users = validUsers;
-      console.log(`[AuthService] loaded users=${this.users.length}`);
-    } catch (err: any) {
-      console.error('[AuthService] error loading users:', err?.message || err);
+    if (!fs.existsSync(USERS_FILE)) {
+      this.users = [];
+      return;
     }
+    const raw = fs.readFileSync(USERS_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error('USERS_FILE deve ser um array.');
+
+    const validUsers: User[] = [];
+    const ids = new Set<string>();
+    const emails = new Set<string>();
+
+    for (const u of parsed) {
+      if (!u || typeof u !== 'object') throw new Error('User inválido.');
+      if (!u.id || typeof u.id !== 'string' || !isValidUuid(u.id)) throw new Error('User id inválido.');
+      if (ids.has(u.id)) throw new Error('User id duplicado.');
+
+      if (!u.name || typeof u.name !== 'string' || !u.name.trim()) throw new Error('User name inválido.');
+      if (!u.email || typeof u.email !== 'string') throw new Error('User email inválido.');
+      const emailLower = u.email.trim().toLowerCase();
+      if (!emailLower || !/^\S+@\S+\.\S+$/.test(emailLower)) throw new Error('User email em formato inválido.');
+      if (emails.has(emailLower)) throw new Error('User email duplicado.');
+
+      if (!u.passwordSalt || typeof u.passwordSalt !== 'string' || !u.passwordSalt.trim()) throw new Error('User passwordSalt inválido.');
+      if (!u.passwordHash || typeof u.passwordHash !== 'string' || !u.passwordHash.trim()) throw new Error('User passwordHash inválido.');
+      
+      if (!u.workspaceId || typeof u.workspaceId !== 'string' || !isValidUuid(u.workspaceId)) throw new Error('User workspaceId inválido.');
+      if (!this.workspaces.find(w => w.id === u.workspaceId)) throw new Error('User workspaceId inexistente.');
+
+      if (!u.createdAt || typeof u.createdAt !== 'string' || !isValidDate(u.createdAt)) throw new Error('User createdAt inválido.');
+      if (!u.updatedAt || typeof u.updatedAt !== 'string' || !isValidDate(u.updatedAt)) throw new Error('User updatedAt inválido.');
+
+      ids.add(u.id);
+      emails.add(emailLower);
+
+      validUsers.push({
+        ...u,
+        email: emailLower
+      } as User);
+    }
+    this.users = validUsers;
+    console.log(`[AuthService] loaded users=${this.users.length}`);
   }
 
   private loadSessions() {
-    try {
-      if (!fs.existsSync(SESSIONS_FILE)) return;
-      const raw = fs.readFileSync(SESSIONS_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return;
-
-      const validSessions: Session[] = [];
-      const ids = new Set<string>();
-      const tokenHashes = new Set<string>();
-
-      for (const s of parsed) {
-        if (!s || typeof s !== 'object') continue;
-        if (!s.id || typeof s.id !== 'string' || !isValidUuid(s.id)) continue;
-        if (ids.has(s.id)) continue;
-        
-        if (!s.userId || typeof s.userId !== 'string' || !isValidUuid(s.userId)) continue;
-        if (!this.users.find(u => u.id === s.userId)) continue;
-
-        if (!s.tokenHash || typeof s.tokenHash !== 'string') continue;
-        if (tokenHashes.has(s.tokenHash)) continue;
-
-        if (!s.createdAt || typeof s.createdAt !== 'string' || !isValidDate(s.createdAt)) continue;
-        if (!s.expiresAt || typeof s.expiresAt !== 'string' || !isValidDate(s.expiresAt)) continue;
-
-        ids.add(s.id);
-        tokenHashes.add(s.tokenHash);
-        validSessions.push(s as Session);
-      }
-      this.sessions = validSessions;
-      console.log(`[AuthService] loaded sessions=${this.sessions.length}`);
-    } catch (err: any) {
-      console.error('[AuthService] error loading sessions:', err?.message || err);
+    if (!fs.existsSync(SESSIONS_FILE)) {
+      this.sessions = [];
+      return;
     }
+    const raw = fs.readFileSync(SESSIONS_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error('SESSIONS_FILE deve ser um array.');
+
+    const validSessions: Session[] = [];
+    const ids = new Set<string>();
+    const tokenHashes = new Set<string>();
+
+    for (const s of parsed) {
+      if (!s || typeof s !== 'object') throw new Error('Session inválida.');
+      if (!s.id || typeof s.id !== 'string' || !isValidUuid(s.id)) throw new Error('Session id inválido.');
+      if (ids.has(s.id)) throw new Error('Session id duplicado.');
+
+      if (!s.userId || typeof s.userId !== 'string' || !isValidUuid(s.userId)) throw new Error('Session userId inválido.');
+      if (!this.users.find(u => u.id === s.userId)) throw new Error('Session userId inexistente.');
+
+      if (!s.tokenHash || typeof s.tokenHash !== 'string' || !s.tokenHash.trim()) throw new Error('Session tokenHash inválido.');
+      if (tokenHashes.has(s.tokenHash)) throw new Error('Session tokenHash duplicado.');
+
+      if (!s.createdAt || typeof s.createdAt !== 'string' || !isValidDate(s.createdAt)) throw new Error('Session createdAt inválido.');
+      if (!s.expiresAt || typeof s.expiresAt !== 'string' || !isValidDate(s.expiresAt)) throw new Error('Session expiresAt inválido.');
+
+      // Expired sessions can be discarded quietly
+      if (new Date(s.expiresAt).getTime() <= Date.now()) continue;
+
+      ids.add(s.id);
+      tokenHashes.add(s.tokenHash);
+      validSessions.push(s as Session);
+    }
+    this.sessions = validSessions;
+    console.log(`[AuthService] loaded sessions=${this.sessions.length}`);
   }
 
   private saveWorkspaces() {
@@ -263,30 +267,31 @@ export class AuthService {
     return crypto.createHash('sha256').update(token).digest('hex');
   }
 
-  public async register(name: any, email: any, password: any) {
+  public async register(name: unknown, email: unknown, password: unknown) {
     if (typeof name !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
       throw new Error('Parâmetros inválidos.');
     }
-    name = name.trim();
-    email = email.trim().toLowerCase();
+    const safeName = name.trim();
+    const safeEmail = email.trim().toLowerCase();
+    const safePassword = password;
 
-    if (!name || name.length > 100) throw new Error('Nome inválido.');
-    if (!email || email.length > 255 || !/^\S+@\S+\.\S+$/.test(email)) throw new Error('Email inválido.');
-    if (!password || password.length < 8 || password.length > 128) throw new Error('Senha deve ter entre 8 e 128 caracteres.');
+    if (!safeName || safeName.length > 100) throw new Error('Nome inválido.');
+    if (!safeEmail || safeEmail.length > 255 || !/^\S+@\S+\.\S+$/.test(safeEmail)) throw new Error('Email inválido.');
+    if (!safePassword || safePassword.length < 8 || safePassword.length > 128) throw new Error('Senha deve ter entre 8 e 128 caracteres.');
 
-    if (this.users.find(u => u.email === email)) {
+    if (this.users.find(u => u.email === safeEmail)) {
       throw new Error('Email já cadastrado.');
     }
 
     const salt = crypto.randomBytes(16).toString('hex');
-    const hash = await this.hashPassword(password, salt);
+    const hash = await this.hashPassword(safePassword, salt);
 
     const nowIso = new Date().toISOString();
     
     const workspaceId = crypto.randomUUID();
     const workspace: Workspace = {
       id: workspaceId,
-      name: name,
+      name: safeName,
       createdAt: nowIso,
       updatedAt: nowIso
     };
@@ -294,8 +299,8 @@ export class AuthService {
     const userId = crypto.randomUUID();
     const user: User = {
       id: userId,
-      name,
-      email,
+      name: safeName,
+      email: safeEmail,
       passwordSalt: salt,
       passwordHash: hash,
       workspaceId: workspaceId,
@@ -312,17 +317,19 @@ export class AuthService {
     return this.createSession(userId);
   }
 
-  public async login(email: any, password: any) {
+  public async login(email: unknown, password: unknown) {
     if (typeof email !== 'string' || typeof password !== 'string') {
       throw new Error('Parâmetros inválidos.');
     }
-    email = email.trim().toLowerCase();
-    const user = this.users.find(u => u.email === email);
+    const safeEmail = email.trim().toLowerCase();
+    const safePassword = password;
+
+    const user = this.users.find(u => u.email === safeEmail);
     if (!user) {
       throw new Error('E-mail ou senha inválidos.');
     }
     
-    const isValid = await this.verifyPassword(password, user.passwordHash, user.passwordSalt);
+    const isValid = await this.verifyPassword(safePassword, user.passwordHash, user.passwordSalt);
     if (!isValid) {
       throw new Error('E-mail ou senha inválidos.');
     }

@@ -172,14 +172,32 @@ async function startServer() {
   instanceManager.setSocketIO(io);
   schedulerService.setSocketIO(io);
 
+  io.use((socket, next) => {
+    const token = getCookieFromSocket(socket, 'ncz_session');
+    if (!token) return next(new Error('Authentication error'));
+    
+    const session = authService.getSessionByToken(token);
+    if (!session) return next(new Error('Authentication error'));
+    
+    const user = authService.getUser(session.userId);
+    if (!user) return next(new Error('Authentication error'));
+    const workspace = authService.getWorkspace(user.workspaceId);
+    if (!workspace) return next(new Error('Authentication error'));
+
+    socket.data.auth = { sessionId: session.id, user, workspace };
+    next();
+  });
+
   io.on('connection', (clientSocket) => {
+    clientSocket.join('session:' + clientSocket.data.auth.sessionId);
+
     clientSocket.on('instance:subscribe', (instanceId) => {
       // Leave all other instance rooms
       Array.from(clientSocket.rooms).forEach(r => {
-        if (r.startsWith('instance:')) clientSocket.leave(r);
+        if (r.startsWith('instance:') && !r.startsWith('session:')) clientSocket.leave(r);
       });
       if (typeof instanceId === 'string') {
-        const runtime = instanceManager.get(instanceId);
+        const runtime = instanceManager.getForWorkspace(instanceId, clientSocket.data.auth.workspace.id);
         if (runtime) {
           clientSocket.join(`instance:${instanceId}`);
           clientSocket.emit('whatsapp:state', runtime.whatsapp.getState());
@@ -235,7 +253,7 @@ async function startServer() {
         io.to('session:' + session.id).disconnectSockets();
       }
     }
-    res.clearCookie('ncz_session');
+    res.clearCookie('ncz_session', { path: '/', sameSite: 'lax' });
     res.json({ success: true });
   });
 
@@ -246,8 +264,11 @@ async function startServer() {
     if (!session) return res.status(401).json({ error: 'Não autenticado.' });
     
     const user = authService.getUser(session.userId);
-    const workspace = authService.getWorkspace(user!.workspaceId);
-    res.json({ user: { id: user!.id, name: user!.name, email: user!.email }, workspace: { id: workspace!.id, name: workspace!.name } });
+    if (!user) return res.status(401).json({ error: 'Conta inválida.' });
+    const workspace = authService.getWorkspace(user.workspaceId);
+    if (!workspace) return res.status(401).json({ error: 'Workspace inválido.' });
+
+    res.json({ user: { id: user.id, name: user.name, email: user.email }, workspace: { id: workspace.id, name: workspace.name } });
   });
 
   // Auth Middleware
@@ -258,21 +279,22 @@ async function startServer() {
     if (!session) return res.status(401).json({ error: 'Não autenticado.' });
     
     const user = authService.getUser(session.userId);
-    const workspace = authService.getWorkspace(user!.workspaceId);
-    
-    if (!user || !workspace) return res.status(401).json({ error: 'Conta inválida.' });
+    if (!user) return res.status(401).json({ error: 'Conta inválida.' });
+    const workspace = authService.getWorkspace(user.workspaceId);
+    if (!workspace) return res.status(401).json({ error: 'Conta inválida.' });
     
     req.auth = { sessionId: session.id, user, workspace };
     next();
   };
 
-  app.use('/api/instances', requireAuth);
+  app.use('/api', requireAuth);
 
   app.get('/api/instances', (req, res) => {
-    res.json(instanceManager.list().map(meta => {
-      const runtime = instanceManager.get(meta.id);
+    res.json(instanceManager.listForWorkspace(req.auth!.workspace.id).map(meta => {
+      const runtime = instanceManager.getForWorkspace(meta.id, req.auth!.workspace.id);
+      const { workspaceId, ...publicMeta } = meta;
       return {
-        ...meta,
+        ...publicMeta,
         account: runtime?.whatsapp.getState()
       };
     }));
