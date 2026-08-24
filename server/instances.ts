@@ -20,6 +20,7 @@ const INSTANCES_FILE = path.join(DATA_DIR, 'instances.json');
 
 export interface InstanceMetadata {
   id: string;
+  workspaceId: string;
   name: string;
   createdAt: string;
   updatedAt: string;
@@ -83,6 +84,10 @@ export class InstanceManager {
         console.warn('[InstanceManager] Invalid or missing id in instances.json');
         continue;
       }
+      if (typeof meta.workspaceId !== 'string' || !isValidUuid(meta.workspaceId)) {
+        console.warn(`[InstanceManager] Missing or invalid workspaceId for instance: ${meta.id}`);
+        continue;
+      }
       if (seenIds.has(meta.id)) {
         console.warn(`[InstanceManager] Duplicate instance ID found: ${meta.id}. Ignoring duplicate.`);
         continue;
@@ -103,6 +108,7 @@ export class InstanceManager {
       seenIds.add(meta.id);
       validMetas.push({
         id: meta.id,
+        workspaceId: meta.workspaceId,
         name: meta.name.trim(),
         createdAt: meta.createdAt,
         updatedAt: meta.updatedAt
@@ -167,12 +173,13 @@ export class InstanceManager {
     return runtime;
   }
 
-  public createInstance(name: string): InstanceMetadata {
+  public createInstance(name: string, workspaceId: string): InstanceMetadata {
     if (typeof name !== 'string' || !name.trim()) throw new Error('Nome de instância inválido.');
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const meta: InstanceMetadata = {
       id,
+      workspaceId,
       name: name.trim(),
       createdAt: now,
       updatedAt: now
@@ -219,6 +226,19 @@ export class InstanceManager {
     } finally {
       this.deletingInstances.delete(id);
     }
+  }
+
+  public getForWorkspace(id: string, workspaceId: string): InstanceRuntime | undefined {
+    const runtime = this.runtimes.get(id);
+    if (!runtime) return undefined;
+    if (runtime.metadata.workspaceId !== workspaceId) return undefined;
+    return runtime;
+  }
+
+  public listForWorkspace(workspaceId: string): InstanceMetadata[] {
+    return Array.from(this.runtimes.values())
+      .filter(r => r.metadata.workspaceId === workspaceId)
+      .map(r => r.metadata);
   }
 
   public get(id: string): InstanceRuntime | undefined {

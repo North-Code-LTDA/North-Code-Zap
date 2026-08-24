@@ -188,3 +188,19 @@ export type NavigationTab =
   | 'agendamentos'
   | 'ia'
   | 'configuracoes';
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface AuthWorkspace {
+  id: string;
+  name: string;
+}
+
+export interface AuthIdentity {
+  user: AuthUser;
+  workspace: AuthWorkspace;
+}

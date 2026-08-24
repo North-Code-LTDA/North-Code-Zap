@@ -22,6 +22,9 @@ import {
 } from 'lucide-react';
 import { useWhatsApp } from './hooks/useWhatsApp';
 import { InstancesProvider, useInstances } from './contexts/InstancesContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AuthView } from './components/AuthView';
+import { LogOut } from 'lucide-react';
 import { InstancesSelector } from './components/InstancesSelector';
 import { NorthCodeLogo } from './components/NorthCodeLogo';
 import { ConnectionCard } from './components/ConnectionCard';
@@ -36,6 +39,7 @@ import type { NavigationTab } from './types';
 function AppContent() {
   const { selectedInstanceId } = useInstances();
   const { state, messages, messagesCount, socketConnected, loading, logs, connect, disconnect, sendMessage } = useWhatsApp(selectedInstanceId);
+  const { logout } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -260,10 +264,32 @@ function AppContent() {
 }
 
 
-export default function App() {
+function AppRoot() {
+  const { identity, loading } = useAuth();
+  
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-gray-500">Carregando...</div>
+      </div>
+    );
+  }
+
+  if (!identity) {
+    return <AuthView />;
+  }
+
   return (
     <InstancesProvider>
       <AppContent />
     </InstancesProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppRoot />
+    </AuthProvider>
   );
 }

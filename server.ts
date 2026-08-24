@@ -8,6 +8,19 @@ import { Server as SocketIOServer } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 import { InstanceManager, DATA_DIR } from './server/instances.ts';
 import { SchedulerService } from './server/scheduler.ts';
+import { authService, User, Workspace, Session } from './server/auth.ts';
+
+declare global {
+  namespace Express {
+    interface Request {
+      auth?: {
+        sessionId: string;
+        user: User;
+        workspace: Workspace;
+      }
+    }
+  }
+}
 
 const APP_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'America/Belem';
 process.env.TZ = APP_TIMEZONE;
@@ -18,7 +31,7 @@ const schedulerService = new SchedulerService(instanceManager);
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const instanceId = req.params.instanceId;
-    const runtime = instanceManager.get(instanceId);
+    const runtime = instanceManager.getForWorkspace(instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) {
       return cb(new Error('Instance not found'), '');
     }
@@ -145,6 +158,7 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
 }
 
 async function startServer() {
+  authService.init();
   const app = express();
   const server = http.createServer(app);
   const PORT = Number(process.env.PORT || 3000);
@@ -177,6 +191,83 @@ async function startServer() {
   });
 
   // Instances API
+  
+  // Auth API
+  app.post('/api/auth/register', async (req, res) => {
+    try {
+      const { name, email, password } = req.body;
+      const { token, session } = await authService.register(name, email, password);
+      const user = authService.getUser(session.userId);
+      const workspace = authService.getWorkspace(user!.workspaceId);
+      
+      const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+      res.cookie('ncz_session', token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 30*24*60*60*1000, secure });
+      
+      res.json({ user: { id: user!.id, name: user!.name, email: user!.email }, workspace: { id: workspace!.id, name: workspace!.name } });
+    } catch (e: any) {
+      if (e.message === 'Email já cadastrado.') res.status(409).json({ error: e.message });
+      else res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      const { token, session } = await authService.login(email, password);
+      const user = authService.getUser(session.userId);
+      const workspace = authService.getWorkspace(user!.workspaceId);
+      
+      const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+      res.cookie('ncz_session', token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 30*24*60*60*1000, secure });
+      
+      res.json({ user: { id: user!.id, name: user!.name, email: user!.email }, workspace: { id: workspace!.id, name: workspace!.name } });
+    } catch (e: any) {
+      res.status(401).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    const token = req.cookies?.ncz_session;
+    if (token) {
+      const session = authService.getSessionByToken(token);
+      if (session) {
+        authService.logoutBySessionId(session.id);
+        io.to('session:' + session.id).disconnectSockets();
+      }
+    }
+    res.clearCookie('ncz_session');
+    res.json({ success: true });
+  });
+
+  app.get('/api/auth/me', (req, res) => {
+    const token = req.cookies?.ncz_session;
+    if (!token) return res.status(401).json({ error: 'Não autenticado.' });
+    const session = authService.getSessionByToken(token);
+    if (!session) return res.status(401).json({ error: 'Não autenticado.' });
+    
+    const user = authService.getUser(session.userId);
+    const workspace = authService.getWorkspace(user!.workspaceId);
+    res.json({ user: { id: user!.id, name: user!.name, email: user!.email }, workspace: { id: workspace!.id, name: workspace!.name } });
+  });
+
+  // Auth Middleware
+  const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const token = (req as any).cookies?.ncz_session;
+    if (!token) return res.status(401).json({ error: 'Não autenticado.' });
+    const session = authService.getSessionByToken(token);
+    if (!session) return res.status(401).json({ error: 'Não autenticado.' });
+    
+    const user = authService.getUser(session.userId);
+    const workspace = authService.getWorkspace(user!.workspaceId);
+    
+    if (!user || !workspace) return res.status(401).json({ error: 'Conta inválida.' });
+    
+    req.auth = { sessionId: session.id, user, workspace };
+    next();
+  };
+
+  app.use('/api/instances', requireAuth);
+
   app.get('/api/instances', (req, res) => {
     res.json(instanceManager.list().map(meta => {
       const runtime = instanceManager.get(meta.id);
@@ -190,13 +281,15 @@ async function startServer() {
   app.post('/api/instances', (req, res) => {
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     if (!name) return res.status(400).json({ error: 'Nome obrigatório' });
-    const meta = instanceManager.createInstance(name);
+    const meta = instanceManager.createInstance(name, req.auth!.workspace.id);
     res.status(201).json(meta);
   });
 
   app.patch('/api/instances/:id', (req, res) => {
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     if (!name) return res.status(400).json({ error: 'Nome obrigatório' });
+    const runtime = instanceManager.getForWorkspace(req.params.id, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
     const meta = instanceManager.renameInstance(req.params.id, name);
     if (!meta) return res.status(404).json({ error: 'Instância não encontrada' });
     res.json(meta);
@@ -216,7 +309,7 @@ async function startServer() {
   });
 
   app.get('/api/instances/:instanceId/media/files/:fileName', (req, res) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ error: 'Instância não encontrada' });
     const fileName = path.basename(req.params.fileName);
     const p = runtime.media.getFilePath(fileName);
@@ -225,7 +318,7 @@ async function startServer() {
   });
 
   app.post('/api/instances/:instanceId/media/upload', (req, res, next) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ success: false, error: 'Instância não encontrada' });
     next();
   }, (req, res) => {
@@ -252,25 +345,25 @@ async function startServer() {
   app.get('/api/health', (req, res) => res.json({ status: 'ok', service: 'North Code Zap' }));
 
   app.get('/api/instances/:instanceId/whatsapp/status', (req, res) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     res.json(runtime.whatsapp.getState());
   });
 
   app.get('/api/instances/:instanceId/whatsapp/messages', (req, res) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     res.json(runtime.whatsapp.getMessages());
   });
 
   app.get('/api/instances/:instanceId/contacts', (req, res) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     res.json(runtime.contacts.getAll());
   });
 
   app.get('/api/instances/:instanceId/whatsapp/groups', async (req, res) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     try {
       const groups = await runtime.whatsapp.getGroups();
@@ -279,7 +372,7 @@ async function startServer() {
   });
 
   app.get('/api/instances/:instanceId/whatsapp/groups/:jid/participants', async (req, res) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     try {
       const participants = await runtime.whatsapp.getGroupParticipants(req.params.jid);
@@ -288,7 +381,7 @@ async function startServer() {
   });
 
   app.post('/api/instances/:instanceId/whatsapp/messages/send', async (req, res) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     const remoteJid = typeof req.body.remoteJid === 'string' ? req.body.remoteJid.trim() : '';
     const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
@@ -301,7 +394,7 @@ async function startServer() {
   });
 
   app.post('/api/instances/:instanceId/whatsapp/connect', async (req, res) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     try {
       await runtime.whatsapp.connect();
@@ -310,7 +403,7 @@ async function startServer() {
   });
 
   app.post('/api/instances/:instanceId/whatsapp/disconnect', async (req, res) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     try {
       await runtime.whatsapp.disconnect();
@@ -319,14 +412,14 @@ async function startServer() {
   });
 
   app.get('/api/instances/:instanceId/schedules', (req, res) => {
-    const runtime = instanceManager.get(req.params.instanceId);
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true, schedules: schedulerService.getSchedulesForInstance(req.params.instanceId) });
   });
 
   app.post('/api/instances/:instanceId/schedules', (req, res) => {
     try {
-      const runtime = instanceManager.get(req.params.instanceId);
+      const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
       if (!runtime) return res.status(404).json({ error: 'Not found' });
       const validation = validateSchedulePayload(req.body);
       if (validation.valid === false) return res.status(400).json({ success: false, error: validation.error });
@@ -342,7 +435,7 @@ async function startServer() {
 
   app.put('/api/instances/:instanceId/schedules/:id', (req, res) => {
     try {
-      const runtime = instanceManager.get(req.params.instanceId);
+      const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
       if (!runtime) return res.status(404).json({ error: 'Not found' });
       const validation = validateSchedulePayload(req.body);
       if (validation.valid === false) return res.status(400).json({ success: false, error: validation.error });
@@ -359,7 +452,7 @@ async function startServer() {
 
   app.delete('/api/instances/:instanceId/schedules/:id', (req, res) => {
     try {
-      const runtime = instanceManager.get(req.params.instanceId);
+      const runtime = instanceManager.getForWorkspace(req.params.instanceId, (req as any).auth?.workspace.id || '');
       if (!runtime) return res.status(404).json({ error: 'Not found' });
       const success = schedulerService.delete(req.params.id, req.params.instanceId, runtime.media);
       if (!success) return res.status(404).json({ success: false, error: 'Não encontrado' });

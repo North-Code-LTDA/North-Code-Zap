@@ -42,7 +42,11 @@ export function InstancesProvider({ children }: { children: React.ReactNode }) {
   }, [selectedInstanceId]);
 
   useEffect(() => {
+    socket.connect();
     refreshInstances();
+    return () => {
+      socket.disconnect();
+    };
   }, [refreshInstances]);
 
   useEffect(() => {
