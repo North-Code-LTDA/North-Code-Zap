@@ -504,7 +504,8 @@ async function startServer() {
       runtime.audiences.removeTagFromContacts(req.params.tagId, req.body.jids);
       res.json({ success: true });
     } catch (e: any) {
-      res.status(400).json({ error: e.message });
+      if (e.message === 'Tag not found') res.status(404).json({ error: e.message });
+      else res.status(400).json({ error: e.message });
     }
   });
 

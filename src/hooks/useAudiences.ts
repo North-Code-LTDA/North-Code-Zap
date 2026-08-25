@@ -1,27 +1,46 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { AudiencesState, AudienceTag, AudienceList } from '../types';
 
 export function useAudiences(instanceId: string | null) {
   const [state, setState] = useState<AudiencesState | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  const requestSeqRef = useRef(0);
+
+  useEffect(() => {
+    // Clear immediately on instance change
+    setState(null);
+    setError(null);
+    setLoading(!!instanceId);
+  }, [instanceId]);
 
   const fetchAudiences = useCallback(async () => {
     if (!instanceId) {
-      setState(null);
       return;
     }
+    
+    const seq = ++requestSeqRef.current;
     setLoading(true);
     setError(null);
+    
     try {
       const res = await fetch(`/api/instances/${instanceId}/audiences`);
       if (!res.ok) throw new Error('Failed to fetch audiences');
       const data = await res.json();
-      setState(data);
+      
+      if (seq === requestSeqRef.current) {
+        setState(data);
+        setError(null);
+      }
     } catch (e: any) {
-      setError(e.message);
+      if (seq === requestSeqRef.current) {
+        setError(e.message);
+      }
     } finally {
-      setLoading(false);
+      if (seq === requestSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, [instanceId]);
 

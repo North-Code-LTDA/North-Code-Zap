@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Users, RefreshCw, Search, Loader2, UserCircle2, 
-  MessageSquare, UserPlus, MessageCircle, Tag, List, Trash2, Plus, Edit2, X, CheckSquare, Square
+  MessageSquare, UserPlus, MessageCircle, Tag, List, Trash2, Plus, Edit2, X, CheckSquare, Square, Check
 } from 'lucide-react';
 import { useContacts } from '../hooks/useContacts';
 import { useInstances } from '../contexts/InstancesContext';
@@ -22,9 +22,8 @@ function formatBrazilianNumber(number: string | null): string {
 }
 
 function getInitial(name: string | null): string {
-  const n = name;
-  if (!n) return '?';
-  const clean = n.replace(/[^a-zA-ZÀ-ÿ0-9]/g, '');
+  if (!name) return '?';
+  const clean = name.replace(/[^a-zA-ZÀ-ÿ0-9]/g, '');
   return clean.charAt(0).toUpperCase() || '?';
 }
 
@@ -42,51 +41,54 @@ function getSourceLabel(source: string): string {
   }
 }
 
-function getSourceIcon(source: string) {
-  switch (source) {
-    case 'message': return <MessageSquare className="w-3 h-3" />;
-    case 'contact': return <UserPlus className="w-3 h-3" />;
-    case 'chat': return <MessageCircle className="w-3 h-3" />;
-    default: return <Users className="w-3 h-3" />;
+function formatLastSeen(dateStr: string | null): string {
+  if (!dateStr) return 'Nunca';
+  try {
+    const d = new Date(dateStr);
+    return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(d);
+  } catch (e) {
+    return 'Data inválida';
   }
-}
-
-function formatLastSeen(dateString?: string | null): string {
-  if (!dateString) return 'Sem registro';
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) return 'Sem registro';
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const timeStr = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  if (targetDate.getTime() === today.getTime()) return `Hoje, ${timeStr}`;
-  else if (targetDate.getTime() === yesterday.getTime()) return `Ontem, ${timeStr}`;
-  return `${date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })}, ${timeStr}`;
 }
 
 export function ContatosView() {
   const { selectedInstanceId } = useInstances();
-  const { contacts, loading, error, fetchContacts } = useContacts(selectedInstanceId);
-  const { state: audiences, fetchAudiences, createTag, deleteTag, renameTag, addTagToContacts, removeTagFromContacts, createList, renameList, deleteList, updateListContacts } = useAudiences(selectedInstanceId);
-  
+  const { contacts, loading: contactsLoading, error: contactsError, fetchContacts } = useContacts(selectedInstanceId);
+  const { 
+    state: audiences, loading: audiencesLoading, error: audiencesError, fetchAudiences, 
+    createTag, renameTag, deleteTag, addTagToContacts, removeTagFromContacts, 
+    createList, renameList, deleteList
+  } = useAudiences(selectedInstanceId);
+
   const [search, setSearch] = useState('');
-  const [sourceFilter, setSourceFilter] = useState<string>('all');
-  const [tagFilter, setTagFilter] = useState<string>('all');
-  const [listFilter, setListFilter] = useState<string>('all');
-  
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  
+  const itemsPerPage = 20;
+
+  const [selectedSource, setSelectedSource] = useState<string>('');
+  const [selectedTag, setSelectedTag] = useState<string>('');
+  const [selectedList, setSelectedList] = useState<string>('');
+
   const [selectedJids, setSelectedJids] = useState<Set<string>>(new Set());
 
   const [tagInput, setTagInput] = useState('');
   const [listInput, setListInput] = useState('');
 
+  // Inline editing states
+  const [editingTagId, setEditingTagId] = useState<string | null>(null);
+  const [editingTagName, setEditingTagName] = useState('');
+  const [editingListId, setEditingListId] = useState<string | null>(null);
+  const [editingListName, setEditingListName] = useState('');
+
+  // Confirmation states
+  const [confirmDeleteTagId, setConfirmDeleteTagId] = useState<string | null>(null);
+  const [confirmDeleteListId, setConfirmDeleteListId] = useState<string | null>(null);
+
+  const [audienceActionError, setAudienceActionError] = useState<string | null>(null);
+
   // Clear selections on instance change
   useEffect(() => {
     setSelectedJids(new Set());
+    setAudienceActionError(null);
   }, [selectedInstanceId]);
 
   const metrics = useMemo(() => {
@@ -103,91 +105,136 @@ export function ContatosView() {
     return { total: contacts.length, withName, withoutName, recentActive };
   }, [contacts]);
 
+  const sources = useMemo(() => Array.from(new Set(contacts.map(c => c.source))), [contacts]);
+
   const filteredContacts = useMemo(() => {
-    return contacts.filter(c => {
-      if (sourceFilter !== 'all' && c.source !== sourceFilter) return false;
-      if (tagFilter !== 'all') {
-        const cTags = audiences?.contactTags[c.jid] || [];
-        if (!cTags.includes(tagFilter)) return false;
+    let filtered = contacts;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      filtered = filtered.filter(c => c.name?.toLowerCase().includes(q) || c.number?.includes(q));
+    }
+    if (selectedSource) {
+      filtered = filtered.filter(c => c.source === selectedSource);
+    }
+    if (selectedTag && audiences) {
+      filtered = filtered.filter(c => audiences.contactTags[c.jid]?.includes(selectedTag));
+    }
+    if (selectedList && audiences) {
+      const list = audiences.lists.find(l => l.id === selectedList);
+      if (list) {
+        const set = new Set(list.contactJids);
+        filtered = filtered.filter(c => set.has(c.jid));
       }
-      if (listFilter !== 'all') {
-        const lst = audiences?.lists.find(l => l.id === listFilter);
-        if (!lst || !lst.contactJids.includes(c.jid)) return false;
-      }
-      if (search.trim()) {
-        const term = search.toLowerCase();
-        if (!(c.name || '').toLowerCase().includes(term) && !(c.number || '').toLowerCase().includes(term)) return false;
-      }
-      return true;
+    }
+    return filtered.sort((a, b) => {
+      const dA = a.lastSeenAt ? new Date(a.lastSeenAt).getTime() : 0;
+      const dB = b.lastSeenAt ? new Date(b.lastSeenAt).getTime() : 0;
+      return dB - dA;
     });
-  }, [contacts, search, sourceFilter, tagFilter, listFilter, audiences]);
+  }, [contacts, search, selectedSource, selectedTag, selectedList, audiences]);
 
-  useEffect(() => { setCurrentPage(1); }, [search, sourceFilter, tagFilter, listFilter, pageSize]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredContacts.length / pageSize));
-  useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
-
-  const paginatedContacts = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize;
-    return filteredContacts.slice(startIndex, startIndex + pageSize);
-  }, [filteredContacts, currentPage, pageSize]);
+  const totalPages = Math.ceil(filteredContacts.length / itemsPerPage) || 1;
+  const paginatedContacts = filteredContacts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const getPageNumbers = () => {
-    const pages = [];
+    const pages: (number | string)[] = [];
     if (totalPages <= 7) {
       for (let i = 1; i <= totalPages; i++) pages.push(i);
     } else {
-      if (currentPage <= 4) {
-        for (let i = 1; i <= 5; i++) pages.push(i);
-        pages.push('...'); pages.push(totalPages);
-      } else if (currentPage >= totalPages - 3) {
-        pages.push(1); pages.push('...');
-        for (let i = totalPages - 4; i <= totalPages; i++) pages.push(i);
-      } else {
-        pages.push(1); pages.push('...');
-        for (let i = currentPage - 1; i <= currentPage + 1; i++) pages.push(i);
-        pages.push('...'); pages.push(totalPages);
-      }
+      pages.push(1);
+      if (currentPage > 3) pages.push('...');
+      const start = Math.max(2, currentPage - 1);
+      const end = Math.min(totalPages - 1, currentPage + 1);
+      for (let i = start; i <= end; i++) pages.push(i);
+      if (currentPage < totalPages - 2) pages.push('...');
+      pages.push(totalPages);
     }
     return pages;
   };
 
-  const handleSelectPage = () => {
-    const newSelected = new Set(selectedJids);
-    const pageJids = paginatedContacts.map(c => c.jid);
-    const allSelected = pageJids.every(jid => newSelected.has(jid));
-    if (allSelected) {
-      pageJids.forEach(jid => newSelected.delete(jid));
-    } else {
-      pageJids.forEach(jid => newSelected.add(jid));
-    }
-    setSelectedJids(newSelected);
-  };
-
   const toggleSelect = (jid: string) => {
-    const newSelected = new Set(selectedJids);
-    if (newSelected.has(jid)) newSelected.delete(jid);
-    else newSelected.add(jid);
-    setSelectedJids(newSelected);
+    const next = new Set(selectedJids);
+    if (next.has(jid)) next.delete(jid);
+    else next.add(jid);
+    setSelectedJids(next);
+  };
+  const toggleSelectAll = () => {
+    if (selectedJids.size === paginatedContacts.length && paginatedContacts.length > 0) {
+      setSelectedJids(new Set());
+    } else {
+      const next = new Set(selectedJids);
+      paginatedContacts.forEach(c => next.add(c.jid));
+      setSelectedJids(next);
+    }
   };
 
-  const isPageAllSelected = paginatedContacts.length > 0 && paginatedContacts.every(c => selectedJids.has(c.jid));
-  const isPageSomeSelected = paginatedContacts.length > 0 && paginatedContacts.some(c => selectedJids.has(c.jid)) && !isPageAllSelected;
+  const handleError = (e: any) => {
+    setAudienceActionError(e.message || 'Erro na operação de audiência');
+    setTimeout(() => setAudienceActionError(null), 5000);
+  };
 
   const handleCreateTag = async () => {
     if (!tagInput.trim()) return;
     try { await createTag(tagInput); setTagInput(''); }
-    catch (e: any) { alert(e.message); }
+    catch (e: any) { handleError(e); }
+  };
+  
+  const handleRenameTag = async (tagId: string) => {
+    if (!editingTagName.trim()) {
+      setEditingTagId(null);
+      return;
+    }
+    try { await renameTag(tagId, editingTagName); setEditingTagId(null); }
+    catch (e: any) { handleError(e); }
+  };
+
+  const handleDeleteTag = async (tagId: string) => {
+    try { await deleteTag(tagId); setConfirmDeleteTagId(null); }
+    catch (e: any) { handleError(e); }
   };
 
   const handleCreateList = async () => {
     if (!listInput.trim()) return;
     try { await createList(listInput, Array.from(selectedJids)); setListInput(''); setSelectedJids(new Set()); }
-    catch (e: any) { alert(e.message); }
+    catch (e: any) { handleError(e); }
   };
 
-  if (loading && contacts.length === 0) {
-    return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 text-emerald-500 animate-spin" /></div>;
+  const handleRenameList = async (listId: string) => {
+    if (!editingListName.trim()) {
+      setEditingListId(null);
+      return;
+    }
+    try { await renameList(listId, editingListName); setEditingListId(null); }
+    catch (e: any) { handleError(e); }
+  };
+
+  const handleDeleteList = async (listId: string) => {
+    try { await deleteList(listId); setConfirmDeleteListId(null); }
+    catch (e: any) { handleError(e); }
+  };
+
+  const handleApplyTag = async (tagId: string) => {
+    try { await addTagToContacts(tagId, Array.from(selectedJids)); setSelectedJids(new Set()); }
+    catch (e: any) { handleError(e); }
+  };
+  const handleRemoveTag = async (tagId: string) => {
+    try { await removeTagFromContacts(tagId, Array.from(selectedJids)); setSelectedJids(new Set()); }
+    catch (e: any) { handleError(e); }
+  };
+
+  const loading = contactsLoading || audiencesLoading;
+  const error = contactsError || audiencesError;
+
+  if (!selectedInstanceId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[50vh] text-center px-4 animate-in fade-in duration-500">
+        <div className="w-16 h-16 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center mb-4 shadow-xl">
+          <Users className="w-8 h-8 text-neutral-500" />
+        </div>
+        <h2 className="text-xl font-semibold text-white tracking-tight">Nenhuma Instância Selecionada</h2>
+        <p className="text-sm text-neutral-400 mt-2 max-w-sm">Selecione uma instância do WhatsApp no menu lateral para visualizar os contatos.</p>
+      </div>
+    );
   }
 
   return (
@@ -210,117 +257,133 @@ export function ContatosView() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 shadow-md space-y-4">
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-                <input
-                  type="text"
-                  placeholder="Buscar por nome ou número..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
-                />
+      {(error || audienceActionError) && (
+        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-rose-500/20 flex items-center justify-center shrink-0">
+            <X className="w-4 h-4 text-rose-400" />
+          </div>
+          <p className="text-sm text-rose-400 font-medium">
+            {error || audienceActionError}
+          </p>
+        </div>
+      )}
+
+      {/* Metrics Row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 shadow-sm flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
+            <Users className="w-5 h-5 text-emerald-400" />
+          </div>
+          <div>
+            <p className="text-xs text-neutral-400 font-medium uppercase tracking-wider">Total de Contatos</p>
+            <p className="text-2xl font-bold text-white mt-0.5">{metrics.total}</p>
+          </div>
+        </div>
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 shadow-sm flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
+            <UserCircle2 className="w-5 h-5 text-blue-400" />
+          </div>
+          <div>
+            <p className="text-xs text-neutral-400 font-medium uppercase tracking-wider">Com Nome</p>
+            <p className="text-2xl font-bold text-white mt-0.5">{metrics.withName}</p>
+          </div>
+        </div>
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 shadow-sm flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0">
+            <UserPlus className="w-5 h-5 text-amber-400" />
+          </div>
+          <div>
+            <p className="text-xs text-neutral-400 font-medium uppercase tracking-wider">Sem Nome</p>
+            <p className="text-2xl font-bold text-white mt-0.5">{metrics.withoutName}</p>
+          </div>
+        </div>
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 shadow-sm flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center shrink-0">
+            <MessageSquare className="w-5 h-5 text-purple-400" />
+          </div>
+          <div>
+            <p className="text-xs text-neutral-400 font-medium uppercase tracking-wider">Ativos (7 dias)</p>
+            <p className="text-2xl font-bold text-white mt-0.5">{metrics.recentActive}</p>
+          </div>
+        </div>
+      </div>
+
+      {selectedJids.size > 0 && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 flex items-center justify-between sticky top-4 z-10 shadow-xl backdrop-blur-md animate-in slide-in-from-top-4">
+          <span className="text-sm font-medium text-emerald-400">{selectedJids.size} contatos selecionados</span>
+          <div className="flex gap-2">
+            <Button variant="secondary" className="h-8 text-xs px-3 bg-neutral-900 hover:text-white" onClick={() => setSelectedJids(new Set())}>Cancelar</Button>
+            
+            <div className="relative group">
+              <Button variant="primary-soft" className="h-8 text-xs px-3 bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/30 hover:border-emerald-500/50">
+                <Tag className="w-3.5 h-3.5 mr-1.5" /> Tag (+/-)
+              </Button>
+              <div className="absolute right-0 mt-2 w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+                <div className="p-2 space-y-1 max-h-48 overflow-y-auto">
+                  {audiences?.tags.map(t => (
+                    <div key={t.id} className="flex gap-1">
+                      <button onClick={() => handleApplyTag(t.id)} className="flex-1 text-left px-2 py-1.5 text-xs text-emerald-400 hover:bg-neutral-800 rounded-lg truncate">
+                        + {t.name}
+                      </button>
+                      <button onClick={() => handleRemoveTag(t.id)} className="px-2 py-1.5 text-xs text-rose-400 hover:bg-neutral-800 rounded-lg shrink-0">
+                        -
+                      </button>
+                    </div>
+                  ))}
+                  {audiences?.tags.length === 0 && <div className="text-xs text-neutral-500 p-2 text-center">Crie tags primeiro</div>}
+                </div>
               </div>
             </div>
             
-            <div className="flex flex-wrap items-center gap-2">
-              <select 
-                value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}
-                className="bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-300 px-3 py-2 focus:outline-none focus:border-emerald-500"
-              >
-                <option value="all">Todas Origens</option>
-                <option value="message">Mensagens</option>
-                <option value="contact">Contatos</option>
-                <option value="chat">Conversas</option>
-              </select>
+            <Button variant="secondary" className="h-8 text-xs px-3 border-amber-500/30 text-amber-400 hover:bg-amber-500/10" onClick={handleCreateList}>
+              <List className="w-3.5 h-3.5 mr-1.5" /> Criar Lista Desta Seleção
+            </Button>
+          </div>
+        </div>
+      )}
 
-              <select 
-                value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}
-                className="bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-300 px-3 py-2 focus:outline-none focus:border-emerald-500"
-              >
-                <option value="all">Todas Tags</option>
-                {audiences?.tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-
-              <select 
-                value={listFilter} onChange={(e) => setListFilter(e.target.value)}
-                className="bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-300 px-3 py-2 focus:outline-none focus:border-emerald-500"
-              >
-                <option value="all">Todas Listas</option>
-                {audiences?.lists.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-4">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+              <input type="text" placeholder="Buscar por nome ou número..." value={search} onChange={e => { setSearch(e.target.value); setCurrentPage(1); }} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors placeholder:text-neutral-600" />
             </div>
+            <select value={selectedSource} onChange={e => { setSelectedSource(e.target.value); setCurrentPage(1); }} className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-300 focus:outline-none focus:border-emerald-500 appearance-none min-w-[140px]">
+              <option value="">Todas Origens</option>
+              {sources.map(s => <option key={s} value={s}>{getSourceLabel(s)}</option>)}
+            </select>
+            <select value={selectedTag} onChange={e => { setSelectedTag(e.target.value); setCurrentPage(1); }} className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-300 focus:outline-none focus:border-emerald-500 appearance-none min-w-[120px]">
+              <option value="">Todas Tags</option>
+              {audiences?.tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <select value={selectedList} onChange={e => { setSelectedList(e.target.value); setCurrentPage(1); }} className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-300 focus:outline-none focus:border-emerald-500 appearance-none min-w-[120px]">
+              <option value="">Todas Listas</option>
+              {audiences?.lists.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
           </div>
 
-          {selectedJids.size > 0 && (
-            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <span className="text-sm font-medium text-emerald-400">{selectedJids.size} contatos selecionados</span>
-              <div className="flex flex-wrap items-center gap-2">
-                <select id="tagAction" className="bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-300 px-2 py-1.5 focus:outline-none focus:border-emerald-500">
-                  <option value="">Ação com Tag...</option>
-                  {audiences?.tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-                <Button variant="secondary" className="px-3 py-1.5 h-auto text-xs" onClick={async () => {
-                  const sel = document.getElementById('tagAction') as HTMLSelectElement;
-                  if (sel.value) {
-                    await addTagToContacts(sel.value, Array.from(selectedJids));
-                    sel.value = '';
-                  }
-                }}>Add Tag</Button>
-                <Button variant="secondary" className="px-3 py-1.5 h-auto text-xs" onClick={async () => {
-                  const sel = document.getElementById('tagAction') as HTMLSelectElement;
-                  if (sel.value) {
-                    await removeTagFromContacts(sel.value, Array.from(selectedJids));
-                    sel.value = '';
-                  }
-                }}>Remover Tag</Button>
-                
-                <select id="listAction" className="bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-300 px-2 py-1.5 focus:outline-none focus:border-emerald-500">
-                  <option value="">Adicionar à lista...</option>
-                  {audiences?.lists.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-                <Button variant="secondary" className="px-3 py-1.5 h-auto text-xs" onClick={async () => {
-                  const sel = document.getElementById('listAction') as HTMLSelectElement;
-                  if (sel.value) {
-                    const lst = audiences?.lists.find(l => l.id === sel.value);
-                    if (lst) {
-                      await updateListContacts(sel.value, [...lst.contactJids, ...Array.from(selectedJids)]);
-                    }
-                    sel.value = '';
-                  }
-                }}>Adicionar</Button>
-                
-                <Button variant="ghost" className="px-3 py-1.5 h-auto text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10" onClick={() => setSelectedJids(new Set())}>
-                  Limpar
-                </Button>
-              </div>
-            </div>
-          )}
-
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl shadow-md overflow-hidden">
-            <div className="overflow-x-auto">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden shadow-xl flex flex-col min-h-[400px]">
+            <div className="overflow-x-auto flex-1">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-neutral-800 bg-neutral-950/50">
-                    <th className="px-4 py-3 w-10 text-center">
-                      <button onClick={handleSelectPage} className="text-neutral-500 hover:text-white focus:outline-none">
-                        {isPageAllSelected ? <CheckSquare className="w-4 h-4 text-emerald-500" /> : isPageSomeSelected ? <CheckSquare className="w-4 h-4 text-emerald-500/50" /> : <Square className="w-4 h-4" />}
+                  <tr className="border-b border-neutral-800/80 bg-neutral-950/30">
+                    <th className="px-4 py-3 text-center w-12 font-medium text-neutral-400 text-xs uppercase tracking-wider">
+                      <button onClick={toggleSelectAll} className="hover:text-white focus:outline-none">
+                        {selectedJids.size > 0 && selectedJids.size === paginatedContacts.length ? <CheckSquare className="w-4 h-4 text-emerald-500" /> : <Square className="w-4 h-4" />}
                       </button>
                     </th>
-                    <th className="px-2 py-3 text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">Contato</th>
-                    <th className="px-5 py-3 text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">Tags</th>
-                    <th className="px-5 py-3 text-[11px] font-semibold text-neutral-500 uppercase tracking-wider text-right">Última Atividade</th>
+                    <th className="px-2 py-3 font-medium text-neutral-400 text-xs uppercase tracking-wider">Contato</th>
+                    <th className="px-5 py-3 font-medium text-neutral-400 text-xs uppercase tracking-wider">Tags</th>
+                    <th className="px-5 py-3 font-medium text-neutral-400 text-xs uppercase tracking-wider text-right">Visto por último</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-neutral-800/80">
+                <tbody className="divide-y divide-neutral-800/50">
                   {paginatedContacts.map((c, i) => {
-                    const cTags = audiences?.contactTags[c.jid] || [];
-                    const tagObjs = cTags.map(tid => audiences?.tags.find(t => t.id === tid)).filter(Boolean) as typeof audiences.tags;
                     const isSel = selectedJids.has(c.jid);
-                    
+                    const tagsForJid = audiences?.contactTags[c.jid] || [];
+                    const tagObjs = (audiences?.tags || []).filter(t => tagsForJid.includes(t.id));
+
                     return (
                       <tr key={c.jid || i} className={`hover:bg-neutral-800/20 transition-colors group ${isSel ? 'bg-emerald-500/5' : ''}`}>
                         <td className="px-4 py-3 text-center align-middle">
@@ -367,11 +430,7 @@ export function ContatosView() {
             
             {totalPages > 1 && (
               <div className="border-t border-neutral-800/80 p-4 flex items-center justify-between sm:justify-center gap-4 bg-neutral-950/30">
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="px-3 py-1.5 text-xs font-medium text-neutral-400 hover:text-white disabled:opacity-50 transition-colors"
-                >
+                <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-1.5 text-xs font-medium text-neutral-400 hover:text-white disabled:opacity-50 transition-colors">
                   Anterior
                 </button>
                 <div className="hidden sm:flex items-center gap-1">
@@ -379,25 +438,13 @@ export function ContatosView() {
                     pageNum === '...' ? (
                       <span key={`dots-${idx}`} className="w-8 text-center text-neutral-600 text-sm">...</span>
                     ) : (
-                      <button
-                        key={`page-${pageNum}`}
-                        onClick={() => setCurrentPage(pageNum as number)}
-                        className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${
-                          currentPage === pageNum
-                            ? 'bg-emerald-500 text-white'
-                            : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
-                        }`}
-                      >
+                      <button key={`page-${pageNum}`} onClick={() => setCurrentPage(pageNum as number)} className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${currentPage === pageNum ? 'bg-emerald-500 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'}`}>
                         {pageNum}
                       </button>
                     )
                   ))}
                 </div>
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
-                  className="px-3 py-1.5 text-xs font-medium text-neutral-400 hover:text-white disabled:opacity-50 transition-colors"
-                >
+                <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-1.5 text-xs font-medium text-neutral-400 hover:text-white disabled:opacity-50 transition-colors">
                   Próxima
                 </button>
               </div>
@@ -419,11 +466,44 @@ export function ContatosView() {
               {audiences?.tags.map(t => {
                 let count = 0;
                 for (const jid in audiences.contactTags) { if (audiences.contactTags[jid].includes(t.id)) count++; }
+                
+                const isEditing = editingTagId === t.id;
+                const isConfirmDelete = confirmDeleteTagId === t.id;
+
                 return (
                   <div key={t.id} className="flex flex-col gap-1 p-2 rounded-lg border border-neutral-800/50 bg-neutral-950/30">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-neutral-200">{t.name}</span>
-                      <button onClick={async () => { if (confirm('Excluir tag?')) await deleteTag(t.id); }} className="text-neutral-500 hover:text-rose-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <div className="flex items-center justify-between gap-2">
+                      {isEditing ? (
+                        <input 
+                          type="text" 
+                          value={editingTagName} 
+                          onChange={(e) => setEditingTagName(e.target.value)} 
+                          className="flex-1 bg-neutral-900 border border-neutral-700 rounded px-2 py-0.5 text-sm text-white focus:outline-none focus:border-emerald-500 min-w-0"
+                          autoFocus
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleRenameTag(t.id); else if (e.key === 'Escape') setEditingTagId(null); }}
+                        />
+                      ) : (
+                        <span className="text-sm font-medium text-neutral-200 truncate">{t.name}</span>
+                      )}
+                      
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isConfirmDelete ? (
+                          <>
+                            <button onClick={() => handleDeleteTag(t.id)} className="p-1 rounded bg-rose-500/20 text-rose-400 hover:bg-rose-500/30" title="Confirmar"><Check className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setConfirmDeleteTagId(null)} className="p-1 rounded bg-neutral-800 text-neutral-400 hover:text-white" title="Cancelar"><X className="w-3.5 h-3.5" /></button>
+                          </>
+                        ) : isEditing ? (
+                          <>
+                            <button onClick={() => handleRenameTag(t.id)} className="p-1 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30"><Check className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditingTagId(null)} className="p-1 rounded bg-neutral-800 text-neutral-400 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={() => { setEditingTagId(t.id); setEditingTagName(t.name); }} className="p-1 rounded text-neutral-500 hover:text-emerald-400 hover:bg-neutral-800"><Edit2 className="w-3 h-3" /></button>
+                            <button onClick={() => setConfirmDeleteTagId(t.id)} className="p-1 rounded text-neutral-500 hover:text-rose-400 hover:bg-neutral-800"><Trash2 className="w-3.5 h-3.5" /></button>
+                          </>
+                        )}
+                      </div>
                     </div>
                     <div className="text-[10px] text-neutral-500">{count} contatos</div>
                   </div>
@@ -442,15 +522,47 @@ export function ContatosView() {
               <Button variant="secondary" className="px-3 py-1.5 h-auto text-xs hover:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/30" onClick={handleCreateList}><Plus className="w-4 h-4" /></Button>
             </div>
             <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-              {audiences?.lists.map(l => (
-                <div key={l.id} className="flex flex-col gap-1 p-2 rounded-lg border border-neutral-800/50 bg-neutral-950/30">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-neutral-200">{l.name}</span>
-                    <button onClick={async () => { if (confirm('Excluir lista?')) await deleteList(l.id); }} className="text-neutral-500 hover:text-rose-400"><Trash2 className="w-3.5 h-3.5" /></button>
+              {audiences?.lists.map(l => {
+                const isEditing = editingListId === l.id;
+                const isConfirmDelete = confirmDeleteListId === l.id;
+                return (
+                  <div key={l.id} className="flex flex-col gap-1 p-2 rounded-lg border border-neutral-800/50 bg-neutral-950/30">
+                    <div className="flex items-center justify-between gap-2">
+                      {isEditing ? (
+                        <input 
+                          type="text" 
+                          value={editingListName} 
+                          onChange={(e) => setEditingListName(e.target.value)} 
+                          className="flex-1 bg-neutral-900 border border-neutral-700 rounded px-2 py-0.5 text-sm text-white focus:outline-none focus:border-amber-500 min-w-0"
+                          autoFocus
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleRenameList(l.id); else if (e.key === 'Escape') setEditingListId(null); }}
+                        />
+                      ) : (
+                        <span className="text-sm font-medium text-neutral-200 truncate">{l.name}</span>
+                      )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isConfirmDelete ? (
+                          <>
+                            <button onClick={() => handleDeleteList(l.id)} className="p-1 rounded bg-rose-500/20 text-rose-400 hover:bg-rose-500/30" title="Confirmar"><Check className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setConfirmDeleteListId(null)} className="p-1 rounded bg-neutral-800 text-neutral-400 hover:text-white" title="Cancelar"><X className="w-3.5 h-3.5" /></button>
+                          </>
+                        ) : isEditing ? (
+                          <>
+                            <button onClick={() => handleRenameList(l.id)} className="p-1 rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30"><Check className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditingListId(null)} className="p-1 rounded bg-neutral-800 text-neutral-400 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={() => { setEditingListId(l.id); setEditingListName(l.name); }} className="p-1 rounded text-neutral-500 hover:text-amber-400 hover:bg-neutral-800"><Edit2 className="w-3 h-3" /></button>
+                            <button onClick={() => setConfirmDeleteListId(l.id)} className="p-1 rounded text-neutral-500 hover:text-rose-400 hover:bg-neutral-800"><Trash2 className="w-3.5 h-3.5" /></button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-[10px] text-neutral-500">{l.contactJids.length} contatos</div>
                   </div>
-                  <div className="text-[10px] text-neutral-500">{l.contactJids.length} contatos</div>
-                </div>
-              ))}
+                );
+              })}
               {audiences?.lists.length === 0 && <div className="text-xs text-neutral-500 text-center py-2">Nenhuma lista</div>}
             </div>
           </div>

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { AudienceTag, AudienceList, AudiencesState } from '../src/types';
+import type { AudienceTag, AudienceList, AudiencesState } from '../src/types';
 
 function isValidUuid(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -12,17 +12,18 @@ function isValidDate(dateStr: string): boolean {
   return !isNaN(d.getTime());
 }
 
-export class AudienceService {
-  private filePath: string;
-  private state: AudiencesState;
+function isValidIndividualJid(jid: any): boolean {
+  return typeof jid === 'string' && jid.trim().length > 0 && jid.endsWith('@s.whatsapp.net');
+}
 
-  constructor(filePath: string) {
-    this.filePath = filePath;
-    this.state = {
-      tags: [],
-      contactTags: {},
-      lists: []
-    };
+export class AudienceService {
+  private state: AudiencesState = {
+    tags: [],
+    lists: [],
+    contactTags: {}
+  };
+
+  constructor(private filePath: string) {
     this.ensureDirectory();
     this.load();
   }
@@ -30,20 +31,25 @@ export class AudienceService {
   private ensureDirectory() {
     const dir = path.dirname(this.filePath);
     if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(dir, { recursive: true });
     }
   }
 
   private load() {
     if (!fs.existsSync(this.filePath)) {
-      this.state = { tags: [], contactTags: {}, lists: [] };
       return;
     }
 
-    const raw = fs.readFileSync(this.filePath, 'utf-8');
-    const parsed = JSON.parse(raw);
+    const content = fs.readFileSync(this.filePath, 'utf-8');
+    let parsed: any;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      console.error('Failed to parse audiences.json, starting empty');
+      return;
+    }
 
-    if (!parsed || typeof parsed !== 'object') throw new Error('Audiences file is invalid.');
+    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid audiences file format');
 
     const tags: AudienceTag[] = [];
     const tagIds = new Set<string>();
@@ -88,7 +94,7 @@ export class AudienceService {
       if (!Array.isArray(l.contactJids)) throw new Error('list contactJids must be an array');
       const jids = new Set<string>();
       for (const jid of l.contactJids) {
-        if (typeof jid !== 'string' || !jid.trim()) throw new Error('Invalid jid in list');
+        if (!isValidIndividualJid(jid)) throw new Error(`Invalid jid in list ${l.name}: ${jid}`);
         if (jids.has(jid)) throw new Error('Duplicate jid in list');
         jids.add(jid);
       }
@@ -107,8 +113,7 @@ export class AudienceService {
 
     const contactTags: Record<string, string[]> = {};
     for (const jid of Object.keys(parsed.contactTags)) {
-      // Basic jid check (individual format @s.whatsapp.net)
-      if (!jid.endsWith('@s.whatsapp.net')) throw new Error(`Invalid jid in contactTags: ${jid}`);
+      if (!isValidIndividualJid(jid)) throw new Error(`Invalid jid in contactTags: ${jid}`);
       
       const tIds = parsed.contactTags[jid];
       if (!Array.isArray(tIds)) throw new Error(`tag array for ${jid} must be an array`);
@@ -133,12 +138,12 @@ export class AudienceService {
     };
   }
 
-  private save() {
+  private persist(nextState: AudiencesState) {
     this.ensureDirectory();
-    const data = JSON.stringify(this.state, null, 2);
     const tmp = this.filePath + '.tmp';
-    fs.writeFileSync(tmp, data, { encoding: 'utf-8', mode: 0o600 });
+    fs.writeFileSync(tmp, JSON.stringify(nextState, null, 2), { encoding: 'utf-8', mode: 0o600 });
     fs.renameSync(tmp, this.filePath);
+    this.state = nextState;
   }
 
   public getState(): AudiencesState {
@@ -150,9 +155,11 @@ export class AudienceService {
     const trimmed = name.trim();
     if (!trimmed || trimmed.length > 60) throw new Error('Invalid tag name');
     const lower = trimmed.toLowerCase();
+    
     if (this.state.tags.some(t => t.name.toLowerCase() === lower)) {
       throw new Error('Duplicate tag name');
     }
+
     const now = new Date().toISOString();
     const tag: AudienceTag = {
       id: crypto.randomUUID(),
@@ -160,8 +167,11 @@ export class AudienceService {
       createdAt: now,
       updatedAt: now
     };
-    this.state.tags.push(tag);
-    this.save();
+
+    const nextState = structuredClone(this.state);
+    nextState.tags.push(tag);
+    this.persist(nextState);
+
     return tag;
   }
 
@@ -169,64 +179,87 @@ export class AudienceService {
     const trimmed = name.trim();
     if (!trimmed || trimmed.length > 60) throw new Error('Invalid tag name');
     const lower = trimmed.toLowerCase();
-    const tag = this.state.tags.find(t => t.id === id);
-    if (!tag) throw new Error('Tag not found');
+
+    const tagIdx = this.state.tags.findIndex(t => t.id === id);
+    if (tagIdx === -1) throw new Error('Tag not found');
+
     if (this.state.tags.some(t => t.id !== id && t.name.toLowerCase() === lower)) {
       throw new Error('Duplicate tag name');
     }
-    tag.name = trimmed;
-    tag.updatedAt = new Date().toISOString();
-    this.save();
-    return tag;
+
+    const nextState = structuredClone(this.state);
+    nextState.tags[tagIdx].name = trimmed;
+    nextState.tags[tagIdx].updatedAt = new Date().toISOString();
+    
+    this.persist(nextState);
+    return nextState.tags[tagIdx];
   }
 
   public deleteTag(id: string) {
     const idx = this.state.tags.findIndex(t => t.id === id);
     if (idx === -1) throw new Error('Tag not found');
-    this.state.tags.splice(idx, 1);
+
+    const nextState = structuredClone(this.state);
+    nextState.tags.splice(idx, 1);
     
     // Remove from contactTags
-    for (const jid of Object.keys(this.state.contactTags)) {
-      this.state.contactTags[jid] = this.state.contactTags[jid].filter(tId => tId !== id);
-      if (this.state.contactTags[jid].length === 0) {
-        delete this.state.contactTags[jid];
+    for (const jid of Object.keys(nextState.contactTags)) {
+      nextState.contactTags[jid] = nextState.contactTags[jid].filter(tId => tId !== id);
+      if (nextState.contactTags[jid].length === 0) {
+        delete nextState.contactTags[jid];
       }
     }
     
-    this.save();
+    this.persist(nextState);
   }
 
   // Tags <-> Contacts
   public addTagToContacts(tagId: string, jids: string[]) {
     if (!this.state.tags.some(t => t.id === tagId)) throw new Error('Tag not found');
-    let changed = false;
+    
     for (const jid of jids) {
-      if (typeof jid !== 'string' || !jid.endsWith('@s.whatsapp.net')) continue;
-      if (!this.state.contactTags[jid]) {
-        this.state.contactTags[jid] = [];
+      if (!isValidIndividualJid(jid)) throw new Error(`Invalid JID: ${jid}`);
+    }
+
+    const nextState = structuredClone(this.state);
+    let changed = false;
+
+    for (const jid of jids) {
+      if (!nextState.contactTags[jid]) {
+        nextState.contactTags[jid] = [];
       }
-      if (!this.state.contactTags[jid].includes(tagId)) {
-        this.state.contactTags[jid].push(tagId);
+      if (!nextState.contactTags[jid].includes(tagId)) {
+        nextState.contactTags[jid].push(tagId);
         changed = true;
       }
     }
-    if (changed) this.save();
+
+    if (changed) this.persist(nextState);
   }
 
   public removeTagFromContacts(tagId: string, jids: string[]) {
-    let changed = false;
+    if (!this.state.tags.some(t => t.id === tagId)) throw new Error('Tag not found');
+
     for (const jid of jids) {
-      if (this.state.contactTags[jid]) {
-        const initialLen = this.state.contactTags[jid].length;
-        this.state.contactTags[jid] = this.state.contactTags[jid].filter(tId => tId !== tagId);
-        if (this.state.contactTags[jid].length < initialLen) changed = true;
+      if (!isValidIndividualJid(jid)) throw new Error(`Invalid JID: ${jid}`);
+    }
+
+    const nextState = structuredClone(this.state);
+    let changed = false;
+
+    for (const jid of jids) {
+      if (nextState.contactTags[jid]) {
+        const initialLen = nextState.contactTags[jid].length;
+        nextState.contactTags[jid] = nextState.contactTags[jid].filter(tId => tId !== tagId);
+        if (nextState.contactTags[jid].length < initialLen) changed = true;
         
-        if (this.state.contactTags[jid].length === 0) {
-          delete this.state.contactTags[jid];
+        if (nextState.contactTags[jid].length === 0) {
+          delete nextState.contactTags[jid];
         }
       }
     }
-    if (changed) this.save();
+
+    if (changed) this.persist(nextState);
   }
 
   // Lists
@@ -234,11 +267,18 @@ export class AudienceService {
     const trimmed = name.trim();
     if (!trimmed || trimmed.length > 100) throw new Error('Invalid list name');
     const lower = trimmed.toLowerCase();
+    
     if (this.state.lists.some(l => l.name.toLowerCase() === lower)) {
       throw new Error('Duplicate list name');
     }
-    const uniqueJids = Array.from(new Set(contactJids.filter(j => typeof j === 'string' && j.endsWith('@s.whatsapp.net'))));
+
+    for (const jid of contactJids) {
+      if (!isValidIndividualJid(jid)) throw new Error(`Invalid JID: ${jid}`);
+    }
+
+    const uniqueJids = Array.from(new Set(contactJids));
     const now = new Date().toISOString();
+    
     const list: AudienceList = {
       id: crypto.randomUUID(),
       name: trimmed,
@@ -246,8 +286,11 @@ export class AudienceService {
       createdAt: now,
       updatedAt: now
     };
-    this.state.lists.push(list);
-    this.save();
+
+    const nextState = structuredClone(this.state);
+    nextState.lists.push(list);
+    this.persist(nextState);
+
     return list;
   }
 
@@ -255,31 +298,46 @@ export class AudienceService {
     const trimmed = name.trim();
     if (!trimmed || trimmed.length > 100) throw new Error('Invalid list name');
     const lower = trimmed.toLowerCase();
-    const list = this.state.lists.find(l => l.id === id);
-    if (!list) throw new Error('List not found');
+
+    const listIdx = this.state.lists.findIndex(l => l.id === id);
+    if (listIdx === -1) throw new Error('List not found');
+
     if (this.state.lists.some(l => l.id !== id && l.name.toLowerCase() === lower)) {
       throw new Error('Duplicate list name');
     }
-    list.name = trimmed;
-    list.updatedAt = new Date().toISOString();
-    this.save();
-    return list;
+
+    const nextState = structuredClone(this.state);
+    nextState.lists[listIdx].name = trimmed;
+    nextState.lists[listIdx].updatedAt = new Date().toISOString();
+    this.persist(nextState);
+
+    return nextState.lists[listIdx];
   }
 
   public updateListContacts(id: string, contactJids: string[]): AudienceList {
-    const list = this.state.lists.find(l => l.id === id);
-    if (!list) throw new Error('List not found');
-    const uniqueJids = Array.from(new Set(contactJids.filter(j => typeof j === 'string' && j.endsWith('@s.whatsapp.net'))));
-    list.contactJids = uniqueJids;
-    list.updatedAt = new Date().toISOString();
-    this.save();
-    return list;
+    const listIdx = this.state.lists.findIndex(l => l.id === id);
+    if (listIdx === -1) throw new Error('List not found');
+
+    for (const jid of contactJids) {
+      if (!isValidIndividualJid(jid)) throw new Error(`Invalid JID: ${jid}`);
+    }
+
+    const uniqueJids = Array.from(new Set(contactJids));
+    
+    const nextState = structuredClone(this.state);
+    nextState.lists[listIdx].contactJids = uniqueJids;
+    nextState.lists[listIdx].updatedAt = new Date().toISOString();
+    this.persist(nextState);
+
+    return nextState.lists[listIdx];
   }
 
   public deleteList(id: string) {
     const idx = this.state.lists.findIndex(l => l.id === id);
     if (idx === -1) throw new Error('List not found');
-    this.state.lists.splice(idx, 1);
-    this.save();
+
+    const nextState = structuredClone(this.state);
+    nextState.lists.splice(idx, 1);
+    this.persist(nextState);
   }
 }

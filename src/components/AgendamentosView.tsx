@@ -1842,6 +1842,74 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                     </div>
                   )}
 
+                  
+                  {/* Tab 2: Listas */}
+                  {pickerTab === 'listas' && (
+                    <div className="space-y-3">
+                      <div className="max-h-48 overflow-y-auto scrollbar-hidden space-y-1 pr-1">
+                        {lists.length === 0 ? (
+                          <div className="p-4 text-center text-xs text-neutral-500">
+                            Nenhuma lista encontrada. Crie listas na aba Contatos.
+                          </div>
+                        ) : (
+                          lists.map((list) => {
+                            return (
+                              <div
+                                key={list.id}
+                                className="flex items-center justify-between p-2 rounded-xl bg-neutral-900 border border-neutral-800 hover:border-neutral-700 transition-colors"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="w-7 h-7 rounded-lg bg-neutral-800 flex items-center justify-center shrink-0">
+                                    <ListIcon className="w-3.5 h-3.5 text-neutral-400" />
+                                  </div>
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="text-xs font-medium text-white truncate">
+                                      {list.name}
+                                    </span>
+                                    <span className="text-[10px] text-neutral-500 truncate">
+                                      {list.contactJids.length} contatos
+                                    </span>
+                                  </div>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  className="h-7 px-2.5 text-[10px]"
+                                  disabled={list.contactJids.length === 0}
+                                  onClick={() => {
+                                    if (list.contactJids.length === 0) return;
+                                    
+                                    const newTargets = list.contactJids.map(jid => {
+                                      const contact = contacts.find(c => c.jid === jid);
+                                      const fallbackLabel = jid.split('@')[0];
+                                      return {
+                                        type: 'person' as const,
+                                        jid,
+                                        label: contact?.name || contact?.number || `+${fallbackLabel}`,
+                                        name: contact?.name || undefined,
+                                        source: 'directory' as const
+                                      };
+                                    });
+
+                                    setFormTargets(prev => {
+                                      const existingJids = new Set(prev.map(t => t.jid));
+                                      const filtered = newTargets.filter(t => !existingJids.has(t.jid));
+                                      return [...prev, ...filtered];
+                                    });
+                                  }}
+                                >
+                                  <Plus className="w-3 h-3 mr-1" />
+                                  {list.contactJids.length === 0 ? 'Vazia' : 'Adicionar'}
+                                </Button>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+
                   {/* Tab 2: Grupos & Membros */}
                   {pickerTab === 'grupos' && (
                     <div className="space-y-3">
