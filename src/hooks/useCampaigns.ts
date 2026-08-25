@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Campaign, CampaignScheduleConfig } from '../types';
 
 export function useCampaigns(instanceId: string | null) {
@@ -8,9 +8,9 @@ export function useCampaigns(instanceId: string | null) {
   
   const requestSeqRef = useRef(0);
 
-  const fetchCampaigns = async () => {
+  const fetchCampaigns = useCallback(async () => {
     if (!instanceId) return;
-    const seq = requestSeqRef.current;
+    const seq = ++requestSeqRef.current;
     
     setLoading(true);
     setError(null);
@@ -33,7 +33,7 @@ export function useCampaigns(instanceId: string | null) {
         setLoading(false);
       }
     }
-  };
+  }, [instanceId]);
 
   useEffect(() => {
     requestSeqRef.current += 1;
@@ -44,9 +44,20 @@ export function useCampaigns(instanceId: string | null) {
     if (instanceId) {
       fetchCampaigns();
     }
-  }, [instanceId]);
+  }, [instanceId, fetchCampaigns]);
 
-  const createCampaign = async (payload: Partial<Campaign>) => {
+  const wrapMutation = <T extends any[], R>(fn: (...args: T) => Promise<R>) => {
+    return async (...args: T) => {
+      const operationInstanceId = instanceId;
+      const res = await fn(...args);
+      if (operationInstanceId === instanceId) {
+        await fetchCampaigns();
+      }
+      return res;
+    };
+  };
+
+  const createCampaign = wrapMutation(async (payload: Partial<Campaign>) => {
     const res = await fetch('/api/campaigns', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -54,11 +65,10 @@ export function useCampaigns(instanceId: string | null) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha ao criar campanha');
-    await fetchCampaigns();
     return data.campaign;
-  };
+  });
 
-  const updateCampaign = async (id: string, updates: Partial<Campaign>) => {
+  const updateCampaign = wrapMutation(async (id: string, updates: Partial<Campaign>) => {
     const res = await fetch(`/api/campaigns/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -66,56 +76,50 @@ export function useCampaigns(instanceId: string | null) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha ao atualizar campanha');
-    await fetchCampaigns();
     return data.campaign;
-  };
+  });
 
-  const scheduleCampaign = async (id: string) => {
+  const scheduleCampaign = wrapMutation(async (id: string) => {
     const res = await fetch(`/api/campaigns/${id}/schedule`, {
       method: 'POST'
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha ao agendar campanha');
-    await fetchCampaigns();
     return data.campaign;
-  };
+  });
 
-  const pauseCampaign = async (id: string) => {
+  const pauseCampaign = wrapMutation(async (id: string) => {
     const res = await fetch(`/api/campaigns/${id}/pause`, {
       method: 'POST'
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha ao pausar campanha');
-    await fetchCampaigns();
-  };
+  });
 
-  const resumeCampaign = async (id: string) => {
+  const resumeCampaign = wrapMutation(async (id: string) => {
     const res = await fetch(`/api/campaigns/${id}/resume`, {
       method: 'POST'
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha ao retomar campanha');
-    await fetchCampaigns();
-  };
+  });
 
-  const unscheduleCampaign = async (id: string) => {
+  const unscheduleCampaign = wrapMutation(async (id: string) => {
     const res = await fetch(`/api/campaigns/${id}/unschedule`, {
       method: 'POST'
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha ao voltar para rascunho');
-    await fetchCampaigns();
     return data.campaign;
-  };
+  });
 
-  const deleteCampaign = async (id: string) => {
+  const deleteCampaign = wrapMutation(async (id: string) => {
     const res = await fetch(`/api/campaigns/${id}`, {
       method: 'DELETE'
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha ao excluir campanha');
-    await fetchCampaigns();
-  };
+  });
 
   return {
     state,

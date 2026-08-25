@@ -593,7 +593,7 @@ async function startServer() {
       if (!runtime) return res.status(404).json({ error: 'Not found' });
       
       const campaign = campaignService.getByScheduleIdForWorkspace(req.params.id, req.auth!.workspace.id);
-      if (campaign) {
+      if (campaign && campaign.instanceId === req.params.instanceId) {
          return res.status(409).json({ success: false, error: 'Este agendamento é gerenciado por uma campanha. Faça a alteração pela tela Campanhas.' });
       }
       const validation = validateSchedulePayload(req.body);
@@ -615,7 +615,7 @@ async function startServer() {
       if (!runtime) return res.status(404).json({ error: 'Not found' });
       
       const campaign = campaignService.getByScheduleIdForWorkspace(req.params.id, req.auth!.workspace.id);
-      if (campaign) {
+      if (campaign && campaign.instanceId === req.params.instanceId) {
          return res.status(409).json({ success: false, error: 'Este agendamento é gerenciado por uma campanha. Faça a alteração pela tela Campanhas.' });
       }
       const success = schedulerService.delete(req.params.id, req.params.instanceId, runtime.media);
@@ -860,9 +860,12 @@ async function startServer() {
       } catch (e: any) {
         console.error('[Campaign] Error persisting scheduleId, rolling back schedule:', e);
         try {
-          schedulerService.delete(schedule.id, c.instanceId, runtime.media);
+          const rolledBack = schedulerService.delete(schedule.id, c.instanceId, runtime.media);
+          if (!rolledBack) {
+            console.error('[Campaign] CRITICAL ERROR: rollback returned false for schedule', schedule.id);
+          }
         } catch (rbError) {
-           console.error('[Campaign] CRITICAL ERROR: rollback failed for schedule', schedule.id);
+           console.error('[Campaign] CRITICAL ERROR: rollback threw for schedule', schedule.id, rbError);
         }
         throw e;
       }

@@ -1,12 +1,23 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, type FormEvent, type ChangeEvent, useRef } from 'react';
 import { 
   Megaphone, Plus, Search, Calendar, Clock, Image as ImageIcon,
-  Play, Pause, Trash2, Edit3, X, AlertTriangle, Users, FileText
+  Play, Pause, Trash2, Edit3, X, AlertTriangle, Users, FileText,
+  Upload, Trash
 } from 'lucide-react';
 import { useCampaigns } from '../hooks/useCampaigns';
 import { useAudiences } from '../hooks/useAudiences';
 import { Button } from './ui/Button';
-import type { Campaign, CampaignScheduleConfig, DeliveryOptions, ScheduledMedia } from '../types';
+import type { Campaign, CampaignScheduleConfig, DeliveryOptions, ScheduledMedia, ScheduleType, WeeklyTimeSlot } from '../types';
+
+const WEEK_DAYS = [
+  { id: 0, label: 'Dom', full: 'Domingo' },
+  { id: 1, label: 'Seg', full: 'Segunda-feira' },
+  { id: 2, label: 'Ter', full: 'Terça-feira' },
+  { id: 3, label: 'Qua', full: 'Quarta-feira' },
+  { id: 4, label: 'Qui', full: 'Quinta-feira' },
+  { id: 5, label: 'Sex', full: 'Sexta-feira' },
+  { id: 6, label: 'Sáb', full: 'Sábado' },
+];
 
 interface CampanhasViewProps {
   selectedInstanceId: string | null;
@@ -33,11 +44,46 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
   const [audienceListId, setAudienceListId] = useState('');
   const [message, setMessage] = useState('');
   const [fallbackName, setFallbackName] = useState('amigo(a)');
-  // We keep scheduling simple for this phase
-  const [scheduleType, setScheduleType] = useState<'once' | 'daily' | 'weekly'>('once');
-  const [scheduledAt, setScheduledAt] = useState('');
+  
+  // Schedule
+  const [formType, setFormType] = useState<ScheduleType>('once');
+  const [formDate, setFormDate] = useState('');
+  const [formTime, setFormTime] = useState('08:00');
+  
+  const [formDailyTimes, setFormDailyTimes] = useState<string[]>(['08:00']);
+  const [newDailyTimeInput, setNewDailyTimeInput] = useState('14:00');
+
+  const [formWeeklyDays, setFormWeeklyDays] = useState<number[]>([1]); // Seg
+  const [formWeeklySlots, setFormWeeklySlots] = useState<WeeklyTimeSlot[]>([
+    { day: 1, times: ['08:00'] }
+  ]);
+  const [selectedWeeklyDayForTimes, setSelectedWeeklyDayForTimes] = useState<number>(1);
+  const [newWeeklyTimeInput, setNewWeeklyTimeInput] = useState('14:00');
+
+  // Media
+  const [formMedia, setFormMedia] = useState<ScheduledMedia | null>(null);
+  const [mediaTab, setMediaTab] = useState<'upload' | 'url'>('upload');
+  const [mediaUrlInput, setMediaUrlInput] = useState('');
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Delivery Options
+  const [formIntervalSeconds, setFormIntervalSeconds] = useState(5);
+  const [formBatchPauseEnabled, setFormBatchPauseEnabled] = useState(false);
+  const [formBatchSize, setFormBatchSize] = useState(5);
+  const [formBatchPauseMinutes, setFormBatchPauseMinutes] = useState(5);
 
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const filteredCampaigns = useMemo(() => {
+    if (!campaigns) return [];
+    if (!search.trim()) return campaigns;
+    const lower = search.toLowerCase();
+    return campaigns.filter(c => c.name.toLowerCase().includes(lower));
+  }, [campaigns, search]);
 
   const resetForm = () => {
     setEditingId(null);
@@ -45,262 +91,296 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     setAudienceListId('');
     setMessage('');
     setFallbackName('amigo(a)');
-    setScheduleType('once');
-    setScheduledAt('');
+    
+    setFormType('once');
+    setFormDate('');
+    setFormTime('08:00');
+    setFormDailyTimes(['08:00']);
+    setNewDailyTimeInput('14:00');
+    setFormWeeklyDays([1]);
+    setFormWeeklySlots([{ day: 1, times: ['08:00'] }]);
+    setSelectedWeeklyDayForTimes(1);
+    setNewWeeklyTimeInput('14:00');
+
+    setFormMedia(null);
+    setMediaTab('upload');
+    setMediaUrlInput('');
+    setMediaError(null);
+
+    setFormIntervalSeconds(5);
+    setFormBatchPauseEnabled(false);
+    setFormBatchSize(5);
+    setFormBatchPauseMinutes(5);
+
     setActionError(null);
   };
 
-  const openCreate = () => {
+  const handleOpenCreate = () => {
     resetForm();
     setIsModalOpen(true);
   };
 
-  const openEdit = (c: Campaign) => {
+  const handleOpenEdit = (c: Campaign) => {
     resetForm();
     setEditingId(c.id);
     setName(c.name);
     setAudienceListId(c.audienceListId || '');
     setMessage(c.message);
     setFallbackName(c.fallbackName);
-    setScheduleType(c.schedule.scheduleType);
+    
+    setFormType(c.schedule.scheduleType);
     if (c.schedule.scheduleType === 'once' && c.schedule.scheduledAt) {
-      // Input datetime-local expects YYYY-MM-DDThh:mm format
-      setScheduledAt(c.schedule.scheduledAt.substring(0, 16));
+      const d = new Date(c.schedule.scheduledAt);
+      setFormDate(d.toISOString().split('T')[0]);
+      setFormTime(d.toTimeString().substring(0, 5));
     }
+    if (c.schedule.dailyTimes) setFormDailyTimes([...c.schedule.dailyTimes]);
+    if (c.schedule.weeklyTimeSlots) {
+      setFormWeeklySlots([...c.schedule.weeklyTimeSlots]);
+      setFormWeeklyDays(c.schedule.weeklyTimeSlots.map(s => s.day));
+      if (c.schedule.weeklyTimeSlots.length > 0) {
+        setSelectedWeeklyDayForTimes(c.schedule.weeklyTimeSlots[0].day);
+      }
+    }
+
+    if (c.media) {
+      setFormMedia(c.media);
+      if (c.media.source === 'url' && c.media.url) {
+        setMediaTab('url');
+        setMediaUrlInput(c.media.url);
+      }
+    }
+
+    if (c.schedule.deliveryOptions) {
+      setFormIntervalSeconds(c.schedule.deliveryOptions.intervalBetweenMessagesMs / 1000);
+      setFormBatchPauseEnabled(c.schedule.deliveryOptions.batchPauseEnabled);
+      setFormBatchSize(c.schedule.deliveryOptions.batchSize);
+      setFormBatchPauseMinutes(c.schedule.deliveryOptions.batchPauseMs / 60000);
+    }
+
     setIsModalOpen(true);
   };
 
-  const handleError = (e: any) => {
-    setActionError(e.message || 'Erro inesperado');
-    setTimeout(() => setActionError(null), 5000);
+  const uploadMedia = async (file: File): Promise<ScheduledMedia> => {
+    if (!selectedInstanceId) throw new Error('Nenhuma instância selecionada');
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`/api/instances/${selectedInstanceId}/media/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao fazer upload da mídia');
+    return data.media;
+  };
+
+  const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setMediaUploading(true);
+      setMediaError(null);
+      const media = await uploadMedia(file);
+      setFormMedia(media);
+    } catch (err: any) {
+      setMediaError(err.message || 'Erro no upload');
+    } finally {
+      setMediaUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleAddMediaUrl = () => {
+    if (!mediaUrlInput.trim()) {
+      setMediaError('Insira uma URL válida');
+      return;
+    }
+    try {
+      new URL(mediaUrlInput.trim());
+      setFormMedia({
+        type: 'image',
+        source: 'url',
+        url: mediaUrlInput.trim()
+      });
+      setMediaError(null);
+    } catch {
+      setMediaError('A URL fornecida é inválida');
+    }
   };
 
   const handleSaveDraft = async () => {
-    if (!selectedInstanceId) return;
-    
-    const schedule: CampaignScheduleConfig = {
-      scheduleType,
-      scheduledAt: scheduleType === 'once' && scheduledAt ? new Date(scheduledAt).toISOString() : null,
-      dailyTimes: [],
-      weeklyTimeSlots: [],
-      deliveryOptions: {
-        intervalBetweenMessagesMs: 5000,
-        batchPauseEnabled: false,
-        batchSize: 5,
-        batchPauseMs: 300000
-      }
-    };
-    
     try {
+      setActionError(null);
+      if (!name.trim()) throw new Error('Nome é obrigatório');
+      if (!audienceListId) throw new Error('Selecione uma lista de audiência');
+      if (!message.trim()) throw new Error('Mensagem é obrigatória');
+      if (!fallbackName.trim()) throw new Error('Nome de fallback é obrigatório');
+
+      let scheduledAt: string | null = null;
+      if (formType === 'once') {
+        if (!formDate || !formTime) throw new Error('Data e horário são obrigatórios para agendamento único');
+        const d = new Date(`${formDate}T${formTime}`);
+        if (isNaN(d.getTime())) throw new Error('Data ou horário inválido');
+        if (d <= new Date()) throw new Error('Data de agendamento deve estar no futuro');
+        scheduledAt = d.toISOString();
+      }
+
+      const scheduleConfig: CampaignScheduleConfig = {
+        scheduleType: formType,
+        scheduledAt,
+        dailyTimes: formType === 'daily' ? formDailyTimes : [],
+        weeklyTimeSlots: formType === 'weekly' ? formWeeklySlots : [],
+        deliveryOptions: {
+          intervalBetweenMessagesMs: formIntervalSeconds * 1000,
+          batchPauseEnabled: formBatchPauseEnabled,
+          batchSize: formBatchSize,
+          batchPauseMs: formBatchPauseMinutes * 60000
+        }
+      };
+
+      const payload: Partial<Campaign> = {
+        name,
+        audienceListId,
+        message,
+        fallbackName,
+        media: formMedia,
+        schedule: scheduleConfig
+      };
+
+      setIsSubmitting(true);
       if (editingId) {
-        await updateCampaign(editingId, {
-          name, audienceListId: audienceListId || null, message, fallbackName, schedule
-        });
+        await updateCampaign(editingId, payload);
       } else {
-        await createCampaign({
-          instanceId: selectedInstanceId,
-          name, audienceListId: audienceListId || null, message, fallbackName, schedule
-        });
+        await createCampaign(payload);
       }
       setIsModalOpen(false);
     } catch (e: any) {
-      handleError(e);
+      setActionError(e.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handlePublish = async (id: string) => {
-    try {
-      await scheduleCampaign(id);
-    } catch (e: any) {
-      handleError(e);
-    }
+  const handleSchedule = async (id: string) => {
+    try { setActionError(null); await scheduleCampaign(id); }
+    catch (e: any) { setActionError(e.message); }
   };
-
   const handlePause = async (id: string) => {
-    try {
-      await pauseCampaign(id);
-    } catch (e: any) {
-      handleError(e);
-    }
+    try { setActionError(null); await pauseCampaign(id); }
+    catch (e: any) { setActionError(e.message); }
   };
-
   const handleResume = async (id: string) => {
-    try {
-      await resumeCampaign(id);
-    } catch (e: any) {
-      handleError(e);
-    }
+    try { setActionError(null); await resumeCampaign(id); }
+    catch (e: any) { setActionError(e.message); }
   };
-
   const handleUnschedule = async (id: string) => {
-    try {
-      await unscheduleCampaign(id);
-    } catch (e: any) {
-      handleError(e);
-    }
+    try { setActionError(null); await unscheduleCampaign(id); }
+    catch (e: any) { setActionError(e.message); }
   };
-
   const handleDelete = async (id: string) => {
-    try {
-      await deleteCampaign(id);
-      setDeleteConfirm(null);
-    } catch (e: any) {
-      handleError(e);
-    }
+    try { setActionError(null); await deleteCampaign(id); setDeleteConfirm(null); }
+    catch (e: any) { setActionError(e.message); }
   };
-
-  const filtered = useMemo(() => {
-    if (!campaigns) return [];
-    let list = campaigns;
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(c => c.name.toLowerCase().includes(q) || (c.audienceSnapshot?.listName.toLowerCase().includes(q)));
-    }
-    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [campaigns, search]);
-
-  const metrics = useMemo(() => {
-    if (!campaigns) return { total: 0, drafts: 0, active: 0, paused: 0 };
-    return {
-      total: campaigns.length,
-      drafts: campaigns.filter(c => c.scheduleId === null).length,
-      active: campaigns.filter(c => (c as any).status === 'active' || (c as any).status === 'running').length,
-      paused: campaigns.filter(c => (c as any).status === 'paused').length
-    };
-  }, [campaigns]);
-
-  const translateStatus = (s: string) => {
-    switch (s) {
-      case 'draft': return { label: 'Rascunho', color: 'bg-neutral-800 text-neutral-400 border-neutral-700' };
-      case 'active': return { label: 'Ativa', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' };
-      case 'running': return { label: 'Executando', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' };
-      case 'paused': return { label: 'Pausada', color: 'bg-amber-500/10 text-amber-400 border-amber-500/20' };
-      case 'completed': return { label: 'Concluída', color: 'bg-purple-500/10 text-purple-400 border-purple-500/20' };
-      case 'error': return { label: 'Erro', color: 'bg-rose-500/10 text-rose-400 border-rose-500/20' };
-      case 'missing_schedule': return { label: 'Agendamento Ausente', color: 'bg-rose-500/10 text-rose-400 border-rose-500/20' };
-      default: return { label: s, color: 'bg-neutral-800 text-neutral-400 border-neutral-700' };
-    }
-  };
-
-  if (!selectedInstanceId) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-neutral-500">
-        <Megaphone className="w-12 h-12 mb-4 opacity-50" />
-        <p>Selecione uma instância para gerenciar campanhas</p>
-      </div>
-    );
-  }
 
   return (
-    <div className="flex flex-col h-full bg-neutral-950 p-6 space-y-6 overflow-y-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex items-center justify-between mb-8 flex-shrink-0">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center">
-            <Megaphone className="w-6 h-6 mr-3 text-emerald-400" />
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <Megaphone className="w-8 h-8 text-emerald-400" />
             Campanhas
           </h1>
-          <p className="text-sm text-neutral-400 mt-1">
-            Organize e programe ações de comunicação para suas audiências.
+          <p className="text-neutral-400 mt-1">
+            Gerencie envios em massa e disparos para suas listas de audiência.
           </p>
         </div>
-        <Button onClick={openCreate} className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl">
+        <Button onClick={handleOpenCreate} className="bg-emerald-500 hover:bg-emerald-600 text-white">
           <Plus className="w-4 h-4 mr-2" />
           Nova Campanha
         </Button>
       </div>
 
-      {actionError && (
-        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-xl flex items-center shadow-lg">
-          <AlertTriangle className="w-5 h-5 mr-3 flex-shrink-0" />
-          <span className="text-sm font-medium">{actionError}</span>
+      {(actionError || campaignsError) && (
+        <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-start flex-shrink-0">
+          <AlertTriangle className="w-5 h-5 text-rose-400 mr-3 shrink-0 mt-0.5" />
+          <div className="text-sm text-rose-400">
+            <span className="font-semibold block mb-1">Ocorreu um erro</span>
+            {actionError || campaignsError}
+          </div>
+          <button onClick={() => setActionError(null)} className="ml-auto text-rose-400 hover:text-rose-300">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
-      {/* Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {[
-          { label: 'Total', value: metrics.total, color: 'text-white', bg: 'bg-neutral-900 border-neutral-800' },
-          { label: 'Rascunhos', value: metrics.drafts, color: 'text-neutral-400', bg: 'bg-neutral-900 border-neutral-800' },
-          { label: 'Ativas', value: metrics.active, color: 'text-emerald-400', bg: 'bg-emerald-500/5 border-emerald-500/10' },
-          { label: 'Pausadas', value: metrics.paused, color: 'text-amber-400', bg: 'bg-amber-500/5 border-amber-500/10' },
-        ].map((m, i) => (
-          <div key={i} className={`p-4 rounded-2xl border ${m.bg}`}>
-            <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">{m.label}</p>
-            <p className={`text-2xl font-semibold ${m.color}`}>{m.value}</p>
-          </div>
-        ))}
+      <div className="flex items-center gap-4 mb-6 flex-shrink-0">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+          <input
+            type="text"
+            placeholder="Buscar campanhas..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 bg-neutral-900 border border-neutral-800 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500/50"
+          />
+        </div>
       </div>
 
-      {/* Search & List */}
-      <div className="flex-1 flex flex-col min-h-0 space-y-4">
-        <div className="flex items-center space-x-2">
-          <div className="relative flex-1 max-w-sm">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-4 w-4 text-neutral-500" />
-            </div>
-            <input
-              type="text"
-              placeholder="Buscar campanhas..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="block w-full pl-10 pr-3 py-2 border border-neutral-800 rounded-xl leading-5 bg-neutral-900 text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm"
-            />
-          </div>
-        </div>
-
+      <div className="flex-1 overflow-y-auto min-h-0 pr-2">
         {campaignsLoading ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+          <div className="flex items-center justify-center h-40">
+            <div className="w-8 h-8 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
           </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-neutral-800 rounded-2xl p-12">
-            <Megaphone className="w-12 h-12 text-neutral-600 mb-4" />
-            <h3 className="text-lg font-medium text-white mb-1">Nenhuma campanha encontrada</h3>
-            <p className="text-neutral-500 mb-6 text-center max-w-sm">
-              Crie sua primeira campanha para agendar disparos para suas audiências de forma organizada.
+        ) : filteredCampaigns.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-64 text-center border border-neutral-800 border-dashed rounded-2xl bg-neutral-900/20">
+            <div className="w-12 h-12 rounded-full bg-neutral-900 flex items-center justify-center border border-neutral-800 mb-4">
+              <Megaphone className="w-6 h-6 text-neutral-500" />
+            </div>
+            <h3 className="text-lg font-medium text-white mb-1">Nenhuma campanha</h3>
+            <p className="text-sm text-neutral-400">
+              {search ? 'Nenhuma campanha corresponde à busca.' : 'Crie sua primeira campanha de disparos em massa.'}
             </p>
-            <Button onClick={openCreate} className="bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20">
-              <Plus className="w-4 h-4 mr-2" />
-              Criar primeira campanha
-            </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 overflow-y-auto pr-2 pb-12">
-            {filtered.map(c => {
-              const statusObj = translateStatus((c as any).status);
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {filteredCampaigns.map(c => {
               const isDraft = c.scheduleId === null;
-              
+              // Derive status by reading it from the scheduler if not draft.
+              // Note: we can't easily poll scheduler state here so we just trust if it has scheduleId it's "scheduled" unless backend extends status.
+              // The backend currently exposes "status" in the campaigns endpoint if we joined it, or we just call it "Agendada".
+              // Let's assume the API returns status or we just show "Agendada".
+              const statusLabel = isDraft ? 'Rascunho' : ((c as any).status === 'paused' ? 'Pausada' : ((c as any).status === 'running' ? 'Rodando' : 'Agendada'));
+              const statusColor = isDraft ? 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20' 
+                : ((c as any).status === 'paused' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
+                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20');
+
               return (
-                <div key={c.id} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 flex flex-col space-y-4">
+                <div key={c.id} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 flex flex-col gap-5">
                   <div className="flex items-start justify-between">
                     <div>
-                      <h3 className="text-base font-semibold text-white">{c.name}</h3>
-                      <div className="flex items-center space-x-2 mt-1.5 text-xs text-neutral-500">
-                        <span className={`px-2 py-0.5 rounded-full border text-[10px] font-medium uppercase tracking-wider ${statusObj.color}`}>
-                          {statusObj.label}
+                      <h3 className="text-base font-medium text-white mb-1">{c.name}</h3>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-medium border ${statusColor}`}>
+                          {statusLabel}
                         </span>
-                        <span>•</span>
-                        <span className="flex items-center">
-                          <Clock className="w-3.5 h-3.5 mr-1" />
-                          Atualizada em {new Date(c.updatedAt).toLocaleDateString()}
+                        <span className="text-xs text-neutral-500 font-mono">
+                          {c.schedule.scheduleType.toUpperCase()}
                         </span>
                       </div>
                     </div>
-                    {/* Actions */}
-                    <div className="flex items-center space-x-1">
+                    <div className="flex items-center gap-2">
                       {isDraft ? (
                         <>
-                          <Button variant="secondary" className="h-8 px-3 text-xs" onClick={() => openEdit(c)}>
-                            <Edit3 className="w-3.5 h-3.5 mr-1.5" /> Editar
+                          <Button className="h-8 px-3 text-xs bg-emerald-500 hover:bg-emerald-600 text-white" onClick={() => handleSchedule(c.id)}>
+                            <Play className="w-3.5 h-3.5 mr-1.5" /> Agendar Disparo
                           </Button>
-                          <Button className="h-8 px-3 text-xs bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20" onClick={() => handlePublish(c.id)}>
-                            <Play className="w-3.5 h-3.5 mr-1.5" /> Agendar
+                          <Button variant="secondary" className="h-8 w-8 p-0 border-neutral-700" onClick={() => handleOpenEdit(c)}>
+                            <Edit3 className="w-3.5 h-3.5" />
                           </Button>
                         </>
                       ) : (
                         <>
-                          {((c as any).status === 'active' || (c as any).status === 'running') && (
+                          {((c as any).status === 'scheduled' || (c as any).status === 'running') && (
                             <Button variant="secondary" className="h-8 px-3 text-xs border-amber-500/30 text-amber-400 hover:bg-amber-500/10" onClick={() => handlePause(c.id)}>
                               <Pause className="w-3.5 h-3.5 mr-1.5" /> Pausar
                             </Button>
@@ -382,6 +462,13 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
             </div>
             
             <div className="p-6 overflow-y-auto space-y-6">
+              {actionError && (
+                <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-sm text-rose-400 flex items-start">
+                  <AlertTriangle className="w-4 h-4 mr-2 shrink-0 mt-0.5" />
+                  <div>{actionError}</div>
+                </div>
+              )}
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-neutral-300 mb-1.5">Nome da Campanha</label>
@@ -418,7 +505,6 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                     className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-2.5 text-white focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-none"
                   />
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-neutral-300 mb-1.5">Nome de Fallback</label>
                   <input
@@ -431,23 +517,324 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   <p className="text-xs text-neutral-500 mt-1">Usado quando o contato não possui nome salvo.</p>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-neutral-300 mb-1.5">Agendamento (Apenas Único nesta fase)</label>
-                  <input
-                    type="datetime-local"
-                    value={scheduledAt}
-                    onChange={e => setScheduledAt(e.target.value)}
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-2.5 text-white focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none [color-scheme:dark]"
-                  />
+                <div className="pt-4 border-t border-neutral-800">
+                  <label className="block text-sm font-medium text-neutral-300 mb-3">Mídia (Opcional)</label>
+                  
+                  {!formMedia ? (
+                    <div className="space-y-4">
+                      <div className="flex bg-neutral-950 rounded-lg p-1 border border-neutral-800">
+                        <button
+                          onClick={() => setMediaTab('upload')}
+                          className={`flex-1 py-1.5 text-xs font-medium rounded-md transition ${mediaTab === 'upload' ? 'bg-neutral-800 text-white' : 'text-neutral-400'}`}
+                        >
+                          Fazer Upload
+                        </button>
+                        <button
+                          onClick={() => setMediaTab('url')}
+                          className={`flex-1 py-1.5 text-xs font-medium rounded-md transition ${mediaTab === 'url' ? 'bg-neutral-800 text-white' : 'text-neutral-400'}`}
+                        >
+                          Usar URL
+                        </button>
+                      </div>
+
+                      {mediaTab === 'upload' ? (
+                        <div>
+                          <input type="file" accept="image/*,video/*,application/pdf" className="hidden" ref={fileInputRef} onChange={handleFileSelect} />
+                          <Button variant="secondary" className="w-full h-24 border-dashed bg-neutral-900/50" onClick={() => fileInputRef.current?.click()} disabled={mediaUploading}>
+                            {mediaUploading ? (
+                              <div className="w-5 h-5 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
+                            ) : (
+                              <div className="flex flex-col items-center gap-2 text-neutral-400">
+                                <Upload className="w-5 h-5" />
+                                <span className="text-xs">Clique para enviar arquivo</span>
+                              </div>
+                            )}
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2">
+                          <input type="text" value={mediaUrlInput} onChange={e => setMediaUrlInput(e.target.value)} placeholder="https://..." className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-3 text-sm text-white" />
+                          <Button variant="secondary" onClick={handleAddMediaUrl}>Adicionar</Button>
+                        </div>
+                      )}
+                      
+                      {mediaError && <p className="text-xs text-rose-400">{mediaError}</p>}
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-neutral-900 border border-neutral-800">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded bg-neutral-800 flex items-center justify-center">
+                          <ImageIcon className="w-5 h-5 text-neutral-500" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-white truncate max-w-[200px]">
+                            {formMedia.source === 'upload' ? formMedia.fileName : 'Mídia por URL'}
+                          </p>
+                          <p className="text-xs text-neutral-500">{formMedia.source === 'upload' ? 'Upload Local' : formMedia.url}</p>
+                        </div>
+                      </div>
+                      <Button variant="ghost" className="h-8 w-8 p-0 text-rose-400 hover:bg-rose-500/10" onClick={() => setFormMedia(null)}>
+                        <Trash className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
+
+                <div className="pt-4 border-t border-neutral-800">
+                  <label className="block text-sm font-medium text-neutral-300 mb-3">Agendamento</label>
+                  
+                  <div className="flex bg-neutral-950 rounded-lg p-1 border border-neutral-800 mb-4">
+                    <button
+                      onClick={() => setFormType('once')}
+                      className={`flex-1 py-1.5 text-xs font-medium rounded-md transition ${formType === 'once' ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-neutral-300'}`}
+                    >
+                      Único
+                    </button>
+                    <button
+                      onClick={() => setFormType('daily')}
+                      className={`flex-1 py-1.5 text-xs font-medium rounded-md transition ${formType === 'daily' ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-neutral-300'}`}
+                    >
+                      Diário
+                    </button>
+                    <button
+                      onClick={() => setFormType('weekly')}
+                      className={`flex-1 py-1.5 text-xs font-medium rounded-md transition ${formType === 'weekly' ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-neutral-300'}`}
+                    >
+                      Semanal
+                    </button>
+                  </div>
+
+                  {formType === 'once' && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-neutral-500 mb-1">Data</label>
+                        <input
+                          type="date"
+                          value={formDate}
+                          onChange={e => setFormDate(e.target.value)}
+                          className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-neutral-500 mb-1">Horário</label>
+                        <input
+                          type="time"
+                          value={formTime}
+                          onChange={e => setFormTime(e.target.value)}
+                          className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {formType === 'daily' && (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium text-neutral-500 mb-2">Horários de Disparo Diário</label>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {formDailyTimes.map(t => (
+                            <div key={t} className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 rounded-md pl-2 pr-1 py-1">
+                              <span className="text-xs text-neutral-300 font-mono">{t}</span>
+                              <button
+                                onClick={() => setFormDailyTimes(prev => prev.filter(time => time !== t))}
+                                className="p-0.5 text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 rounded"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <input
+                            type="time"
+                            value={newDailyTimeInput}
+                            onChange={e => setNewDailyTimeInput(e.target.value)}
+                            className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]"
+                          />
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              if (newDailyTimeInput && !formDailyTimes.includes(newDailyTimeInput)) {
+                                setFormDailyTimes(prev => [...prev, newDailyTimeInput].sort());
+                              }
+                            }}
+                          >
+                            Adicionar
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {formType === 'weekly' && (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium text-neutral-500 mb-2">Dias da Semana</label>
+                        <div className="flex flex-wrap gap-2">
+                          {WEEK_DAYS.map(day => {
+                            const isSelected = formWeeklyDays.includes(day.id);
+                            return (
+                              <button
+                                key={day.id}
+                                onClick={() => {
+                                  let newDays;
+                                  if (isSelected) {
+                                    newDays = formWeeklyDays.filter(d => d !== day.id);
+                                    setFormWeeklySlots(prev => prev.filter(s => s.day !== day.id));
+                                    if (selectedWeeklyDayForTimes === day.id && newDays.length > 0) {
+                                      setSelectedWeeklyDayForTimes(newDays[0]);
+                                    }
+                                  } else {
+                                    newDays = [...formWeeklyDays, day.id].sort();
+                                    setFormWeeklySlots(prev => [...prev, { day: day.id, times: ['08:00'] }].sort((a,b) => a.day - b.day));
+                                    setSelectedWeeklyDayForTimes(day.id);
+                                  }
+                                  setFormWeeklyDays(newDays);
+                                }}
+                                className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                                  isSelected 
+                                    ? 'bg-emerald-500 text-white' 
+                                    : 'bg-neutral-900 text-neutral-400 border border-neutral-800 hover:bg-neutral-800'
+                                }`}
+                              >
+                                {day.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {formWeeklyDays.length > 0 && (
+                        <div className="p-3 bg-neutral-900/50 border border-neutral-800 rounded-lg">
+                          <label className="block text-xs font-medium text-neutral-500 mb-2">
+                            Horários para: <select 
+                              value={selectedWeeklyDayForTimes}
+                              onChange={e => setSelectedWeeklyDayForTimes(Number(e.target.value))}
+                              className="bg-transparent text-emerald-400 font-semibold focus:outline-none"
+                            >
+                              {formWeeklyDays.map(d => (
+                                <option key={d} value={d} className="bg-neutral-900">{WEEK_DAYS.find(w => w.id === d)?.full}</option>
+                              ))}
+                            </select>
+                          </label>
+                          
+                          <div className="flex flex-wrap gap-2 mb-3">
+                            {formWeeklySlots.find(s => s.day === selectedWeeklyDayForTimes)?.times.map(t => (
+                              <div key={t} className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 rounded-md pl-2 pr-1 py-1">
+                                <span className="text-xs text-neutral-300 font-mono">{t}</span>
+                                <button
+                                  onClick={() => {
+                                    setFormWeeklySlots(prev => prev.map(s => {
+                                      if (s.day === selectedWeeklyDayForTimes) {
+                                        return { ...s, times: s.times.filter(time => time !== t) };
+                                      }
+                                      return s;
+                                    }));
+                                  }}
+                                  className="p-0.5 text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 rounded"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          
+                          <div className="flex gap-2">
+                            <input
+                              type="time"
+                              value={newWeeklyTimeInput}
+                              onChange={e => setNewWeeklyTimeInput(e.target.value)}
+                              className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]"
+                            />
+                            <Button
+                              variant="secondary"
+                              onClick={() => {
+                                if (newWeeklyTimeInput) {
+                                  setFormWeeklySlots(prev => prev.map(s => {
+                                    if (s.day === selectedWeeklyDayForTimes && !s.times.includes(newWeeklyTimeInput)) {
+                                      return { ...s, times: [...s.times, newWeeklyTimeInput].sort() };
+                                    }
+                                    return s;
+                                  }));
+                                }
+                              }}
+                            >
+                              Adicionar
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-4 border-t border-neutral-800">
+                  <label className="block text-sm font-medium text-neutral-300 mb-3">Opções de Entrega</label>
+                  <div className="space-y-4 bg-neutral-900/30 p-4 rounded-xl border border-neutral-800/50">
+                    <div>
+                      <label className="block text-xs font-medium text-neutral-400 mb-2">Intervalo entre mensagens (segundos)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={formIntervalSeconds}
+                        onChange={e => setFormIntervalSeconds(Number(e.target.value))}
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    
+                    <div className="pt-2 border-t border-neutral-800/50">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <div className="relative">
+                          <input
+                            type="checkbox"
+                            checked={formBatchPauseEnabled}
+                            onChange={e => setFormBatchPauseEnabled(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                        </div>
+                        <span className="text-sm text-neutral-300">Pausar a cada lote (anti-spam)</span>
+                      </label>
+                    </div>
+
+                    {formBatchPauseEnabled && (
+                      <div className="grid grid-cols-2 gap-4 mt-3">
+                        <div>
+                          <label className="block text-xs font-medium text-neutral-500 mb-1">Tamanho do lote</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={formBatchSize}
+                            onChange={e => setFormBatchSize(Number(e.target.value))}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-neutral-500 mb-1">Pausa (minutos)</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={formBatchPauseMinutes}
+                            onChange={e => setFormBatchPauseMinutes(Number(e.target.value))}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
               </div>
             </div>
-
+            
             <div className="flex items-center justify-end p-6 border-t border-neutral-800 space-x-3 bg-neutral-900/50 rounded-b-2xl">
               <Button variant="secondary" onClick={() => setIsModalOpen(false)}>
                 Cancelar
               </Button>
-              <Button onClick={handleSaveDraft} className="bg-emerald-500 hover:bg-emerald-600 text-white">
+              <Button onClick={handleSaveDraft} disabled={isSubmitting} className="bg-emerald-500 hover:bg-emerald-600 text-white">
+                {isSubmitting ? (
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin mr-2" />
+                ) : null}
                 Salvar Rascunho
               </Button>
             </div>

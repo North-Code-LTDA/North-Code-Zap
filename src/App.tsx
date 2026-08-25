@@ -262,12 +262,18 @@ function AppContent() {
             <ContatosView />
           )}
 
+          {/* TAB 6: CAMPANHAS */}
+          {currentTab === 'campanhas' && (
+            <CampanhasView selectedInstanceId={selectedInstanceId} />
+          )}
+
           {/* OTHER PLACEHOLDER TABS */}
           {currentTab !== 'dashboard' &&
             currentTab !== 'whatsapp' &&
             currentTab !== 'conversas' &&
             currentTab !== 'agendamentos' &&
-            currentTab !== 'contatos' && (
+            currentTab !== 'contatos' &&
+            currentTab !== 'campanhas' && (
               <PlaceholderView tab={currentTab} />
             )}
             </>
