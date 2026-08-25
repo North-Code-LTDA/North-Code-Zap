@@ -32,6 +32,7 @@ import { DiagnosticLogs } from './components/DiagnosticLogs';
 import { DashboardView } from './components/DashboardView';
 import { ConversasView } from './components/ConversasView';
 import { AgendamentosView } from './components/AgendamentosView';
+import { CampanhasView } from './components/CampanhasView';
 import { ContatosView } from './components/ContatosView';
 import { PlaceholderView } from './components/PlaceholderView';
 import type { NavigationTab } from './types';

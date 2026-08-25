@@ -225,3 +225,39 @@ export interface AudiencesState {
   contactTags: Record<string, string[]>;
   lists: AudienceList[];
 }
+
+export interface CampaignScheduleConfig {
+  scheduleType: ScheduleType;
+  scheduledAt: string | null;
+  dailyTimes: string[];
+  weeklyTimeSlots: WeeklyTimeSlot[];
+  deliveryOptions: DeliveryOptions;
+}
+
+export interface CampaignAudienceSnapshot {
+  listId: string;
+  listName: string;
+  targetCount: number;
+}
+
+export interface Campaign {
+  id: string;
+  workspaceId: string;
+  instanceId: string;
+
+  name: string;
+
+  audienceListId: string | null;
+  audienceSnapshot: CampaignAudienceSnapshot | null;
+
+  message: string;
+  fallbackName: string;
+  media: ScheduledMedia | null;
+
+  schedule: CampaignScheduleConfig;
+
+  scheduleId: string | null;
+
+  createdAt: string;
+  updatedAt: string;
+}

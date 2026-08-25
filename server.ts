@@ -8,6 +8,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 import { InstanceManager, DATA_DIR } from './server/instances.ts';
 import { SchedulerService } from './server/scheduler.ts';
+import { campaignService } from './server/campaigns.ts';
 import { authService, User, Workspace, Session } from './server/auth.ts';
 import { getCookieFromRequest, getCookieFromSocket } from './server/cookie.ts';
 
@@ -590,6 +591,11 @@ async function startServer() {
     try {
       const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
       if (!runtime) return res.status(404).json({ error: 'Not found' });
+      
+      const campaign = campaignService.getByScheduleIdForWorkspace(req.params.id, req.auth!.workspace.id);
+      if (campaign) {
+         return res.status(409).json({ success: false, error: 'Este agendamento é gerenciado por uma campanha. Faça a alteração pela tela Campanhas.' });
+      }
       const validation = validateSchedulePayload(req.body);
       if (validation.valid === false) return res.status(400).json({ success: false, error: validation.error });
       if (validation.payload.media?.source === 'upload') {
@@ -607,6 +613,11 @@ async function startServer() {
     try {
       const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
       if (!runtime) return res.status(404).json({ error: 'Not found' });
+      
+      const campaign = campaignService.getByScheduleIdForWorkspace(req.params.id, req.auth!.workspace.id);
+      if (campaign) {
+         return res.status(409).json({ success: false, error: 'Este agendamento é gerenciado por uma campanha. Faça a alteração pela tela Campanhas.' });
+      }
       const success = schedulerService.delete(req.params.id, req.params.instanceId, runtime.media);
       if (!success) return res.status(404).json({ success: false, error: 'Não encontrado' });
       res.json({ success: true });
@@ -639,8 +650,310 @@ async function startServer() {
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
+
+  app.get('/api/campaigns', (req, res) => {
+    try {
+      const workspaceId = req.auth!.workspace.id;
+      const instanceId = req.query.instanceId as string;
+      if (instanceId) {
+        if (!instanceManager.getForWorkspace(instanceId, workspaceId)) {
+          return res.status(404).json({ error: 'Instance not found' });
+        }
+      }
+      let campaigns = campaignService.listForWorkspace(workspaceId);
+      if (instanceId) {
+        campaigns = campaigns.filter(c => c.instanceId === instanceId);
+      }
+      
+      const enriched = campaigns.map(c => {
+        let scheduleStatus: string | null = null;
+        let nextRunAt: string | null = null;
+        let status = 'draft';
+        
+        if (c.scheduleId) {
+          const schedule = schedulerService.getById(c.scheduleId, c.instanceId);
+          if (schedule) {
+            scheduleStatus = schedule.status;
+            nextRunAt = schedule.nextRunAt;
+            status = schedule.status;
+          } else {
+            status = 'missing_schedule';
+          }
+        }
+        
+        return {
+          ...c,
+          status,
+          scheduleStatus,
+          nextRunAt
+        };
+      });
+      
+      res.json({ success: true, campaigns: enriched });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.get('/api/campaigns/:id', (req, res) => {
+    try {
+      const workspaceId = req.auth!.workspace.id;
+      const c = campaignService.getForWorkspace(req.params.id, workspaceId);
+      if (!c) return res.status(404).json({ error: 'Not found' });
+      
+      let scheduleStatus: string | null = null;
+      let nextRunAt: string | null = null;
+      let status = 'draft';
+      
+      if (c.scheduleId) {
+        const schedule = schedulerService.getById(c.scheduleId, c.instanceId);
+        if (schedule) {
+          scheduleStatus = schedule.status;
+          nextRunAt = schedule.nextRunAt;
+          status = schedule.status;
+        } else {
+          status = 'missing_schedule';
+        }
+      }
+      
+      res.json({ 
+        success: true, 
+        campaign: {
+          ...c,
+          status,
+          scheduleStatus,
+          nextRunAt
+        }
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.post('/api/campaigns', (req, res) => {
+    try {
+      const workspaceId = req.auth!.workspace.id;
+      const { instanceId, name, audienceListId, message, fallbackName, media, schedule } = req.body;
+      
+      if (!instanceId || !name) {
+        return res.status(400).json({ success: false, error: 'instanceId and name are required' });
+      }
+      
+      const runtime = instanceManager.getForWorkspace(instanceId, workspaceId);
+      if (!runtime) return res.status(404).json({ success: false, error: 'Instance not found' });
+      
+      const draft = campaignService.createDraft({
+        workspaceId,
+        instanceId,
+        name,
+        audienceListId: audienceListId || null,
+        message: message || '',
+        fallbackName: fallbackName || 'amigo(a)',
+        media: media || null,
+        schedule: schedule || {
+          scheduleType: 'once',
+          scheduledAt: null,
+          dailyTimes: [],
+          weeklyTimeSlots: [],
+          deliveryOptions: {
+            intervalBetweenMessagesMs: 5000,
+            batchPauseEnabled: false,
+            batchSize: 5,
+            batchPauseMs: 300000
+          }
+        }
+      });
+      
+      res.status(201).json({ success: true, campaign: draft });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  app.patch('/api/campaigns/:id', (req, res) => {
+    try {
+      const workspaceId = req.auth!.workspace.id;
+      const c = campaignService.getForWorkspace(req.params.id, workspaceId);
+      if (!c) return res.status(404).json({ error: 'Not found' });
+      
+      const updated = campaignService.updateDraft(req.params.id, workspaceId, req.body);
+      res.json({ success: true, campaign: updated });
+    } catch (e: any) {
+      if (e.message.includes('programada')) {
+        return res.status(409).json({ success: false, error: e.message });
+      }
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  app.post('/api/campaigns/:id/schedule', (req, res) => {
+    try {
+      const workspaceId = req.auth!.workspace.id;
+      const c = campaignService.getForWorkspace(req.params.id, workspaceId);
+      if (!c) return res.status(404).json({ error: 'Not found' });
+      if (c.scheduleId !== null) return res.status(409).json({ error: 'Campanha já programada' });
+      
+      const runtime = instanceManager.getForWorkspace(c.instanceId, workspaceId);
+      if (!runtime) return res.status(404).json({ error: 'Instância não encontrada' });
+      
+      if (!c.audienceListId) return res.status(400).json({ error: 'Lista de audiência não configurada' });
+      const list = runtime.audiences.getState().lists.find((l: any) => l.id === c.audienceListId);
+      if (!list) return res.status(400).json({ error: 'Lista de audiência não encontrada' });
+      if (list.contactJids.length === 0) return res.status(400).json({ error: 'A lista selecionada está vazia' });
+      
+      const targets = [];
+      const dedupe = new Set<string>();
+      for (const jid of list.contactJids) {
+         if (dedupe.has(jid)) continue;
+         dedupe.add(jid);
+         let name = undefined;
+         let label = jid.split('@')[0];
+         const match = label.match(/^55(\d{2})(\d+)$/);
+         if (match) label = `+55 ${match[1]} ${match[2]}`;
+         
+         const meta = runtime.contacts.getContact(jid);
+         if (meta?.name) {
+           name = meta.name;
+           label = meta.name;
+         }
+         
+         targets.push({
+           type: 'person',
+           jid,
+           label,
+           name,
+           source: 'directory'
+         });
+      }
+      
+      const payload = {
+        name: c.name,
+        message: c.message,
+        fallbackName: c.fallbackName,
+        media: c.media,
+        scheduleType: c.schedule.scheduleType,
+        scheduledAt: c.schedule.scheduledAt,
+        dailyTimes: c.schedule.dailyTimes,
+        weeklyTimeSlots: c.schedule.weeklyTimeSlots,
+        deliveryOptions: c.schedule.deliveryOptions,
+        targets
+      };
+      
+      const validation = validateSchedulePayload(payload);
+      if (validation.valid === false) return res.status(400).json({ success: false, error: validation.error });
+      
+      if (validation.payload.media?.source === 'upload') {
+        if (!runtime.media.fileExists(validation.payload.media.localPath)) {
+          return res.status(400).json({ success: false, error: 'Mídia de upload inválida para esta instância.' });
+        }
+      }
+      
+      const schedule = schedulerService.create(c.instanceId, validation.payload);
+      
+      try {
+        const attached = campaignService.attachSchedule(c.id, workspaceId, schedule.id, {
+          listId: list.id,
+          listName: list.name,
+          targetCount: targets.length
+        });
+        return res.json({ success: true, campaign: attached });
+      } catch (e: any) {
+        console.error('[Campaign] Error persisting scheduleId, rolling back schedule:', e);
+        try {
+          schedulerService.delete(schedule.id, c.instanceId, runtime.media);
+        } catch (rbError) {
+           console.error('[Campaign] CRITICAL ERROR: rollback failed for schedule', schedule.id);
+        }
+        throw e;
+      }
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: e.message });
+    }
+  });
+
+  app.post('/api/campaigns/:id/pause', (req, res) => {
+    try {
+      const workspaceId = req.auth!.workspace.id;
+      const c = campaignService.getForWorkspace(req.params.id, workspaceId);
+      if (!c) return res.status(404).json({ error: 'Not found' });
+      if (!c.scheduleId) return res.status(409).json({ error: 'Campanha não está programada' });
+      
+      const runtime = instanceManager.getForWorkspace(c.instanceId, workspaceId);
+      if (!runtime) return res.status(404).json({ error: 'Instância não encontrada' });
+      
+      const schedule = schedulerService.pause(c.scheduleId, c.instanceId);
+      if (!schedule) return res.status(404).json({ error: 'Agendamento ausente' });
+      
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.post('/api/campaigns/:id/resume', (req, res) => {
+    try {
+      const workspaceId = req.auth!.workspace.id;
+      const c = campaignService.getForWorkspace(req.params.id, workspaceId);
+      if (!c) return res.status(404).json({ error: 'Not found' });
+      if (!c.scheduleId) return res.status(409).json({ error: 'Campanha não está programada' });
+      
+      const runtime = instanceManager.getForWorkspace(c.instanceId, workspaceId);
+      if (!runtime) return res.status(404).json({ error: 'Instância não encontrada' });
+      
+      const schedule = schedulerService.resume(c.scheduleId, c.instanceId);
+      if (!schedule) return res.status(404).json({ error: 'Agendamento ausente' });
+      
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.post('/api/campaigns/:id/unschedule', (req, res) => {
+    try {
+      const workspaceId = req.auth!.workspace.id;
+      const c = campaignService.getForWorkspace(req.params.id, workspaceId);
+      if (!c) return res.status(404).json({ error: 'Not found' });
+      if (!c.scheduleId) return res.status(409).json({ error: 'Campanha já é rascunho' });
+      
+      const schedule = schedulerService.getById(c.scheduleId, c.instanceId);
+      if (schedule && schedule.status === 'running') {
+        return res.status(409).json({ error: 'Não é possível cancelar uma campanha em execução' });
+      }
+      
+      const runtime = instanceManager.getForWorkspace(c.instanceId, workspaceId);
+      if (schedule && runtime) {
+        schedulerService.delete(schedule.id, c.instanceId, runtime.media);
+      }
+      
+      const updated = campaignService.clearSchedule(c.id, workspaceId);
+      res.json({ success: true, campaign: updated });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
+  app.delete('/api/campaigns/:id', (req, res) => {
+    try {
+      const workspaceId = req.auth!.workspace.id;
+      const c = campaignService.getForWorkspace(req.params.id, workspaceId);
+      if (!c) return res.status(404).json({ error: 'Not found' });
+      
+      if (c.scheduleId) {
+        const schedule = schedulerService.getById(c.scheduleId, c.instanceId);
+        if (schedule) {
+          const runtime = instanceManager.getForWorkspace(c.instanceId, workspaceId);
+          if (runtime) {
+            const success = schedulerService.delete(schedule.id, c.instanceId, runtime.media);
+            if (!success) {
+               return res.status(500).json({ error: 'Falha ao excluir agendamento associado à campanha' });
+            }
+          }
+        }
+      }
+      
+      campaignService.deleteCampaign(c.id, workspaceId);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+  });
+
   // Init manager
   await instanceManager.init();
+  campaignService.init();
   schedulerService.init();
   schedulerService.startLoop();
 
