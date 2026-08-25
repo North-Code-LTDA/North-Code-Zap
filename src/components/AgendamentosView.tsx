@@ -43,6 +43,8 @@ import type {
   WeeklyTimeSlot,
 } from '../types';
 import { useSchedules } from '../hooks/useSchedules';
+import { useAudiences } from '../hooks/useAudiences';
+import { List as ListIcon } from 'lucide-react';
 import { useInstances } from '../contexts/InstancesContext';
 import { renderMessageTemplate } from '../utils/template';
 import { Button } from './ui/Button';
@@ -63,6 +65,8 @@ const WEEK_DAYS = [
 
 export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
   const { selectedInstanceId } = useInstances();
+  const { state: audiences } = useAudiences(selectedInstanceId);
+  const { lists = [] } = audiences || {};
   const {
     schedules,
     groups,
@@ -138,7 +142,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
   const [importComplianceChecked, setImportComplianceChecked] = useState(false);
 
   // Targets Picker Sub-state
-  const [pickerTab, setPickerTab] = useState<'pessoas' | 'grupos' | 'importar'>('pessoas');
+  const [pickerTab, setPickerTab] = useState<'pessoas' | 'listas' | 'grupos' | 'importar'>('pessoas');
   const [pickerSearch, setPickerSearch] = useState('');
   const [manualNumberInput, setManualNumberInput] = useState('');
   const [manualNameInput, setManualNameInput] = useState('');
@@ -1705,6 +1709,18 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                     >
                       <User className="w-3.5 h-3.5" />
                       Pessoas ({contacts.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPickerTab('listas')}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                        pickerTab === 'listas'
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <ListIcon className="w-3.5 h-3.5" />
+                      Listas ({lists.length})
                     </button>
                     <button
                       type="button"

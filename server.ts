@@ -436,6 +436,133 @@ async function startServer() {
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
+  
+  // Audiences API
+  app.get('/api/instances/:instanceId/audiences', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    res.json(runtime.audiences.getState());
+  });
+
+  app.post('/api/instances/:instanceId/audiences/tags', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      if (typeof req.body.name !== 'string') return res.status(400).json({ error: 'Invalid payload' });
+      const tag = runtime.audiences.createTag(req.body.name);
+      res.status(201).json(tag);
+    } catch (e: any) {
+      if (e.message === 'Duplicate tag name') res.status(409).json({ error: e.message });
+      else res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.patch('/api/instances/:instanceId/audiences/tags/:tagId', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      if (typeof req.body.name !== 'string') return res.status(400).json({ error: 'Invalid payload' });
+      const tag = runtime.audiences.renameTag(req.params.tagId, req.body.name);
+      res.json(tag);
+    } catch (e: any) {
+      if (e.message === 'Tag not found') res.status(404).json({ error: e.message });
+      else if (e.message === 'Duplicate tag name') res.status(409).json({ error: e.message });
+      else res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete('/api/instances/:instanceId/audiences/tags/:tagId', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      runtime.audiences.deleteTag(req.params.tagId);
+      res.json({ success: true });
+    } catch (e: any) {
+      if (e.message === 'Tag not found') res.status(404).json({ error: e.message });
+      else res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/instances/:instanceId/audiences/tags/:tagId/contacts', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      if (!Array.isArray(req.body.jids)) return res.status(400).json({ error: 'Invalid payload' });
+      runtime.audiences.addTagToContacts(req.params.tagId, req.body.jids);
+      res.json({ success: true });
+    } catch (e: any) {
+      if (e.message === 'Tag not found') res.status(404).json({ error: e.message });
+      else res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete('/api/instances/:instanceId/audiences/tags/:tagId/contacts', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      if (!Array.isArray(req.body.jids)) return res.status(400).json({ error: 'Invalid payload' });
+      runtime.audiences.removeTagFromContacts(req.params.tagId, req.body.jids);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/instances/:instanceId/audiences/lists', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      if (typeof req.body.name !== 'string' || !Array.isArray(req.body.contactJids)) {
+        return res.status(400).json({ error: 'Invalid payload' });
+      }
+      const list = runtime.audiences.createList(req.body.name, req.body.contactJids);
+      res.status(201).json(list);
+    } catch (e: any) {
+      if (e.message === 'Duplicate list name') res.status(409).json({ error: e.message });
+      else res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.patch('/api/instances/:instanceId/audiences/lists/:listId', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      if (typeof req.body.name !== 'string') return res.status(400).json({ error: 'Invalid payload' });
+      const list = runtime.audiences.renameList(req.params.listId, req.body.name);
+      res.json(list);
+    } catch (e: any) {
+      if (e.message === 'List not found') res.status(404).json({ error: e.message });
+      else if (e.message === 'Duplicate list name') res.status(409).json({ error: e.message });
+      else res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.put('/api/instances/:instanceId/audiences/lists/:listId/contacts', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      if (!Array.isArray(req.body.contactJids)) return res.status(400).json({ error: 'Invalid payload' });
+      const list = runtime.audiences.updateListContacts(req.params.listId, req.body.contactJids);
+      res.json(list);
+    } catch (e: any) {
+      if (e.message === 'List not found') res.status(404).json({ error: e.message });
+      else res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete('/api/instances/:instanceId/audiences/lists/:listId', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      runtime.audiences.deleteList(req.params.listId);
+      res.json({ success: true });
+    } catch (e: any) {
+      if (e.message === 'List not found') res.status(404).json({ error: e.message });
+      else res.status(400).json({ error: e.message });
+    }
+  });
+
+
   app.get('/api/instances/:instanceId/schedules', (req, res) => {
     const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
     if (!runtime) return res.status(404).json({ error: 'Not found' });

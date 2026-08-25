@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { WhatsAppService } from './whatsapp.ts';
 import { ContactsService } from './contacts.ts';
+import { AudienceService } from './audiences.ts';
 import { MediaService } from './media.ts';
 import type { Server as SocketIOServer } from 'socket.io';
 
@@ -30,6 +31,7 @@ export interface InstanceRuntime {
   metadata: InstanceMetadata;
   whatsapp: WhatsAppService;
   contacts: ContactsService;
+  audiences: AudienceService;
   media: MediaService;
 }
 
@@ -155,6 +157,8 @@ export class InstanceManager {
 
     const contactsFile = path.join(recipientsDir, 'contacts.json');
     const contacts = new ContactsService(contactsFile);
+    const audiencesFile = path.join(recipientsDir, 'audiences.json');
+    const audiences = new AudienceService(audiencesFile);
     const media = new MediaService(mediaDir);
     const whatsapp = new WhatsAppService(meta.id, authDir, contacts);
     
@@ -166,6 +170,7 @@ export class InstanceManager {
       metadata: meta,
       whatsapp,
       contacts,
+      audiences,
       media
     };
 

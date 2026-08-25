@@ -204,3 +204,24 @@ export interface AuthIdentity {
   user: AuthUser;
   workspace: AuthWorkspace;
 }
+
+export interface AudienceTag {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AudienceList {
+  id: string;
+  name: string;
+  contactJids: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AudiencesState {
+  tags: AudienceTag[];
+  contactTags: Record<string, string[]>;
+  lists: AudienceList[];
+}
