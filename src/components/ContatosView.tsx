@@ -57,7 +57,7 @@ export function ContatosView() {
   const { 
     state: audiences, loading: audiencesLoading, error: audiencesError, fetchAudiences, 
     createTag, renameTag, deleteTag, addTagToContacts, removeTagFromContacts, 
-    createList, renameList, deleteList
+    createList, renameList, deleteList, updateListContacts
   } = useAudiences(selectedInstanceId);
 
   const [search, setSearch] = useState('');
@@ -222,6 +222,23 @@ export function ContatosView() {
     catch (e: any) { handleError(e); }
   };
 
+  const handleApplyToList = async (listId: string) => {
+    try {
+      const list = audiences?.lists.find(l => l.id === listId);
+      if (!list) return;
+      const merged = Array.from(
+        new Set([
+          ...list.contactJids,
+          ...Array.from(selectedJids)
+        ])
+      );
+      await updateListContacts(listId, merged);
+      setSelectedJids(new Set());
+    } catch (e: any) {
+      handleError(e);
+    }
+  };
+
   const loading = contactsLoading || audiencesLoading;
   const error = contactsError || audiencesError;
 
@@ -331,6 +348,22 @@ export function ContatosView() {
                     </div>
                   ))}
                   {audiences?.tags.length === 0 && <div className="text-xs text-neutral-500 p-2 text-center">Crie tags primeiro</div>}
+                </div>
+              </div>
+            </div>
+            
+            <div className="relative group">
+              <Button variant="primary-soft" className="h-8 text-xs px-3 bg-amber-500/20 text-amber-400 border-amber-500/30 hover:bg-amber-500/30 hover:border-amber-500/50">
+                <List className="w-3.5 h-3.5 mr-1.5" /> Adicionar à lista
+              </Button>
+              <div className="absolute right-0 mt-2 w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+                <div className="p-2 space-y-1 max-h-48 overflow-y-auto">
+                  {audiences?.lists.map(l => (
+                    <button key={l.id} onClick={() => handleApplyToList(l.id)} className="w-full text-left px-2 py-1.5 text-xs text-amber-400 hover:bg-neutral-800 rounded-lg truncate">
+                      + {l.name}
+                    </button>
+                  ))}
+                  {audiences?.lists.length === 0 && <div className="text-xs text-neutral-500 p-2 text-center">Nenhuma lista criada</div>}
                 </div>
               </div>
             </div>

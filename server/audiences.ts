@@ -41,13 +41,7 @@ export class AudienceService {
     }
 
     const content = fs.readFileSync(this.filePath, 'utf-8');
-    let parsed: any;
-    try {
-      parsed = JSON.parse(content);
-    } catch (e) {
-      console.error('Failed to parse audiences.json, starting empty');
-      return;
-    }
+    const parsed = JSON.parse(content);
 
     if (!parsed || typeof parsed !== 'object') throw new Error('Invalid audiences file format');
 

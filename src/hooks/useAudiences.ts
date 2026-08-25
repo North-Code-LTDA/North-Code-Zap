@@ -9,6 +9,7 @@ export function useAudiences(instanceId: string | null) {
   const requestSeqRef = useRef(0);
 
   useEffect(() => {
+    requestSeqRef.current += 1;
     // Clear immediately on instance change
     setState(null);
     setError(null);
