@@ -12,7 +12,9 @@ import { campaignService } from './server/campaigns.ts';
 import { campaignHistoryService } from "./server/campaign-history.ts";
 import { templateService } from "./server/templates.ts";
 import { automationService } from './server/automations.ts';
-import { AutomationRunner } from './server/automation-runner.ts';
+import { AutomationRunner, AutomationTriggerEvent } from './server/automation-runner.ts';
+import { FlowService } from './server/flows.ts';
+import { FlowRunner } from './server/flow-runner.ts';
 import { authService, User, Workspace, Session } from './server/auth.ts';
 import { getCookieFromRequest, getCookieFromSocket } from './server/cookie.ts';
 
@@ -34,6 +36,14 @@ process.env.TZ = APP_TIMEZONE;
 const instanceManager = new InstanceManager();
 const schedulerService = new SchedulerService(instanceManager);
 const automationRunner = new AutomationRunner(instanceManager, schedulerService);
+const flowService = new FlowService(instanceManager);
+const flowRunner = new FlowRunner(instanceManager, schedulerService, flowService);
+
+function dispatchReactiveEvents(events: Array<{ type: 'contact_added_to_list'|'tag_added_to_contact', workspaceId: string, instanceId: string, listId?: string, tagId?: string, jid: string }>) {
+  const typedEvents = events as AutomationTriggerEvent[];
+  automationRunner.dispatchMany(typedEvents).catch(err => console.error(err));
+  flowRunner.dispatchMany(typedEvents).catch(err => console.error(err));
+}
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -384,6 +394,8 @@ async function startServer() {
     }
     
     schedulerService.deleteAllForInstance(req.params.id);
+    flowRunner.cancelForInstance(req.params.id);
+    flowService.deleteAllForInstance(req.params.id);
     res.json({ success: true });
   });
 
@@ -519,6 +531,51 @@ async function startServer() {
     });
 
   
+  // Flows API
+  app.get('/api/instances/:instanceId/flows', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    const flows = flowService.listForInstance(req.auth!.workspace.id, req.params.instanceId);
+    res.json(flows);
+  });
+
+  app.post('/api/instances/:instanceId/flows', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      const flow = flowService.create(req.auth!.workspace.id, req.params.instanceId, req.body);
+      res.status(201).json(flow);
+    } catch (err: any) {
+      if (err.message.includes('Duplicate')) res.status(409).json({ error: err.message });
+      else res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/instances/:instanceId/flows/:flowId', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    try {
+      const flow = flowService.update(req.params.flowId, req.auth!.workspace.id, req.params.instanceId, req.body);
+      res.json(flow);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/instances/:instanceId/flows/:flowId', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    
+    const existing = flowService.getForInstance(req.params.flowId, req.auth!.workspace.id, req.params.instanceId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Flow not found' });
+    }
+
+    flowRunner.cancelForFlow(req.params.flowId, req.auth!.workspace.id, req.params.instanceId);
+    flowService.delete(req.params.flowId, req.auth!.workspace.id, req.params.instanceId);
+    res.json({ success: true });
+  });
+
   // Automations API
   app.get('/api/instances/:instanceId/automations', (req, res) => {
     const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
@@ -692,9 +749,7 @@ async function startServer() {
           tagId,
           jid
         }));
-        automationRunner.dispatchMany(events).catch(err => {
-          console.error('[Automation] Background dispatch failed', err);
-        });
+        dispatchReactiveEvents(events);
       }
     } catch (e: any) {
       if (e.message === 'Tag not found') res.status(404).json({ error: e.message });
@@ -770,9 +825,7 @@ async function startServer() {
           listId,
           jid
         }));
-        automationRunner.dispatchMany(events).catch(err => {
-          console.error('[Automation] Background dispatch failed', err);
-        });
+        dispatchReactiveEvents(events);
       }
     } catch (e: any) {
       if (e.message === 'List not found') res.status(404).json({ error: e.message });
@@ -1188,7 +1241,9 @@ async function startServer() {
   campaignHistoryService.init();
   templateService.init();
   automationService.init();
+  flowService.init();
   schedulerService.init();
+  flowRunner.init();
   schedulerService.setExecutionCompletedHandler(async (schedule, result) => {
     try {
       const campaign = campaignService.getByScheduleId(schedule.id);
@@ -1213,6 +1268,7 @@ async function startServer() {
   });
 
   schedulerService.startLoop();
+  flowRunner.startLoop();
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

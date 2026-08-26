@@ -322,3 +322,76 @@ export interface MessageTemplate {
   createdAt: string;
   updatedAt: string;
 }
+
+
+export type FlowTrigger =
+  | {
+      type: 'contact_added_to_list';
+      listId: string;
+    }
+  | {
+      type: 'tag_added_to_contact';
+      tagId: string;
+    };
+
+export type FlowCondition =
+  | {
+      type: 'has_tag';
+      tagId: string;
+    }
+  | {
+      type: 'in_list';
+      listId: string;
+    };
+
+export type FlowStep =
+  | {
+      id: string;
+      type: 'send_message';
+      message: string;
+      fallbackName: string;
+    }
+  | {
+      id: string;
+      type: 'delay';
+      durationSeconds: number;
+    }
+  | {
+      id: string;
+      type: 'condition';
+      condition: FlowCondition;
+      ifTrue: FlowStep[];
+      ifFalse: FlowStep[];
+    }
+  | {
+      id: string;
+      type: 'add_tag';
+      tagId: string;
+    }
+  | {
+      id: string;
+      type: 'remove_tag';
+      tagId: string;
+    }
+  | {
+      id: string;
+      type: 'add_to_list';
+      listId: string;
+    }
+  | {
+      id: string;
+      type: 'remove_from_list';
+      listId: string;
+    };
+
+export interface Flow {
+  id: string;
+  workspaceId: string;
+  instanceId: string;
+  name: string;
+  enabled: boolean;
+  trigger: FlowTrigger;
+  steps: FlowStep[];
+  createdAt: string;
+  updatedAt: string;
+}
