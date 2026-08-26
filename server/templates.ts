@@ -149,9 +149,29 @@ export class TemplateService {
       throw err;
     }
 
-    const newName = (typeof data.name === 'string' && data.name.trim().length > 0) ? data.name.trim() : existing.name;
-    const newMessage = (typeof data.message === 'string' && data.message.trim().length > 0) ? data.message.trim() : existing.message;
-    const newFallback = (typeof data.fallbackName === 'string' && data.fallbackName.trim().length > 0) ? data.fallbackName.trim() : existing.fallbackName;
+    let newName = existing.name;
+    if (data.name !== undefined) {
+      if (typeof data.name !== 'string' || data.name.trim().length === 0) {
+        throw new Error('Invalid name');
+      }
+      newName = data.name.trim();
+    }
+
+    let newMessage = existing.message;
+    if (data.message !== undefined) {
+      if (typeof data.message !== 'string' || data.message.trim().length === 0) {
+        throw new Error('Invalid message');
+      }
+      newMessage = data.message.trim();
+    }
+
+    let newFallback = existing.fallbackName;
+    if (data.fallbackName !== undefined) {
+      if (typeof data.fallbackName !== 'string' || data.fallbackName.trim().length === 0) {
+        throw new Error('Invalid fallbackName');
+      }
+      newFallback = data.fallbackName.trim();
+    }
 
     const lowerName = newName.toLowerCase();
     const isDuplicate = this.state.some(r => r.workspaceId === workspaceId && r.id !== id && r.name.trim().toLowerCase() === lowerName);

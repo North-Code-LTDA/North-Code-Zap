@@ -292,6 +292,53 @@ async function startServer() {
 
   app.use('/api', requireAuth);
 
+  app.get('/api/templates', (req, res) => {
+    try {
+      const templates = templateService.listForWorkspace(req.auth!.workspace.id);
+      res.json(templates);
+    } catch (e: any) {
+      const status = typeof e?.status === 'number' ? e.status : 500;
+      res.status(status).json({ error: e.message || 'Internal error' });
+    }
+  });
+
+  app.post('/api/templates', (req, res) => {
+    try {
+      const { name, message, fallbackName } = req.body;
+      const template = templateService.create(req.auth!.workspace.id, { name, message, fallbackName });
+      res.status(201).json({ success: true, template });
+    } catch (e: any) {
+      const status = typeof e?.status === 'number' ? e.status : 400;
+      res.status(status).json({ error: e.message || 'Error creating template' });
+    }
+  });
+
+  app.patch('/api/templates/:id', (req, res) => {
+    try {
+      const existing = templateService.getForWorkspace(req.params.id, req.auth!.workspace.id);
+      if (!existing) return res.status(404).json({ error: 'Template not found' });
+      
+      const template = templateService.update(req.params.id, req.auth!.workspace.id, req.body);
+      res.json({ success: true, template });
+    } catch (e: any) {
+      const status = typeof e?.status === 'number' ? e.status : 400;
+      res.status(status).json({ error: e.message || 'Error updating template' });
+    }
+  });
+
+  app.delete('/api/templates/:id', (req, res) => {
+    try {
+      const existing = templateService.getForWorkspace(req.params.id, req.auth!.workspace.id);
+      if (!existing) return res.status(404).json({ error: 'Template not found' });
+
+      templateService.delete(req.params.id, req.auth!.workspace.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      const status = typeof e?.status === 'number' ? e.status : 400;
+      res.status(status).json({ error: e.message || 'Error deleting template' });
+    }
+  });
+
   app.get('/api/instances', (req, res) => {
     res.json(instanceManager.listForWorkspace(req.auth!.workspace.id).map(meta => {
       const runtime = instanceManager.getForWorkspace(meta.id, req.auth!.workspace.id);

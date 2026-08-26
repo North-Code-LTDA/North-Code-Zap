@@ -58,11 +58,11 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
   const [audienceListId, setAudienceListId] = useState('');
   const [message, setMessage] = useState('');
   const [templateToConfirm, setTemplateToConfirm] = useState<string | null>(null);
-  const handleApplyTemplate = (e: any) => {
+  const handleApplyTemplate = (e: ChangeEvent<HTMLSelectElement>) => {
     const templateId = e.target.value;
     e.target.value = '';
     if (!templateId) return;
-    const t = templates?.find((x: any) => x.id === templateId);
+    const t = templates?.find(x => x.id === templateId);
     if (!t) return;
     if (message.trim()) {
       setTemplateToConfirm(t.id);
@@ -146,6 +146,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     setName('');
     setAudienceListId('');
     setMessage('');
+    setTemplateToConfirm(null);
     setFallbackName('amigo(a)');
     
     setFormType('once');
@@ -853,6 +854,20 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   onChange={(e) => setMessage(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 min-h-[120px] resize-y transition-colors"
                 />
+
+                {templateToConfirm && (
+                  <div className="mt-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between">
+                    <span className="text-amber-400 text-[11px]">Substituir mensagem atual pelo template?</span>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setTemplateToConfirm(null)} className="px-3 py-1 text-[11px] text-neutral-400 hover:text-white transition-colors">Cancelar</button>
+                      <button type="button" onClick={() => { 
+                        const t = templates?.find(x => x.id === templateToConfirm); 
+                        if (t) { setMessage(t.message); setFallbackName(t.fallbackName); } 
+                        setTemplateToConfirm(null); 
+                      }} className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-black font-semibold text-[11px] rounded transition-colors">Substituir</button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-3 pt-2">
                   <div className="flex items-center gap-2">

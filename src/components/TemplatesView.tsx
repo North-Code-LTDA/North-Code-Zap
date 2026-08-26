@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, type FormEvent } from 'react';
 import { FileText, Search, Plus, Edit2, Trash2, X, PlayCircle, Loader2 } from 'lucide-react';
 import { useTemplates } from '../hooks/useTemplates';
 import type { MessageTemplate } from '../types';
@@ -18,6 +18,18 @@ export function TemplatesView() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [templateToDelete, setTemplateToDelete] = useState<MessageTemplate | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isModalOpen && !templateToDelete) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isModalOpen, templateToDelete]);
 
   const filteredTemplates = useMemo(() => {
     if (!templates) return [];
@@ -36,7 +48,6 @@ export function TemplatesView() {
     setFallbackName('amigo(a)');
     setSaveError(null);
     setIsModalOpen(true);
-    document.body.style.overflow = 'hidden';
   };
 
   const openEditModal = (t: MessageTemplate) => {
@@ -46,12 +57,10 @@ export function TemplatesView() {
     setFallbackName(t.fallbackName);
     setSaveError(null);
     setIsModalOpen(true);
-    document.body.style.overflow = 'hidden';
   };
 
   const closeModal = () => {
     setIsModalOpen(false);
-    document.body.style.overflow = '';
   };
 
   const insertVariable = (variable: string) => {
@@ -74,7 +83,7 @@ export function TemplatesView() {
     });
   };
 
-  const handleSave = async (e: any) => {
+  const handleSave = async (e: FormEvent) => {
     e.preventDefault();
     setSaveError(null);
     setSaving(true);
@@ -95,11 +104,12 @@ export function TemplatesView() {
 
   const handleDeleteConfirm = async () => {
     if (!templateToDelete) return;
+    setDeleteError(null);
     try {
       await deleteTemplate(templateToDelete.id);
       setTemplateToDelete(null);
     } catch (err: any) {
-      alert(err.message || 'Erro ao deletar');
+      setDeleteError(err.message || 'Erro ao deletar');
     }
   };
 
@@ -213,7 +223,7 @@ export function TemplatesView() {
                     <Edit2 className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => setTemplateToDelete(t)}
+                    onClick={() => { setTemplateToDelete(t); setDeleteError(null); }}
                     className="p-1.5 text-neutral-400 hover:text-rose-400 hover:bg-rose-400/10 rounded-md transition-colors"
                     aria-label="Excluir"
                     title="Excluir"
@@ -244,9 +254,14 @@ export function TemplatesView() {
               <Trash2 className="w-6 h-6" />
             </div>
             <h3 className="text-xl font-bold text-white mb-2">Excluir Template</h3>
-            <p className="text-neutral-400 text-sm mb-6">
+            <p className="text-neutral-400 text-sm mb-4">
               Tem certeza que deseja excluir o template "{templateToDelete.name}"? Esta ação não pode ser desfeita.
             </p>
+            {deleteError && (
+              <div className="p-3 mb-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm">
+                {deleteError}
+              </div>
+            )}
             <div className="flex gap-3">
               <button onClick={() => setTemplateToDelete(null)} className="flex-1 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-medium rounded-xl transition-colors">Cancelar</button>
               <button onClick={handleDeleteConfirm} className="flex-1 px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white font-medium rounded-xl transition-colors shadow-sm shadow-rose-500/20">Excluir</button>
@@ -267,6 +282,8 @@ export function TemplatesView() {
               <button
                 onClick={closeModal}
                 className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition-colors"
+                aria-label="Fechar modal"
+                title="Fechar modal"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -344,7 +361,6 @@ export function TemplatesView() {
                     <h3 className="font-semibold">Preview Gerado</h3>
                   </div>
                   <div className="bg-[#111b21] p-4 rounded-xl border border-neutral-800 relative shadow-inner">
-                    <div className="absolute top-0 right-0 w-full h-full bg-[url('https://static.whatsapp.net/rsrc.php/v3/yl/r/r-3Lvv2oUGE.png')] opacity-5 pointer-events-none rounded-xl" />
                     <div className="relative z-10 bg-[#005c4b] text-[#e9edef] px-3 py-2 rounded-lg max-w-[85%] whitespace-pre-wrap text-sm shadow-sm inline-block">
                       {generatedPreview}
                       <span className="float-right ml-3 mt-2 text-[10px] text-[#8696a0]">12:00</span>

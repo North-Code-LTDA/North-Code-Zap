@@ -206,7 +206,7 @@ function AppContent() {
 
         {/* Main Content Area */}
         <main className="flex-1 flex flex-col min-w-0">
-          {!selectedInstanceId ? (
+          {!selectedInstanceId && currentTab !== 'templates' ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-6 border border-neutral-800 border-dashed rounded-2xl bg-neutral-900/20">
               <div className="w-16 h-16 rounded-full bg-neutral-900 flex items-center justify-center border border-neutral-800 mb-6 shadow-sm">
                 <LayoutDashboard className="w-8 h-8 text-neutral-500" />

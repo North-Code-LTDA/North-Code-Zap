@@ -106,11 +106,11 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
   const [formName, setFormName] = useState('');
   const [formMessage, setFormMessage] = useState('');
   const [templateToConfirm, setTemplateToConfirm] = useState<string | null>(null);
-  const handleApplyTemplate = (e: any) => {
+  const handleApplyTemplate = (e: ChangeEvent<HTMLSelectElement>) => {
     const templateId = e.target.value;
     e.target.value = '';
     if (!templateId) return;
-    const t = templates?.find((x: any) => x.id === templateId);
+    const t = templates?.find(x => x.id === templateId);
     if (!t) return;
     if (formMessage.trim()) {
       setTemplateToConfirm(t.id);
@@ -223,6 +223,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     setEditingSchedule(null);
     setFormName('');
     setFormMessage('');
+    setTemplateToConfirm(null);
     setFormFallbackName('amigo(a)');
     setFormType('once');
 
@@ -265,6 +266,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
   const hydrateScheduleForm = (schedule: ScheduledMessage) => {
     setFormName(schedule.name);
     setFormMessage(schedule.message || '');
+    setTemplateToConfirm(null);
     setFormFallbackName(schedule.fallbackName || 'amigo(a)');
     setFormType(schedule.scheduleType);
 
@@ -1639,6 +1641,20 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                   onChange={(e) => setFormMessage(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors font-sans"
                 />
+
+                {templateToConfirm && (
+                  <div className="mt-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between">
+                    <span className="text-amber-400 text-[11px]">Substituir mensagem atual pelo template?</span>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setTemplateToConfirm(null)} className="px-3 py-1 text-[11px] text-neutral-400 hover:text-white transition-colors">Cancelar</button>
+                      <button type="button" onClick={() => { 
+                        const t = templates?.find(x => x.id === templateToConfirm); 
+                        if (t) { setFormMessage(t.message); setFormFallbackName(t.fallbackName); } 
+                        setTemplateToConfirm(null); 
+                      }} className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-black font-semibold text-[11px] rounded transition-colors">Substituir</button>
+                    </div>
+                  </div>
+                )}
                 
                 <p className="text-[11px] text-neutral-500 mt-1">
                   Use <code className="text-purple-400 bg-purple-400/10 px-1 rounded">{"{Oi|Olá}"}</code> para gerar variações automáticas na mensagem (Spintax).
