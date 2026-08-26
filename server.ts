@@ -598,6 +598,49 @@ async function startServer() {
     res.json({ success: true });
   });
 
+
+  // Audiences API
+
+  app.get('/api/instances/:instanceId/audiences', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(
+      req.params.instanceId,
+      req.auth!.workspace.id
+    );
+
+    if (!runtime) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    res.json(runtime.audiences.getState());
+  });
+
+  app.post('/api/instances/:instanceId/audiences/tags', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(
+      req.params.instanceId,
+      req.auth!.workspace.id
+    );
+
+    if (!runtime) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    try {
+      if (typeof req.body.name !== 'string') {
+        return res.status(400).json({ error: 'Invalid payload' });
+      }
+
+      const tag = runtime.audiences.createTag(req.body.name);
+
+      res.status(201).json(tag);
+    } catch (e: any) {
+      if (e.message === 'Duplicate tag name') {
+        res.status(409).json({ error: e.message });
+      } else {
+        res.status(400).json({ error: e.message });
+      }
+    }
+  });
+
   app.patch('/api/instances/:instanceId/audiences/tags/:tagId', (req, res) => {
     const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
     if (!runtime) return res.status(404).json({ error: 'Not found' });
