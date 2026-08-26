@@ -290,6 +290,29 @@ export interface CampaignExecutionSummary {
   skippedCount: number;
 }
 
+export type AutomationTrigger =
+  | {
+      type: 'contact_added_to_list';
+      listId: string;
+    }
+  | {
+      type: 'tag_added_to_contact';
+      tagId: string;
+    };
+
+export interface Automation {
+  id: string;
+  workspaceId: string;
+  instanceId: string;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  message: string;
+  fallbackName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface MessageTemplate {
   id: string;
   workspaceId: string;
