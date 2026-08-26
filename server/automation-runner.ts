@@ -56,21 +56,27 @@ export class AutomationRunner {
 
     const contact = runtime.contacts.getContact(event.jid);
     
-    
     // Resolve name or use raw phone
-    let targetName = contact?.name || '';
-    if (!targetName) {
-       // if no name, use jid phone number
-       targetName = event.jid.split('@')[0];
-    }
+    let targetName = contact?.name?.trim();
     
-    const target: ScheduledTarget = {
-      type: 'person',
-      jid: event.jid,
-      label: targetName,
-      name: targetName,
-      source: 'directory'
-    };
+    let target: ScheduledTarget;
+    if (targetName) {
+      target = {
+        type: 'person',
+        jid: event.jid,
+        label: targetName,
+        name: targetName,
+        source: 'directory'
+      };
+    } else {
+      const numericLabel = event.jid.split('@')[0];
+      target = {
+        type: 'person',
+        jid: event.jid,
+        label: numericLabel,
+        source: 'directory'
+      };
+    }
 
     for (const automation of automations) {
       try {

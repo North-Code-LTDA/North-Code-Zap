@@ -4,17 +4,20 @@ import type { Automation, AutomationTrigger } from '../types';
 export function useAutomations(instanceId: string | null) {
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const reqSeq = useRef(0);
 
   const fetchAutomations = useCallback(async () => {
+    const seq = ++reqSeq.current;
     if (!instanceId) {
       setAutomations([]);
       setLoading(false);
+      setError(null);
       return;
     }
 
-    const seq = ++reqSeq.current;
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch(`/api/instances/${instanceId}/automations`);
       if (!res.ok) throw new Error('Failed to fetch automations');
@@ -22,8 +25,11 @@ export function useAutomations(instanceId: string | null) {
       if (seq === reqSeq.current) {
         setAutomations(data);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      if (seq === reqSeq.current) {
+        setError(err.message || 'Failed to fetch automations');
+      }
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
@@ -83,6 +89,7 @@ export function useAutomations(instanceId: string | null) {
   return {
     automations,
     loading,
+    error,
     fetchAutomations,
     createAutomation,
     updateAutomation,

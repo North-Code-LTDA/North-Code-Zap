@@ -558,16 +558,23 @@ async function startServer() {
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     
     try {
-      if (req.body.trigger) {
+      if (Object.prototype.hasOwnProperty.call(req.body, 'trigger')) {
+        const t = req.body.trigger;
+        if (!t || typeof t !== 'object') {
+           return res.status(400).json({ error: 'Invalid trigger type' });
+        }
+        
         const state = runtime.audiences.getState();
-        if (req.body.trigger.type === 'contact_added_to_list') {
-          if (!state.lists.some(l => l.id === req.body.trigger.listId)) {
+        if (t.type === 'contact_added_to_list') {
+          if (!state.lists.some(l => l.id === t.listId)) {
              return res.status(400).json({ error: 'List not found' });
           }
-        } else if (req.body.trigger.type === 'tag_added_to_contact') {
-          if (!state.tags.some(t => t.id === req.body.trigger.tagId)) {
+        } else if (t.type === 'tag_added_to_contact') {
+          if (!state.tags.some(tag => tag.id === t.tagId)) {
              return res.status(400).json({ error: 'Tag not found' });
           }
+        } else {
+          return res.status(400).json({ error: 'Invalid trigger type' });
         }
       }
 
@@ -582,29 +589,13 @@ async function startServer() {
     const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     
+    const existing = automationService.getForInstance(req.params.automationId, req.auth!.workspace.id, req.params.instanceId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Automation not found' });
+    }
+
     automationService.delete(req.params.automationId, req.auth!.workspace.id, req.params.instanceId);
     res.json({ success: true });
-  });
-
-  // Audiences API
-
-  app.get('/api/instances/:instanceId/audiences', (req, res) => {
-    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
-    if (!runtime) return res.status(404).json({ error: 'Not found' });
-    res.json(runtime.audiences.getState());
-  });
-
-  app.post('/api/instances/:instanceId/audiences/tags', (req, res) => {
-    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
-    if (!runtime) return res.status(404).json({ error: 'Not found' });
-    try {
-      if (typeof req.body.name !== 'string') return res.status(400).json({ error: 'Invalid payload' });
-      const tag = runtime.audiences.createTag(req.body.name);
-      res.status(201).json(tag);
-    } catch (e: any) {
-      if (e.message === 'Duplicate tag name') res.status(409).json({ error: e.message });
-      else res.status(400).json({ error: e.message });
-    }
   });
 
   app.patch('/api/instances/:instanceId/audiences/tags/:tagId', (req, res) => {
@@ -641,13 +632,13 @@ async function startServer() {
       
       const beforeState = runtime.audiences.getState();
       const tagId = req.params.tagId;
-      const requestedJids = req.body.jids as string[];
+      const requestedJids = Array.from(new Set(req.body.jids as string[]));
       
       const addedJids = requestedJids.filter(
         jid => !(beforeState.contactTags[jid] || []).includes(tagId)
       );
 
-      runtime.audiences.addTagToContacts(tagId, req.body.jids);
+      runtime.audiences.addTagToContacts(tagId, requestedJids);
       res.json({ success: true });
       
       if (addedJids.length > 0) {
@@ -721,10 +712,11 @@ async function startServer() {
       const oldList = beforeState.lists.find(l => l.id === listId);
       const oldJids = new Set(oldList ? oldList.contactJids : []);
       
-      const list = runtime.audiences.updateListContacts(listId, req.body.contactJids);
+      const newJids = Array.from(new Set(req.body.contactJids as string[]));
+      
+      const list = runtime.audiences.updateListContacts(listId, newJids);
       res.json(list);
       
-      const newJids = req.body.contactJids as string[];
       const addedJids = newJids.filter(jid => !oldJids.has(jid));
       
       if (addedJids.length > 0) {
