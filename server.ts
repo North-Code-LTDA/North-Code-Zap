@@ -10,6 +10,7 @@ import { InstanceManager, DATA_DIR } from './server/instances.ts';
 import { SchedulerService } from './server/scheduler.ts';
 import { campaignService } from './server/campaigns.ts';
 import { campaignHistoryService } from "./server/campaign-history.ts";
+import { templateService } from "./server/templates.ts";
 import { authService, User, Workspace, Session } from './server/auth.ts';
 import { getCookieFromRequest, getCookieFromSocket } from './server/cookie.ts';
 
@@ -988,6 +989,7 @@ async function startServer() {
   await instanceManager.init();
   campaignService.init();
   campaignHistoryService.init();
+  templateService.init();
   schedulerService.init();
   schedulerService.setExecutionCompletedHandler(async (schedule, result) => {
     try {

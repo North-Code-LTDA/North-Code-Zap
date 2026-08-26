@@ -25,6 +25,7 @@ import { InstancesProvider, useInstances } from './contexts/InstancesContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { AuthView } from './components/AuthView';
 import { LogOut } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import { InstancesSelector } from './components/InstancesSelector';
 import { NorthCodeLogo } from './components/NorthCodeLogo';
 import { ConnectionCard } from './components/ConnectionCard';
@@ -34,6 +35,7 @@ import { ConversasView } from './components/ConversasView';
 import { AgendamentosView } from './components/AgendamentosView';
 import { CampanhasView } from './components/CampanhasView';
 import { ContatosView } from './components/ContatosView';
+import { TemplatesView } from './components/TemplatesView';
 import { PlaceholderView } from './components/PlaceholderView';
 import type { NavigationTab } from './types';
 
@@ -56,6 +58,7 @@ function AppContent() {
     { id: 'conversas', label: 'Conversas', icon: MessageSquare, badge: messagesCount > 0 ? messagesCount : undefined, isReal: true },
     { id: 'agendamentos', label: 'Agendamentos', icon: Calendar, isReal: true },
     { id: 'contatos', label: 'Contatos', icon: Users, isReal: true },
+    { id: 'templates', label: 'Templates', icon: FileText, isReal: true },
     { id: 'automacoes', label: 'Automações', icon: Zap },
     { id: 'fluxos', label: 'Fluxos', icon: Layers },
     { id: 'campanhas', label: 'Campanhas', icon: Send },
@@ -262,7 +265,12 @@ function AppContent() {
             <ContatosView />
           )}
 
-          {/* TAB 6: CAMPANHAS */}
+          {/* TAB 6: TEMPLATES */}
+          {currentTab === 'templates' && (
+            <TemplatesView />
+          )}
+
+          {/* TAB 7: CAMPANHAS */}
           {currentTab === 'campanhas' && (
             <CampanhasView selectedInstanceId={selectedInstanceId} />
           )}
@@ -273,6 +281,7 @@ function AppContent() {
             currentTab !== 'conversas' &&
             currentTab !== 'agendamentos' &&
             currentTab !== 'contatos' &&
+            currentTab !== 'templates' &&
             currentTab !== 'campanhas' && (
               <PlaceholderView tab={currentTab} />
             )}

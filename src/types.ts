@@ -187,7 +187,8 @@ export type NavigationTab =
   | 'campanhas'
   | 'agendamentos'
   | 'ia'
-  | 'configuracoes';
+  | 'configuracoes'
+  | 'templates';
 
 export interface AuthUser {
   id: string;
@@ -287,4 +288,14 @@ export interface CampaignExecutionSummary {
   sentCount: number;
   failedCount: number;
   skippedCount: number;
+}
+
+export interface MessageTemplate {
+  id: string;
+  workspaceId: string;
+  name: string;
+  message: string;
+  fallbackName: string;
+  createdAt: string;
+  updatedAt: string;
 }

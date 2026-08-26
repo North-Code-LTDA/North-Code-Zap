@@ -1,3 +1,4 @@
+import { useTemplates } from '../hooks/useTemplates';
 import React, { useState, useMemo, type FormEvent, type ChangeEvent, useRef, useEffect } from 'react';
 import { 
   Megaphone, Plus, Search, Calendar, Clock, Image as ImageIcon,
@@ -26,6 +27,7 @@ interface CampanhasViewProps {
 }
 
 export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
+  const { templates } = useTemplates();
   const {
     state: campaigns, loading: campaignsLoading, error: campaignsError,
     createCampaign, updateCampaign, scheduleCampaign,
@@ -55,6 +57,20 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
   const [name, setName] = useState('');
   const [audienceListId, setAudienceListId] = useState('');
   const [message, setMessage] = useState('');
+  const [templateToConfirm, setTemplateToConfirm] = useState<string | null>(null);
+  const handleApplyTemplate = (e: any) => {
+    const templateId = e.target.value;
+    e.target.value = '';
+    if (!templateId) return;
+    const t = templates?.find((x: any) => x.id === templateId);
+    if (!t) return;
+    if (message.trim()) {
+      setTemplateToConfirm(t.id);
+      return;
+    }
+    setMessage(t.message);
+    setFallbackName(t.fallbackName);
+  };
   const [fallbackName, setFallbackName] = useState('amigo(a)');
   
   // Schedule
@@ -804,6 +820,12 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                     4. Mensagem & Personalização {formMedia && '(Opcional)'}
                   </label>
                   <div className="flex items-center gap-2">
+                    {templates && templates.length > 0 && (
+                      <select onChange={handleApplyTemplate} className="px-2 py-1 bg-neutral-800 border border-neutral-700 rounded text-neutral-300 text-xs focus:outline-none transition-colors max-w-[120px] truncate" defaultValue="">
+                        <option value="" disabled>Usar Template</option>
+                        {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    )}
                     <button
                       type="button"
                       onClick={() => setMessage((prev) => `${prev} {nome}`)}
