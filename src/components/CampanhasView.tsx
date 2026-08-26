@@ -31,7 +31,13 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     createCampaign, updateCampaign, scheduleCampaign,
     pauseCampaign, resumeCampaign, unscheduleCampaign, deleteCampaign
   } = useCampaigns(selectedInstanceId);
-  const { summaries, detail, loading: historyLoading, error: historyError, fetchSummaries, fetchDetail, clear: clearHistory } = useCampaignHistory();
+  const { summaries, detail, loading: historyLoading, error: historyError, fetchSummaries, fetchDetail, clear: clearHistory } = useCampaignHistory(selectedInstanceId);
+
+  useEffect(() => {
+    setIsResultsModalOpen(false);
+    setSelectedResultsCampaign(null);
+    clearHistory();
+  }, [selectedInstanceId, clearHistory]);
 
 
   const { state: audiences } = useAudiences(selectedInstanceId);
@@ -1172,6 +1178,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
+                      aria-label="Voltar ao histórico"
+                      title="Voltar ao histórico"
                       onClick={() => fetchSummaries(selectedResultsCampaign.id)}
                       className="p-2 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
                     >
@@ -1228,6 +1236,16 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                               {d.status === 'sent' ? 'Enviado' : d.status === 'failed' ? 'Falhou' : 'Ignorado'}
                             </span>
                           </div>
+                          {d.sentAt && (
+                            <p className="text-xs text-neutral-400 mt-1">
+                              Enviado em: {new Date(d.sentAt).toLocaleString('pt-BR')}
+                            </p>
+                          )}
+                          {d.messageId && (
+                            <p className="text-xs text-neutral-500 font-mono mt-1">
+                              ID da mensagem: {d.messageId}
+                            </p>
+                          )}
                           {d.error && (
                             <p className="text-xs text-rose-400 mt-1 p-2 bg-rose-500/5 rounded-lg border border-rose-500/10">
                               {d.error}

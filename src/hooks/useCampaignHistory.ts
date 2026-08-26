@@ -1,7 +1,7 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import type { CampaignExecutionHistory, CampaignExecutionSummary } from '../types';
 
-export function useCampaignHistory() {
+export function useCampaignHistory(instanceId: string | null) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -9,6 +9,14 @@ export function useCampaignHistory() {
   const [detail, setDetail] = useState<CampaignExecutionHistory | null>(null);
 
   const reqSeq = useRef(0);
+
+  useEffect(() => {
+    reqSeq.current++;
+    setSummaries([]);
+    setDetail(null);
+    setError(null);
+    setLoading(false);
+  }, [instanceId]);
 
   const fetchSummaries = useCallback(async (campaignId: string) => {
     const seq = ++reqSeq.current;
