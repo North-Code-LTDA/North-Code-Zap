@@ -159,14 +159,12 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     
     setFormType(c.schedule.scheduleType);
     if (c.schedule.scheduleType === 'once' && c.schedule.scheduledAt) {
-      const d = new Date(c.schedule.scheduledAt);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      const hh = String(d.getHours()).padStart(2, '0');
-      const min = String(d.getMinutes()).padStart(2, '0');
-      setFormDate(`${yyyy}-${mm}-${dd}`);
-      setFormTime(`${hh}:${min}`);
+      const raw = c.schedule.scheduledAt;
+      const match = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2})?$/);
+      if (match) {
+        setFormDate(match[1]);
+        setFormTime(match[2]);
+      }
     }
     if (c.schedule.dailyTimes) setFormDailyTimes([...c.schedule.dailyTimes]);
     if (c.schedule.weeklyTimeSlots) {
@@ -249,10 +247,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
 
       let scheduledAt: string | null = null;
       if (formType === 'once' && formDate && formTime) {
-        const d = new Date(`${formDate}T${formTime}`);
-        if (!isNaN(d.getTime())) {
-          scheduledAt = d.toISOString();
-        }
+        scheduledAt = `${formDate}T${formTime}:00`;
       }
 
       const scheduleConfig: CampaignScheduleConfig = {
@@ -325,17 +320,16 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
 
   // Body scroll lock
   useEffect(() => {
-    if (isModalOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
+    if (!isModalOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     return () => {
-      document.body.style.overflow = '';
+      document.body.style.overflow = previousOverflow;
     };
   }, [isModalOpen]);
 
   const selectedListObj = audiences?.lists.find(l => l.id === audienceListId);
+  const selectedListMissing = Boolean(audienceListId && audiences && !selectedListObj);
 
 
   if (!selectedInstanceId) {
@@ -366,7 +360,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
               <p className="text-sm text-neutral-400 mt-1">Organize ações de comunicação para suas audiências e acompanhe o ciclo de cada campanha.</p>
             </div>
           </div>
-          <Button variant="primary" onClick={handleOpenCreateWrapper} className="shrink-0 bg-emerald-500 hover:bg-emerald-600 border-emerald-500/50">
+          <Button variant="primary" onClick={handleOpenCreateWrapper} className="shrink-0">
             <Plus className="w-5 h-5 mr-2" />
             Nova Campanha
           </Button>
@@ -453,7 +447,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
           <p className="text-neutral-400 max-w-sm mb-6">
             Crie uma campanha para organizar uma audiência, mensagem e programação.
           </p>
-          <Button variant="primary" onClick={handleOpenCreateWrapper} className="bg-emerald-500 hover:bg-emerald-600 border-emerald-500/50">
+          <Button variant="primary" onClick={handleOpenCreateWrapper}>
             <Plus className="w-4 h-4 mr-2" />
             Criar primeira campanha
           </Button>
@@ -507,30 +501,30 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                       <>
                         {isDraft && (
                           <>
-                            <button type="button" title="Agendar Disparo" className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors" onClick={() => handleSchedule(c.id)}>
+                            <button type="button" aria-label="Agendar" title="Agendar Disparo" className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors" onClick={() => handleSchedule(c.id)}>
                               <Calendar className="w-4 h-4" />
                             </button>
-                            <button type="button" title="Editar Rascunho" className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" onClick={() => handleOpenEdit(c)}>
+                            <button type="button" aria-label="Editar" title="Editar Rascunho" className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" onClick={() => handleOpenEdit(c)}>
                               <Edit3 className="w-4 h-4" />
                             </button>
                           </>
                         )}
                         {(backendStatus === 'active' || backendStatus === 'running') && (
-                          <button type="button" title="Pausar" className="p-1.5 rounded-lg text-amber-400 hover:bg-amber-500/10 transition-colors" onClick={() => handlePause(c.id)}>
+                          <button type="button" aria-label="Pausar" title="Pausar" className="p-1.5 rounded-lg text-amber-400 hover:bg-amber-500/10 transition-colors" onClick={() => handlePause(c.id)}>
                             <Pause className="w-4 h-4" />
                           </button>
                         )}
                         {backendStatus === 'paused' && (
-                          <button type="button" title="Retomar" className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/10 transition-colors" onClick={() => handleResume(c.id)}>
+                          <button type="button" aria-label="Retomar" title="Retomar" className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/10 transition-colors" onClick={() => handleResume(c.id)}>
                             <Play className="w-4 h-4" />
                           </button>
                         )}
                         {!isDraft && (
-                           <button type="button" title="Voltar Rascunho" className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" onClick={() => handleUnschedule(c.id)}>
+                           <button type="button" aria-label="Voltar para rascunho" title="Voltar Rascunho" className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" onClick={() => handleUnschedule(c.id)}>
                             <Edit3 className="w-4 h-4" />
                           </button>
                         )}
-                        <button type="button" title="Excluir" className="p-1.5 rounded-lg text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 transition-colors" onClick={() => setDeleteConfirm(c.id)}>
+                        <button type="button" aria-label="Excluir" title="Excluir" className="p-1.5 rounded-lg text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 transition-colors" onClick={() => setDeleteConfirm(c.id)}>
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </>
@@ -606,6 +600,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
               </div>
               <button
                 type="button"
+                aria-label="Fechar modal"
                 onClick={() => setIsModalOpen(false)}
                 className="p-2 rounded-xl bg-neutral-800/80 hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
               >
@@ -668,6 +663,14 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                     <AlertTriangle className="w-3.5 h-3.5" /> Esta lista está vazia. O rascunho pode ser salvo, mas não programado.
                   </p>
                 )}
+                {selectedListMissing && (
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-400">
+                      Lista não encontrada. Selecione outra audiência antes de programar.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* 3. Mídia / Imagem */}
@@ -697,7 +700,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                         alt="Preview"
                         className="w-full h-full object-cover"
                         onError={(e) => {
-                          (e.target).src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM1MjUyNTIiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHg9IjMiIHk9IjMiIHJ4PSIyIiByeT0iMiIvPjxjaXJjbGUgY3g9IjkiIGN5PSI5IiByPSIyIi8+PHBhdGggZD0ibTIxIDE1LTMuMDgtMy4wOGExLjIgMS4yIDAgMCAwLTEuNzIgMGwtMS44MSAxLjgxIi8+PC9zdmc+';
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM1MjUyNTIiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHg9IjMiIHk9IjMiIHJ4PSIyIiByeT0iMiIvPjxjaXJjbGUgY3g9IjkiIGN5PSI5IiByPSIyIi8+PHBhdGggZD0ibTIxIDE1LTMuMDgtMy4wOGExLjIgMS4yIDAgMCAwLTEuNzIgMGwtMS44MSAxLjgxIi8+PC9zdmc+';
                         }}
                       />
                     </div>
@@ -882,6 +886,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                               {formDailyTimes.length > 1 && (
                                 <button
                                   type="button"
+                                  aria-label="Remover horário"
                                   onClick={() => setFormDailyTimes(prev => prev.filter(t => t !== time))}
                                   className="hover:text-rose-400 ml-1"
                                 >
@@ -984,6 +989,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                                 {t}
                                 <button
                                   type="button"
+                                  aria-label="Remover horário"
                                   onClick={() => {
                                     setFormWeeklySlots(prev => prev.map(s => {
                                       if (s.day === selectedWeeklyDayForTimes) {
@@ -1095,7 +1101,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
               <Button type="button" variant="secondary" onClick={() => setIsModalOpen(false)}>
                 Cancelar
               </Button>
-              <Button type="submit" form="campaign-form" disabled={isSubmitting} className="bg-emerald-500 hover:bg-emerald-600 text-white border-transparent">
+              <Button type="submit" variant="primary" form="campaign-form" disabled={isSubmitting}>
                 {isSubmitting ? (
                   <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin mr-2" />
                 ) : null}
