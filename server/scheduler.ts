@@ -724,6 +724,114 @@ export class SchedulerService {
   /**
    * Core sequential queue execution engine with throttle, retries, and result tracking
    */
+
+  private async executeTarget(params: {
+    instanceId: string;
+    message: string;
+    target: ScheduledTarget;
+    fallbackName: string;
+    media: ScheduledMedia | null;
+    executionSeed: string;
+  }): Promise<ScheduleExecutionDetail> {
+    const { instanceId, message, target, fallbackName, media, executionSeed } = params;
+    
+    const renderedMessage = renderMessageTemplate(
+      message || '',
+      target,
+      fallbackName || 'amigo(a)',
+      { seed: executionSeed }
+    );
+
+    const instance = this.instanceManager.get(instanceId);
+    if (!instance || !instance.whatsapp) {
+      console.log(`[Scheduler] WhatsApp not found for instance=${instanceId}`);
+      return {
+        targetJid: target.jid,
+        targetLabel: target.label,
+        status: 'failed',
+        renderedPreview: renderedMessage,
+        error: 'Instância desconectada/inexistente',
+      };
+    }
+
+    const state = instance.whatsapp.getState();
+    if (state.status !== 'connected') {
+      console.log(
+        `[Scheduler] WhatsApp disconnected during execution target=${target.label}`
+      );
+      return {
+        targetJid: target.jid,
+        targetLabel: target.label,
+        status: 'failed',
+        renderedPreview: renderedMessage,
+        error: 'WhatsApp desconectado',
+      };
+    }
+
+    let attemptSuccess = false;
+    let lastError = '';
+    let messageId: string | undefined;
+
+    for (let attempt = 1; attempt <= MAX_SEND_RETRIES; attempt++) {
+      try {
+        if (media && media.type === 'image') {
+          const sendRes = await instance.whatsapp.sendImageMessage(
+            target.jid,
+            media,
+            renderedMessage
+          );
+          if (sendRes.success) {
+            attemptSuccess = true;
+            messageId = sendRes.message?.id;
+            break;
+          } else {
+            lastError = sendRes.error || 'Falha no envio da imagem';
+          }
+        } else {
+          const sendRes = await instance.whatsapp.sendTextMessage(target.jid, renderedMessage);
+          if (sendRes.success) {
+            attemptSuccess = true;
+            messageId = sendRes.message?.id;
+            break;
+          } else {
+            lastError = sendRes.error || 'Falha no envio da mensagem';
+          }
+        }
+      } catch (err: any) {
+        lastError = err?.message || 'Erro inesperado';
+      }
+
+      if (attempt < MAX_SEND_RETRIES) {
+        await new Promise((res) => setTimeout(res, 1000 * attempt));
+      }
+    }
+
+    if (attemptSuccess) {
+      console.log(
+        `[Scheduler] sent target=${target.label || target.jid} id=${messageId || 'unknown'}`
+      );
+      return {
+        targetJid: target.jid,
+        targetLabel: target.label,
+        status: 'sent',
+        messageId,
+        renderedPreview: renderedMessage,
+        sentAt: new Date().toISOString(),
+      };
+    } else {
+      console.log(
+        `[Scheduler] failed target=${target.label || target.jid} error=${lastError}`
+      );
+      return {
+        targetJid: target.jid,
+        targetLabel: target.label,
+        status: 'failed',
+        renderedPreview: renderedMessage,
+        error: lastError,
+      };
+    }
+  }
+
   private async executeSchedule(
     schedule: ScheduledMessage,
     isRunNow = false
@@ -797,15 +905,7 @@ export class SchedulerService {
         })`
       );
 
-      // Personalize message with template renderer
-      const renderedMessage = renderMessageTemplate(
-        schedule.message || '',
-        target,
-        schedule.fallbackName || 'amigo(a)',
-        { seed: executionSeed }
-      );
-
-      // Emit progress
+      // Emit progress before send
       const progressEvent: SchedulerProgressEvent = {
         scheduleId: schedule.id,
         instanceId: schedule.instanceId,
@@ -823,113 +923,33 @@ export class SchedulerService {
         this.io.to(`instance:${schedule.instanceId}`).emit('scheduler:progress', progressEvent);
       }
 
-      // Check WhatsApp connection
-      const instance = this.instanceManager.get(schedule.instanceId);
-      if (!instance || !instance.whatsapp) {
-        console.log(`[Scheduler] WhatsApp not found for instance=${schedule.instanceId}`);
-        failedCount++;
-        details.push({
-          targetJid: target.jid,
-          targetLabel: target.label,
-          status: 'failed',
-          renderedPreview: renderedMessage,
-          error: 'Instância desconectada/inexistente',
-        });
-        continue;
-      }
-      const state = instance.whatsapp.getState();
-      if (state.status !== 'connected') {
-        console.log(
-          `[Scheduler] WhatsApp disconnected during schedule=${schedule.id} target=${target.label}`
-        );
-        failedCount++;
-        details.push({
-          targetJid: target.jid,
-          targetLabel: target.label,
-          status: 'failed',
-          renderedPreview: renderedMessage,
-          error: 'WhatsApp desconectado',
-        });
-        continue;
-      }
+      const detail = await this.executeTarget({
+        instanceId: schedule.instanceId,
+        message: schedule.message || '',
+        target,
+        fallbackName: schedule.fallbackName || 'amigo(a)',
+        media: schedule.media,
+        executionSeed
+      });
 
-      // Attempt send with retry and small backoff
-      let attemptSuccess = false;
-      let lastError = '';
-      let messageId: string | undefined;
-
-      for (let attempt = 1; attempt <= MAX_SEND_RETRIES; attempt++) {
-        try {
-          if (schedule.media && schedule.media.type === 'image') {
-            const sendRes = await instance.whatsapp.sendImageMessage(
-              target.jid,
-              schedule.media,
-              renderedMessage
-            );
-            if (sendRes.success) {
-              attemptSuccess = true;
-              messageId = sendRes.message?.id;
-              break;
-            } else {
-              lastError = sendRes.error || 'Falha no envio da imagem';
-            }
-          } else {
-            const sendRes = await instance.whatsapp.sendTextMessage(target.jid, renderedMessage);
-            if (sendRes.success) {
-              attemptSuccess = true;
-              messageId = sendRes.message?.id;
-              break;
-            } else {
-              lastError = sendRes.error || 'Falha no envio da mensagem';
-            }
-          }
-        } catch (err: any) {
-          lastError = err?.message || 'Erro inesperado';
-        }
-
-        if (attempt < MAX_SEND_RETRIES) {
-          // Linear backoff
-          await new Promise((res) => setTimeout(res, 1000 * attempt));
-        }
-      }
-
-      if (attemptSuccess) {
+      if (detail.status === 'sent') {
         sentCount++;
-        console.log(
-          `[Scheduler] sent target=${target.label || target.jid} id=${messageId || 'unknown'}`
-        );
-        details.push({
-          targetJid: target.jid,
-          targetLabel: target.label,
-          status: 'sent',
-          messageId,
-          renderedPreview: renderedMessage,
-          sentAt: new Date().toISOString(),
-        });
       } else {
         failedCount++;
-        console.log(
-          `[Scheduler] failed target=${target.label || target.jid} error=${lastError}`
-        );
-        details.push({
-          targetJid: target.jid,
-          targetLabel: target.label,
-          status: 'failed',
-          renderedPreview: renderedMessage,
-          error: lastError,
-        });
       }
+      details.push(detail);
 
       // Update progress with completion of current target
       if (this.io) {
         this.io.to(`instance:${schedule.instanceId}`).emit('scheduler:progress', {
           ...progressEvent,
-          status: attemptSuccess ? 'sent' : 'failed',
+          status: detail.status,
           phase: 'sending',
           sentCount,
           failedCount,
         });
       }
+
 
       // Throttle or Batch Pause before next target
       if (i < schedule.targets.length - 1) {
@@ -1036,6 +1056,7 @@ export class SchedulerService {
   }
 
 
+
   public async executeTransientMessage(params: {
     instanceId: string;
     name: string;
@@ -1043,105 +1064,25 @@ export class SchedulerService {
     target: ScheduledTarget;
     fallbackName: string;
   }): Promise<ScheduleLastResult> {
-    const { instanceId, message, target, fallbackName } = params;
-    
-    console.log(`[Scheduler] executing transient message="${params.name}" target=${target.label || target.jid}`);
     const executionSeed = `transient_${Date.now()}`;
-    const details: ScheduleExecutionDetail[] = [];
-    let sentCount = 0;
-    let failedCount = 0;
-
-    // Personalize message with template renderer
-    const renderedMessage = renderMessageTemplate(
-      message || '',
-      target,
-      fallbackName || 'amigo(a)',
-      { seed: executionSeed }
-    );
-
-    const instance = this.instanceManager.get(instanceId);
-    if (!instance || !instance.whatsapp) {
-      console.log(`[Scheduler] WhatsApp not found for instance=${instanceId}`);
-      failedCount++;
-      details.push({
-        targetJid: target.jid,
-        targetLabel: target.label,
-        status: 'failed',
-        renderedPreview: renderedMessage,
-        error: 'Instância desconectada/inexistente',
-      });
-      return { totalTargets: 1, sentCount, failedCount, skippedCount: 0, executedAt: new Date().toISOString(), details };
-    }
-
-    const state = instance.whatsapp.getState();
-    if (state.status !== 'connected') {
-      console.log(`[Scheduler] WhatsApp disconnected during transient message target=${target.label}`);
-      failedCount++;
-      details.push({
-        targetJid: target.jid,
-        targetLabel: target.label,
-        status: 'failed',
-        renderedPreview: renderedMessage,
-        error: 'WhatsApp desconectado',
-      });
-      return { totalTargets: 1, sentCount, failedCount, skippedCount: 0, executedAt: new Date().toISOString(), details };
-    }
-
-    // Attempt send with retry and small backoff
-    let attemptSuccess = false;
-    let lastError = '';
-    let messageId = undefined;
-
-    for (let attempt = 1; attempt <= MAX_SEND_RETRIES; attempt++) {
-      try {
-        const sendRes = await instance.whatsapp.sendTextMessage(target.jid, renderedMessage);
-        if (sendRes.success) {
-          attemptSuccess = true;
-          messageId = sendRes.message?.id;
-          break;
-        } else {
-          lastError = sendRes.error || 'Falha no envio da mensagem';
-        }
-      } catch (err) {
-        lastError = err?.message || 'Erro inesperado';
-      }
-
-      if (attempt < MAX_SEND_RETRIES) {
-        await new Promise((res) => setTimeout(res, 1000 * attempt));
-      }
-    }
-
-    if (attemptSuccess) {
-      sentCount++;
-      console.log(`[Scheduler] sent transient target=${target.label || target.jid} id=${messageId || 'unknown'}`);
-      details.push({
-        targetJid: target.jid,
-        targetLabel: target.label,
-        status: 'sent',
-        messageId,
-        renderedPreview: renderedMessage,
-        sentAt: new Date().toISOString(),
-      });
-    } else {
-      failedCount++;
-      console.log(`[Scheduler] failed transient target=${target.label || target.jid} error=${lastError}`);
-      details.push({
-        targetJid: target.jid,
-        targetLabel: target.label,
-        status: 'failed',
-        renderedPreview: renderedMessage,
-        error: lastError,
-      });
-    }
+    const detail = await this.executeTarget({
+      instanceId: params.instanceId,
+      message: params.message,
+      target: params.target,
+      fallbackName: params.fallbackName,
+      media: null,
+      executionSeed
+    });
 
     return {
       totalTargets: 1,
-      sentCount,
-      failedCount,
-      skippedCount: 0,
+      sentCount: detail.status === 'sent' ? 1 : 0,
+      failedCount: detail.status === 'failed' ? 1 : 0,
+      skippedCount: detail.status === 'skipped' ? 1 : 0,
       executedAt: new Date().toISOString(),
-      details,
+      details: [detail]
     };
   }
+
 
 }

@@ -11,6 +11,8 @@ import { SchedulerService } from './server/scheduler.ts';
 import { campaignService } from './server/campaigns.ts';
 import { campaignHistoryService } from "./server/campaign-history.ts";
 import { templateService } from "./server/templates.ts";
+import { automationService } from './server/automations.ts';
+import { AutomationRunner } from './server/automation-runner.ts';
 import { authService, User, Workspace, Session } from './server/auth.ts';
 import { getCookieFromRequest, getCookieFromSocket } from './server/cookie.ts';
 
@@ -31,6 +33,7 @@ process.env.TZ = APP_TIMEZONE;
 
 const instanceManager = new InstanceManager();
 const schedulerService = new SchedulerService(instanceManager);
+const automationRunner = new AutomationRunner(instanceManager, schedulerService);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -515,6 +518,74 @@ async function startServer() {
       res.json({ success: true, execution });
     });
 
+  
+  // Automations API
+  app.get('/api/instances/:instanceId/automations', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    const automations = automationService.listForInstance(req.auth!.workspace.id, req.params.instanceId);
+    res.json(automations);
+  });
+
+  app.post('/api/instances/:instanceId/automations', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+
+    // Validate resource exists before creating
+    try {
+      const state = runtime.audiences.getState();
+      if (req.body.trigger?.type === 'contact_added_to_list') {
+        if (!state.lists.some(l => l.id === req.body.trigger.listId)) {
+           return res.status(400).json({ error: 'List not found' });
+        }
+      } else if (req.body.trigger?.type === 'tag_added_to_contact') {
+        if (!state.tags.some(t => t.id === req.body.trigger.tagId)) {
+           return res.status(400).json({ error: 'Tag not found' });
+        }
+      } else {
+        return res.status(400).json({ error: 'Invalid trigger type' });
+      }
+
+      const automation = automationService.create(req.auth!.workspace.id, req.params.instanceId, req.body);
+      res.json(automation);
+    } catch (err: any) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/instances/:instanceId/automations/:automationId', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    
+    try {
+      if (req.body.trigger) {
+        const state = runtime.audiences.getState();
+        if (req.body.trigger.type === 'contact_added_to_list') {
+          if (!state.lists.some(l => l.id === req.body.trigger.listId)) {
+             return res.status(400).json({ error: 'List not found' });
+          }
+        } else if (req.body.trigger.type === 'tag_added_to_contact') {
+          if (!state.tags.some(t => t.id === req.body.trigger.tagId)) {
+             return res.status(400).json({ error: 'Tag not found' });
+          }
+        }
+      }
+
+      const automation = automationService.update(req.params.automationId, req.auth!.workspace.id, req.params.instanceId, req.body);
+      res.json(automation);
+    } catch (err: any) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/instances/:instanceId/automations/:automationId', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    
+    automationService.delete(req.params.automationId, req.auth!.workspace.id, req.params.instanceId);
+    res.json({ success: true });
+  });
+
   // Audiences API
 
   app.get('/api/instances/:instanceId/audiences', (req, res) => {
@@ -567,8 +638,30 @@ async function startServer() {
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     try {
       if (!Array.isArray(req.body.jids)) return res.status(400).json({ error: 'Invalid payload' });
-      runtime.audiences.addTagToContacts(req.params.tagId, req.body.jids);
+      
+      const beforeState = runtime.audiences.getState();
+      const tagId = req.params.tagId;
+      const requestedJids = req.body.jids as string[];
+      
+      const addedJids = requestedJids.filter(
+        jid => !(beforeState.contactTags[jid] || []).includes(tagId)
+      );
+
+      runtime.audiences.addTagToContacts(tagId, req.body.jids);
       res.json({ success: true });
+      
+      if (addedJids.length > 0) {
+        const events = addedJids.map(jid => ({
+          type: 'tag_added_to_contact' as const,
+          workspaceId: req.auth!.workspace.id,
+          instanceId: req.params.instanceId,
+          tagId,
+          jid
+        }));
+        automationRunner.dispatchMany(events).catch(err => {
+          console.error('[Automation] Background dispatch failed', err);
+        });
+      }
     } catch (e: any) {
       if (e.message === 'Tag not found') res.status(404).json({ error: e.message });
       else res.status(400).json({ error: e.message });
@@ -622,8 +715,30 @@ async function startServer() {
     if (!runtime) return res.status(404).json({ error: 'Not found' });
     try {
       if (!Array.isArray(req.body.contactJids)) return res.status(400).json({ error: 'Invalid payload' });
-      const list = runtime.audiences.updateListContacts(req.params.listId, req.body.contactJids);
+      
+      const beforeState = runtime.audiences.getState();
+      const listId = req.params.listId;
+      const oldList = beforeState.lists.find(l => l.id === listId);
+      const oldJids = new Set(oldList ? oldList.contactJids : []);
+      
+      const list = runtime.audiences.updateListContacts(listId, req.body.contactJids);
       res.json(list);
+      
+      const newJids = req.body.contactJids as string[];
+      const addedJids = newJids.filter(jid => !oldJids.has(jid));
+      
+      if (addedJids.length > 0) {
+        const events = addedJids.map(jid => ({
+          type: 'contact_added_to_list' as const,
+          workspaceId: req.auth!.workspace.id,
+          instanceId: req.params.instanceId,
+          listId,
+          jid
+        }));
+        automationRunner.dispatchMany(events).catch(err => {
+          console.error('[Automation] Background dispatch failed', err);
+        });
+      }
     } catch (e: any) {
       if (e.message === 'List not found') res.status(404).json({ error: e.message });
       else res.status(400).json({ error: e.message });
@@ -1037,6 +1152,7 @@ async function startServer() {
   campaignService.init();
   campaignHistoryService.init();
   templateService.init();
+  automationService.init();
   schedulerService.init();
   schedulerService.setExecutionCompletedHandler(async (schedule, result) => {
     try {

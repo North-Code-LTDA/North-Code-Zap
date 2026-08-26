@@ -48,7 +48,7 @@ export class AutomationService {
     }
 
     const ids = new Set<string>();
-    const namesByInstance = new Map<string, Set<string>>(); // instanceId -> Set of names (lowercase)
+    const namesByTenant = new Map<string, Set<string>>(); // workspaceId:instanceId -> Set of names (lowercase)
 
     for (const record of parsed) {
       if (!isValidUuid(record.id)) throw new Error('Invalid automation id');
@@ -66,13 +66,14 @@ export class AutomationService {
       ids.add(record.id);
 
       const nameLower = record.name.trim().toLowerCase();
-      let instanceNames = namesByInstance.get(record.instanceId);
-      if (!instanceNames) {
-        instanceNames = new Set<string>();
-        namesByInstance.set(record.instanceId, instanceNames);
+      const tenantKey = `${record.workspaceId}:${record.instanceId}`;
+      let tenantNames = namesByTenant.get(tenantKey);
+      if (!tenantNames) {
+        tenantNames = new Set<string>();
+        namesByTenant.set(tenantKey, tenantNames);
       }
-      if (instanceNames.has(nameLower)) throw new Error(`Duplicate name in instance: ${record.name}`);
-      instanceNames.add(nameLower);
+      if (tenantNames.has(nameLower)) throw new Error(`Duplicate name in instance: ${record.name}`);
+      tenantNames.add(nameLower);
     }
 
     this.state = parsed;
@@ -96,16 +97,57 @@ export class AutomationService {
   }
 
   public create(workspaceId: string, instanceId: string, data: { name: string; enabled?: boolean; trigger: AutomationTrigger; message: string; fallbackName?: string; }): Automation {
-    const nameStr = (data.name || '').trim();
-    if (!nameStr) throw new Error('Name is required');
+    if (typeof data.name !== 'string') {
+      const err = new Error('Name must be a string');
+      (err as any).status = 400;
+      throw err;
+    }
+    const nameStr = data.name.trim();
+    if (!nameStr) {
+      const err = new Error('Name cannot be empty');
+      (err as any).status = 400;
+      throw err;
+    }
 
-    const messageStr = (data.message || '').trim();
-    if (!messageStr) throw new Error('Message is required');
+    if (typeof data.message !== 'string') {
+      const err = new Error('Message must be a string');
+      (err as any).status = 400;
+      throw err;
+    }
+    const messageStr = data.message.trim();
+    if (!messageStr) {
+      const err = new Error('Message cannot be empty');
+      (err as any).status = 400;
+      throw err;
+    }
 
-    if (!isValidTrigger(data.trigger)) throw new Error('Invalid trigger');
+    if (data.enabled !== undefined && typeof data.enabled !== 'boolean') {
+      const err = new Error('Enabled must be a boolean');
+      (err as any).status = 400;
+      throw err;
+    }
+    
+    if (data.fallbackName !== undefined) {
+      if (typeof data.fallbackName !== 'string') {
+        const err = new Error('FallbackName must be a string');
+        (err as any).status = 400;
+        throw err;
+      }
+      if (data.fallbackName.trim() === '') {
+        const err = new Error('FallbackName cannot be empty');
+        (err as any).status = 400;
+        throw err;
+      }
+    }
+
+    if (!isValidTrigger(data.trigger)) {
+      const err = new Error('Invalid trigger');
+      (err as any).status = 400;
+      throw err;
+    }
 
     const nameLower = nameStr.toLowerCase();
-    const isDuplicateName = this.state.some(a => a.instanceId === instanceId && a.name.toLowerCase() === nameLower);
+    const isDuplicateName = this.state.some(a => a.workspaceId === workspaceId && a.instanceId === instanceId && a.name.toLowerCase() === nameLower);
     if (isDuplicateName) {
       const err = new Error('Duplicate automation name');
       (err as any).status = 409;
@@ -150,14 +192,19 @@ export class AutomationService {
     const automation = nextState[index];
 
     if (data.name !== undefined) {
-      const nameStr = (data.name || '').trim();
+      if (typeof data.name !== 'string') {
+        const err = new Error('Name must be a string');
+        (err as any).status = 400;
+        throw err;
+      }
+      const nameStr = data.name.trim();
       if (!nameStr) {
           const err = new Error('Name cannot be empty');
           (err as any).status = 400;
           throw err;
       }
       const nameLower = nameStr.toLowerCase();
-      const isDuplicateName = nextState.some(a => a.id !== id && a.instanceId === instanceId && a.name.toLowerCase() === nameLower);
+      const isDuplicateName = nextState.some(a => a.id !== id && a.workspaceId === workspaceId && a.instanceId === instanceId && a.name.toLowerCase() === nameLower);
       if (isDuplicateName) {
         const err = new Error('Duplicate automation name');
         (err as any).status = 409;
@@ -167,7 +214,12 @@ export class AutomationService {
     }
 
     if (data.enabled !== undefined) {
-      automation.enabled = !!data.enabled;
+      if (typeof data.enabled !== 'boolean') {
+        const err = new Error('Enabled must be a boolean');
+        (err as any).status = 400;
+        throw err;
+      }
+      automation.enabled = data.enabled;
     }
 
     if (data.trigger !== undefined) {
@@ -180,7 +232,12 @@ export class AutomationService {
     }
 
     if (data.message !== undefined) {
-      const msgStr = (data.message || '').trim();
+      if (typeof data.message !== 'string') {
+        const err = new Error('Message must be a string');
+        (err as any).status = 400;
+        throw err;
+      }
+      const msgStr = data.message.trim();
       if (!msgStr) {
           const err = new Error('Message cannot be empty');
           (err as any).status = 400;
@@ -190,7 +247,12 @@ export class AutomationService {
     }
 
     if (data.fallbackName !== undefined) {
-      const fbStr = (data.fallbackName || '').trim();
+      if (typeof data.fallbackName !== 'string') {
+        const err = new Error('Fallback name must be a string');
+        (err as any).status = 400;
+        throw err;
+      }
+      const fbStr = data.fallbackName.trim();
       if (!fbStr) {
           const err = new Error('Fallback name cannot be empty');
           (err as any).status = 400;

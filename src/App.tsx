@@ -34,6 +34,7 @@ import { DashboardView } from './components/DashboardView';
 import { ConversasView } from './components/ConversasView';
 import { AgendamentosView } from './components/AgendamentosView';
 import { CampanhasView } from './components/CampanhasView';
+import { AutomacoesView } from './components/AutomacoesView';
 import { ContatosView } from './components/ContatosView';
 import { TemplatesView } from './components/TemplatesView';
 import { PlaceholderView } from './components/PlaceholderView';
@@ -59,7 +60,7 @@ function AppContent() {
     { id: 'agendamentos', label: 'Agendamentos', icon: Calendar, isReal: true },
     { id: 'contatos', label: 'Contatos', icon: Users, isReal: true },
     { id: 'templates', label: 'Templates', icon: FileText, isReal: true },
-    { id: 'automacoes', label: 'Automações', icon: Zap },
+    { id: 'automacoes', label: 'Automações', icon: Zap, isReal: true },
     { id: 'fluxos', label: 'Fluxos', icon: Layers },
     { id: 'campanhas', label: 'Campanhas', icon: Send },
     { id: 'ia', label: 'IA', icon: Bot },
@@ -275,6 +276,11 @@ function AppContent() {
             <CampanhasView selectedInstanceId={selectedInstanceId} />
           )}
 
+                    {/* TAB 8: AUTOMAÇÕES */}
+          {currentTab === 'automacoes' && (
+            <AutomacoesView selectedInstanceId={selectedInstanceId} />
+          )}
+
           {/* OTHER PLACEHOLDER TABS */}
           {currentTab !== 'dashboard' &&
             currentTab !== 'whatsapp' &&
@@ -282,7 +288,8 @@ function AppContent() {
             currentTab !== 'agendamentos' &&
             currentTab !== 'contatos' &&
             currentTab !== 'templates' &&
-            currentTab !== 'campanhas' && (
+            currentTab !== 'campanhas' &&
+            currentTab !== 'automacoes' && (
               <PlaceholderView tab={currentTab} />
             )}
             </>
