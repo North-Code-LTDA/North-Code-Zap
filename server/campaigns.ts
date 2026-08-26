@@ -100,6 +100,10 @@ export class CampaignService {
       } else {
         if (typeof c.media.url !== 'string' || c.media.url.trim().length === 0) throw new Error('Invalid media url');
       }
+      
+      if (c.media.url !== undefined && typeof c.media.url !== 'string') throw new Error('Invalid media url type');
+      if (c.media.fileName !== undefined && typeof c.media.fileName !== 'string') throw new Error('Invalid media fileName type');
+      if (c.media.mimeType !== undefined && typeof c.media.mimeType !== 'string') throw new Error('Invalid media mimeType type');
       if (c.media.size !== undefined && (!Number.isInteger(c.media.size) || c.media.size < 0)) throw new Error('Invalid media size');
     }
 

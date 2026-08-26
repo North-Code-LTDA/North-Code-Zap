@@ -78,12 +78,40 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+
   const filteredCampaigns = useMemo(() => {
     if (!campaigns) return [];
     if (!search.trim()) return campaigns;
     const lower = search.toLowerCase();
     return campaigns.filter(c => c.name.toLowerCase().includes(lower));
   }, [campaigns, search]);
+
+  const metrics = useMemo(() => {
+    if (!campaigns) return { total: 0, drafts: 0, active: 0, paused: 0 };
+    return {
+      total: campaigns.length,
+      drafts: campaigns.filter(c => c.scheduleId === null).length,
+      active: campaigns.filter(c => {
+        const s = (c as any).status;
+        return s === 'active' || s === 'running';
+      }).length,
+      paused: campaigns.filter(c => (c as any).status === 'paused').length
+    };
+  }, [campaigns]);
+
+  const getStatusPresentation = (status: string) => {
+    switch (status) {
+      case 'draft': return { label: 'Rascunho', color: 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20' };
+      case 'active': return { label: 'Ativa', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' };
+      case 'running': return { label: 'Executando', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' };
+      case 'paused': return { label: 'Pausada', color: 'bg-amber-500/10 text-amber-400 border-amber-500/20' };
+      case 'completed': return { label: 'Concluída', color: 'bg-purple-500/10 text-purple-400 border-purple-500/20' };
+      case 'error': return { label: 'Erro', color: 'bg-rose-500/10 text-rose-400 border-rose-500/20' };
+      case 'missing_schedule': return { label: 'Agendamento ausente', color: 'bg-rose-500/10 text-rose-400 border-rose-500/20' };
+      default: return { label: status, color: 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20' };
+    }
+  };
+
 
   const resetForm = () => {
     setEditingId(null);
@@ -131,8 +159,13 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     setFormType(c.schedule.scheduleType);
     if (c.schedule.scheduleType === 'once' && c.schedule.scheduledAt) {
       const d = new Date(c.schedule.scheduledAt);
-      setFormDate(d.toISOString().split('T')[0]);
-      setFormTime(d.toTimeString().substring(0, 5));
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const hh = String(d.getHours()).padStart(2, '0');
+      const min = String(d.getMinutes()).padStart(2, '0');
+      setFormDate(`${yyyy}-${mm}-${dd}`);
+      setFormTime(`${hh}:${min}`);
     }
     if (c.schedule.dailyTimes) setFormDailyTimes([...c.schedule.dailyTimes]);
     if (c.schedule.weeklyTimeSlots) {
@@ -212,17 +245,13 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     try {
       setActionError(null);
       if (!name.trim()) throw new Error('Nome é obrigatório');
-      if (!audienceListId) throw new Error('Selecione uma lista de audiência');
-      if (!message.trim()) throw new Error('Mensagem é obrigatória');
-      if (!fallbackName.trim()) throw new Error('Nome de fallback é obrigatório');
 
       let scheduledAt: string | null = null;
-      if (formType === 'once') {
-        if (!formDate || !formTime) throw new Error('Data e horário são obrigatórios para agendamento único');
+      if (formType === 'once' && formDate && formTime) {
         const d = new Date(`${formDate}T${formTime}`);
-        if (isNaN(d.getTime())) throw new Error('Data ou horário inválido');
-        if (d <= new Date()) throw new Error('Data de agendamento deve estar no futuro');
-        scheduledAt = d.toISOString();
+        if (!isNaN(d.getTime())) {
+          scheduledAt = d.toISOString();
+        }
       }
 
       const scheduleConfig: CampaignScheduleConfig = {
@@ -231,16 +260,16 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
         dailyTimes: formType === 'daily' ? formDailyTimes : [],
         weeklyTimeSlots: formType === 'weekly' ? formWeeklySlots : [],
         deliveryOptions: {
-          intervalBetweenMessagesMs: formIntervalSeconds * 1000,
+          intervalBetweenMessagesMs: (formIntervalSeconds || 5) * 1000,
           batchPauseEnabled: formBatchPauseEnabled,
-          batchSize: formBatchSize,
-          batchPauseMs: formBatchPauseMinutes * 60000
+          batchSize: formBatchSize || 5,
+          batchPauseMs: (formBatchPauseMinutes || 5) * 60000
         }
       };
 
       const payload: Partial<Campaign> = {
         name,
-        audienceListId,
+        audienceListId: audienceListId || null,
         message,
         fallbackName,
         media: formMedia,
@@ -251,7 +280,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
       if (editingId) {
         await updateCampaign(editingId, payload);
       } else {
-        await createCampaign(payload);
+        if (!selectedInstanceId) throw new Error('Instância não selecionada');
+        await createCampaign({ ...payload, instanceId: selectedInstanceId } as Partial<Campaign>);
       }
       setIsModalOpen(false);
     } catch (e: any) {
@@ -313,6 +343,25 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
         </div>
       )}
 
+      
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 flex-shrink-0">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
+          <p className="text-sm font-medium text-neutral-400">Total</p>
+          <p className="text-2xl font-bold text-white mt-1">{metrics.total}</p>
+        </div>
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
+          <p className="text-sm font-medium text-neutral-400">Rascunhos</p>
+          <p className="text-2xl font-bold text-neutral-300 mt-1">{metrics.drafts}</p>
+        </div>
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+          <p className="text-sm font-medium text-emerald-500">Ativas</p>
+          <p className="text-2xl font-bold text-emerald-400 mt-1">{metrics.active}</p>
+        </div>
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4">
+          <p className="text-sm font-medium text-amber-500">Pausadas</p>
+          <p className="text-2xl font-bold text-amber-400 mt-1">{metrics.paused}</p>
+        </div>
+      </div>
       <div className="flex items-center gap-4 mb-6 flex-shrink-0">
         <div className="relative flex-1">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
@@ -349,10 +398,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
               // Note: we can't easily poll scheduler state here so we just trust if it has scheduleId it's "scheduled" unless backend extends status.
               // The backend currently exposes "status" in the campaigns endpoint if we joined it, or we just call it "Agendada".
               // Let's assume the API returns status or we just show "Agendada".
-              const statusLabel = isDraft ? 'Rascunho' : ((c as any).status === 'paused' ? 'Pausada' : ((c as any).status === 'running' ? 'Rodando' : 'Agendada'));
-              const statusColor = isDraft ? 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20' 
-                : ((c as any).status === 'paused' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
-                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20');
+              const backendStatus = isDraft ? 'draft' : ((c as any).status || 'missing_schedule');
+              const { label: statusLabel, color: statusColor } = getStatusPresentation(backendStatus);
 
               return (
                 <div key={c.id} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 flex flex-col gap-5">
@@ -380,12 +427,12 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                         </>
                       ) : (
                         <>
-                          {((c as any).status === 'scheduled' || (c as any).status === 'running') && (
+                          {(backendStatus === 'active' || backendStatus === 'running') && (
                             <Button variant="secondary" className="h-8 px-3 text-xs border-amber-500/30 text-amber-400 hover:bg-amber-500/10" onClick={() => handlePause(c.id)}>
                               <Pause className="w-3.5 h-3.5 mr-1.5" /> Pausar
                             </Button>
                           )}
-                          {(c as any).status === 'paused' && (
+                          {backendStatus === 'paused' && (
                             <Button className="h-8 px-3 text-xs bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20" onClick={() => handleResume(c.id)}>
                               <Play className="w-3.5 h-3.5 mr-1.5" /> Retomar
                             </Button>
@@ -539,7 +586,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
 
                       {mediaTab === 'upload' ? (
                         <div>
-                          <input type="file" accept="image/*,video/*,application/pdf" className="hidden" ref={fileInputRef} onChange={handleFileSelect} />
+                          <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" ref={fileInputRef} onChange={handleFileSelect} />
                           <Button variant="secondary" className="w-full h-24 border-dashed bg-neutral-900/50" onClick={() => fileInputRef.current?.click()} disabled={mediaUploading}>
                             {mediaUploading ? (
                               <div className="w-5 h-5 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />

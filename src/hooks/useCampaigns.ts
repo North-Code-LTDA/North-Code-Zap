@@ -7,10 +7,12 @@ export function useCampaigns(instanceId: string | null) {
   const [error, setError] = useState<string | null>(null);
   
   const requestSeqRef = useRef(0);
+  const currentInstanceIdRef = useRef<string | null>(instanceId);
 
   const fetchCampaigns = useCallback(async () => {
     if (!instanceId) return;
     const seq = ++requestSeqRef.current;
+    const fetchInstanceId = instanceId;
     
     setLoading(true);
     setError(null);
@@ -21,21 +23,22 @@ export function useCampaigns(instanceId: string | null) {
         throw new Error(data.error || 'Falha ao buscar campanhas');
       }
       const data = await res.json();
-      if (seq === requestSeqRef.current) {
+      if (seq === requestSeqRef.current && currentInstanceIdRef.current === fetchInstanceId) {
         setState(data.campaigns);
       }
     } catch (e: any) {
-      if (seq === requestSeqRef.current) {
+      if (seq === requestSeqRef.current && currentInstanceIdRef.current === fetchInstanceId) {
         setError(e.message);
       }
     } finally {
-      if (seq === requestSeqRef.current) {
+      if (seq === requestSeqRef.current && currentInstanceIdRef.current === fetchInstanceId) {
         setLoading(false);
       }
     }
   }, [instanceId]);
 
   useEffect(() => {
+    currentInstanceIdRef.current = instanceId;
     requestSeqRef.current += 1;
     setState(null);
     setError(null);
@@ -48,9 +51,9 @@ export function useCampaigns(instanceId: string | null) {
 
   const wrapMutation = <T extends any[], R>(fn: (...args: T) => Promise<R>) => {
     return async (...args: T) => {
-      const operationInstanceId = instanceId;
+      const operationInstanceId = currentInstanceIdRef.current;
       const res = await fn(...args);
-      if (operationInstanceId === instanceId) {
+      if (operationInstanceId && currentInstanceIdRef.current === operationInstanceId) {
         await fetchCampaigns();
       }
       return res;
