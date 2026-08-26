@@ -9,6 +9,7 @@ import { createServer as createViteServer } from 'vite';
 import { InstanceManager, DATA_DIR } from './server/instances.ts';
 import { SchedulerService } from './server/scheduler.ts';
 import { campaignService } from './server/campaigns.ts';
+import { campaignHistoryService } from "./server/campaign-history.ts";
 import { authService, User, Workspace, Session } from './server/auth.ts';
 import { getCookieFromRequest, getCookieFromSocket } from './server/cookie.ts';
 
@@ -438,7 +439,36 @@ async function startServer() {
   });
 
   
+
+    // Campaign History API
+    app.get('/api/campaigns/:id/history', (req, res) => {
+      const workspaceId = req.auth!.workspace.id;
+      const campaign = campaignService.getForWorkspace(req.params.id, workspaceId);
+      if (!campaign) {
+        return res.status(404).json({ error: 'Campaign not found' });
+      }
+
+      const executions = campaignHistoryService.listForCampaign(campaign.id, workspaceId);
+      res.json({ success: true, executions });
+    });
+
+    app.get('/api/campaigns/:id/history/:executionId', (req, res) => {
+      const workspaceId = req.auth!.workspace.id;
+      const campaign = campaignService.getForWorkspace(req.params.id, workspaceId);
+      if (!campaign) {
+        return res.status(404).json({ error: 'Campaign not found' });
+      }
+
+      const execution = campaignHistoryService.getForCampaign(req.params.executionId, campaign.id, workspaceId);
+      if (!execution) {
+        return res.status(404).json({ error: 'Execution not found' });
+      }
+
+      res.json({ success: true, execution });
+    });
+
   // Audiences API
+
   app.get('/api/instances/:instanceId/audiences', (req, res) => {
     const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
     if (!runtime) return res.status(404).json({ error: 'Not found' });
@@ -957,7 +987,31 @@ async function startServer() {
   // Init manager
   await instanceManager.init();
   campaignService.init();
+  campaignHistoryService.init();
   schedulerService.init();
+  schedulerService.setExecutionCompletedHandler(async (schedule, result) => {
+    try {
+      const campaign = campaignService.getByScheduleId(schedule.id);
+      if (!campaign) return; // not a campaign schedule
+
+      campaignHistoryService.recordExecution({
+        workspaceId: campaign.workspaceId,
+        instanceId: campaign.instanceId,
+        campaignId: campaign.id,
+        scheduleId: schedule.id,
+        scheduleName: schedule.name,
+        executedAt: result.executedAt,
+        totalTargets: result.totalTargets,
+        sentCount: result.sentCount,
+        failedCount: result.failedCount,
+        skippedCount: result.skippedCount,
+        details: result.details
+      });
+    } catch (err) {
+      console.error('[CampaignHistory] CRITICAL ERROR while recording execution:', err);
+    }
+  });
+
   schedulerService.startLoop();
 
   if (process.env.NODE_ENV !== 'production') {

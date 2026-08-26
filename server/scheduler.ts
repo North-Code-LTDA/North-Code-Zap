@@ -64,17 +64,27 @@ function normalizeWeeklySlots(
 const isValidDateString = (value: unknown): value is string =>
   typeof value === 'string' && !Number.isNaN(new Date(value).getTime());
 
+export type ExecutionCompletedHandler = (
+  schedule: ScheduledMessage,
+  result: ScheduleLastResult
+) => void | Promise<void>;
+
 export class SchedulerService {
   private schedules: ScheduledMessage[] = [];
   private processingSchedules: Set<string> = new Set();
   private io: SocketIOServer | null = null;
   private instanceManager: InstanceManager;
   private loopTimer: NodeJS.Timeout | null = null;
+  private executionCompletedHandler: ExecutionCompletedHandler | null = null;
 
   
   constructor(instanceManager: InstanceManager) {
     this.instanceManager = instanceManager;
     this.ensureDirectory();
+  }
+
+  public setExecutionCompletedHandler(handler: ExecutionCompletedHandler) {
+    this.executionCompletedHandler = handler;
   }
 
   public init() {
@@ -1004,6 +1014,14 @@ export class SchedulerService {
     this.processingSchedules.delete(schedule.id);
     this.saveSchedules();
     this.emitUpdated();
+
+    if (this.executionCompletedHandler) {
+      try {
+        await this.executionCompletedHandler(schedule, executionResult);
+      } catch (err) {
+        console.error(`[Scheduler] CRITICAL ERROR in execution completed handler for schedule=${schedule.id}:`, err);
+      }
+    }
 
     if (this.io) {
       this.io.to(`instance:${schedule.instanceId}`).emit('scheduler:completed', {

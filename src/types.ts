@@ -261,3 +261,30 @@ export interface Campaign {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface CampaignExecutionHistory {
+  id: string;
+  workspaceId: string;
+  instanceId: string;
+  campaignId: string;
+  scheduleId: string;
+  scheduleName: string;
+  executedAt: string;
+  totalTargets: number;
+  sentCount: number;
+  failedCount: number;
+  skippedCount: number;
+  details: ScheduleExecutionDetail[];
+}
+
+export interface CampaignExecutionSummary {
+  id: string;
+  campaignId: string;
+  scheduleId: string;
+  scheduleName: string;
+  executedAt: string;
+  totalTargets: number;
+  sentCount: number;
+  failedCount: number;
+  skippedCount: number;
+}

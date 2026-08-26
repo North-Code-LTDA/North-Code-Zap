@@ -2,9 +2,10 @@ import React, { useState, useMemo, type FormEvent, type ChangeEvent, useRef, use
 import { 
   Megaphone, Plus, Search, Calendar, Clock, Image as ImageIcon,
   Play, Pause, Trash2, Edit3, X, AlertTriangle, Users, FileText,
-  Upload, Trash, Sparkles, Link as LinkIcon, CheckCircle
+  Upload, Trash, Sparkles, Link as LinkIcon, CheckCircle, BarChart3, ArrowLeft
 } from 'lucide-react';
 import { useCampaigns } from '../hooks/useCampaigns';
+import { useCampaignHistory } from "../hooks/useCampaignHistory";
 import { useAudiences } from '../hooks/useAudiences';
 import { Button } from './ui/Button';
 import type { Campaign, CampaignScheduleConfig, DeliveryOptions, ScheduledMedia, ScheduleType, WeeklyTimeSlot } from '../types';
@@ -30,6 +31,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     createCampaign, updateCampaign, scheduleCampaign,
     pauseCampaign, resumeCampaign, unscheduleCampaign, deleteCampaign
   } = useCampaigns(selectedInstanceId);
+  const { summaries, detail, loading: historyLoading, error: historyError, fetchSummaries, fetchDetail, clear: clearHistory } = useCampaignHistory();
+
 
   const { state: audiences } = useAudiences(selectedInstanceId);
 
@@ -38,6 +41,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
   
   // Create / Edit modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isResultsModalOpen, setIsResultsModalOpen] = useState(false);
+  const [selectedResultsCampaign, setSelectedResultsCampaign] = useState<Campaign | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   
   // Form State
@@ -309,6 +314,18 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
   };
 
 
+  const handleOpenResults = (c: Campaign) => {
+    setSelectedResultsCampaign(c);
+    setIsResultsModalOpen(true);
+    fetchSummaries(c.id);
+  };
+
+  const handleCloseResults = () => {
+    setIsResultsModalOpen(false);
+    setSelectedResultsCampaign(null);
+    clearHistory();
+  };
+
   const handleOpenCreateWrapper = () => {
     handleOpenCreate();
   };
@@ -320,13 +337,13 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
 
   // Body scroll lock
   useEffect(() => {
-    if (!isModalOpen) return;
+    if (!isModalOpen && !isResultsModalOpen) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [isModalOpen]);
+  }, [isModalOpen, isResultsModalOpen]);
 
   const selectedListObj = audiences?.lists.find(l => l.id === audienceListId);
   const selectedListMissing = Boolean(audienceListId && audiences && !selectedListObj);
@@ -524,6 +541,9 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                             <Edit3 className="w-4 h-4" />
                           </button>
                         )}
+                        <button type="button" aria-label="Resultados" title="Resultados" className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" onClick={() => handleOpenResults(c)}>
+                          <BarChart3 className="w-4 h-4" />
+                        </button>
                         <button type="button" aria-label="Excluir" title="Excluir" className="p-1.5 rounded-lg text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 transition-colors" onClick={() => setDeleteConfirm(c.id)}>
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1111,6 +1131,186 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
           </div>
         </div>
       )}
+
+      {/* Results Modal */}
+      {isResultsModalOpen && selectedResultsCampaign && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-4xl bg-neutral-950 border border-neutral-800 rounded-3xl shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b border-neutral-800 shrink-0 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-medium text-white flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-emerald-500" />
+                  Resultados da Campanha
+                </h2>
+                <p className="text-sm text-neutral-400 mt-1">
+                  {selectedResultsCampaign.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Fechar modal"
+                onClick={handleCloseResults}
+                className="p-2 rounded-xl bg-neutral-800/80 hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto">
+              {historyLoading && !summaries.length && !detail ? (
+                <div className="flex items-center justify-center p-12">
+                  <div className="w-6 h-6 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
+                </div>
+              ) : historyError ? (
+                <div className="flex flex-col items-center justify-center p-12 text-center">
+                  <AlertTriangle className="w-8 h-8 text-rose-500 mb-3" />
+                  <h3 className="text-lg font-medium text-white mb-1">Falha ao carregar resultados</h3>
+                  <p className="text-sm text-neutral-400">{historyError}</p>
+                </div>
+              ) : detail ? (
+                <div className="space-y-6">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => fetchSummaries(selectedResultsCampaign.id)}
+                      className="p-2 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
+                    >
+                      <ArrowLeft className="w-5 h-5" />
+                    </button>
+                    <div>
+                      <h3 className="text-lg font-medium text-white">Resumo da Execução</h3>
+                      <p className="text-sm text-neutral-400">
+                        {new Date(detail.executedAt).toLocaleString('pt-BR')}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                    <div className="p-4 bg-neutral-900/50 rounded-2xl border border-neutral-800/50">
+                      <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">Total</p>
+                      <p className="text-2xl font-semibold text-white">{detail.totalTargets}</p>
+                    </div>
+                    <div className="p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/10">
+                      <p className="text-xs font-medium text-emerald-500/70 uppercase tracking-wider mb-1">Enviados</p>
+                      <p className="text-2xl font-semibold text-emerald-400">{detail.sentCount}</p>
+                    </div>
+                    <div className="p-4 bg-rose-500/5 rounded-2xl border border-rose-500/10">
+                      <p className="text-xs font-medium text-rose-500/70 uppercase tracking-wider mb-1">Falhas</p>
+                      <p className="text-2xl font-semibold text-rose-400">{detail.failedCount}</p>
+                    </div>
+                    <div className="p-4 bg-amber-500/5 rounded-2xl border border-amber-500/10">
+                      <p className="text-xs font-medium text-amber-500/70 uppercase tracking-wider mb-1">Ignorados</p>
+                      <p className="text-2xl font-semibold text-amber-400">{detail.skippedCount}</p>
+                    </div>
+                    <div className="p-4 bg-neutral-900/50 rounded-2xl border border-neutral-800/50">
+                      <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">Taxa de Sucesso</p>
+                      <p className="text-2xl font-semibold text-white">
+                        {detail.totalTargets > 0 ? ((detail.sentCount / detail.totalTargets) * 100).toFixed(1) : '0.0'}%
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-sm font-medium text-neutral-300 mb-4 px-1">Destinatários</h4>
+                    <div className="space-y-2">
+                      {detail.details.map((d, i) => (
+                        <div key={i} className="p-4 bg-neutral-900 rounded-2xl border border-neutral-800/50 flex flex-col gap-2">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <p className="text-sm font-medium text-white">{d.targetLabel}</p>
+                              <p className="text-xs text-neutral-500">{d.targetJid}</p>
+                            </div>
+                            <span className={`text-xs font-medium px-2 py-1 rounded-md ${
+                              d.status === 'sent' ? 'bg-emerald-500/10 text-emerald-400' :
+                              d.status === 'failed' ? 'bg-rose-500/10 text-rose-400' :
+                              'bg-amber-500/10 text-amber-400'
+                            }`}>
+                              {d.status === 'sent' ? 'Enviado' : d.status === 'failed' ? 'Falhou' : 'Ignorado'}
+                            </span>
+                          </div>
+                          {d.error && (
+                            <p className="text-xs text-rose-400 mt-1 p-2 bg-rose-500/5 rounded-lg border border-rose-500/10">
+                              {d.error}
+                            </p>
+                          )}
+                          {d.renderedPreview && (
+                            <p className="text-xs text-neutral-400 mt-1 p-3 bg-black/40 rounded-xl border border-neutral-800 whitespace-pre-wrap">
+                              {d.renderedPreview}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : summaries.length > 0 ? (
+                <div className="space-y-8">
+                  {/* Summary of latest execution */}
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-medium text-neutral-400 px-1 uppercase tracking-wider">Última Execução</h3>
+                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                      <div className="p-4 bg-neutral-900/50 rounded-2xl border border-neutral-800/50">
+                        <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">Total</p>
+                        <p className="text-2xl font-semibold text-white">{summaries[0].totalTargets}</p>
+                      </div>
+                      <div className="p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/10">
+                        <p className="text-xs font-medium text-emerald-500/70 uppercase tracking-wider mb-1">Enviados</p>
+                        <p className="text-2xl font-semibold text-emerald-400">{summaries[0].sentCount}</p>
+                      </div>
+                      <div className="p-4 bg-rose-500/5 rounded-2xl border border-rose-500/10">
+                        <p className="text-xs font-medium text-rose-500/70 uppercase tracking-wider mb-1">Falhas</p>
+                        <p className="text-2xl font-semibold text-rose-400">{summaries[0].failedCount}</p>
+                      </div>
+                      <div className="p-4 bg-amber-500/5 rounded-2xl border border-amber-500/10">
+                        <p className="text-xs font-medium text-amber-500/70 uppercase tracking-wider mb-1">Ignorados</p>
+                        <p className="text-2xl font-semibold text-amber-400">{summaries[0].skippedCount}</p>
+                      </div>
+                      <div className="p-4 bg-neutral-900/50 rounded-2xl border border-neutral-800/50">
+                        <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">Taxa de Sucesso</p>
+                        <p className="text-2xl font-semibold text-white">
+                          {summaries[0].totalTargets > 0 ? ((summaries[0].sentCount / summaries[0].totalTargets) * 100).toFixed(1) : '0.0'}%
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-medium text-neutral-400 px-1 uppercase tracking-wider">Histórico de Execuções</h3>
+                    <div className="space-y-2">
+                      {summaries.map(s => (
+                        <div key={s.id} className="p-4 bg-neutral-900/50 rounded-2xl border border-neutral-800 hover:border-neutral-700 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-medium text-white">{new Date(s.executedAt).toLocaleString('pt-BR')}</p>
+                            <div className="flex items-center gap-3 mt-2 text-xs">
+                              <span className="text-neutral-400">{s.totalTargets} total</span>
+                              <span className="text-emerald-400">{s.sentCount} enviados</span>
+                              <span className="text-rose-400">{s.failedCount} falhas</span>
+                            </div>
+                          </div>
+                          <Button variant="secondary" onClick={() => fetchDetail(s.campaignId, s.id)} className="shrink-0 text-xs">
+                            Ver detalhes
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center p-12 text-center">
+                  <div className="w-12 h-12 bg-neutral-900 rounded-full flex items-center justify-center mb-4">
+                    <BarChart3 className="w-6 h-6 text-neutral-500" />
+                  </div>
+                  <h3 className="text-lg font-medium text-white mb-2">Nenhuma execução registrada</h3>
+                  <p className="text-sm text-neutral-400 max-w-sm">
+                    Os resultados aparecerão aqui após a primeira execução da campanha.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

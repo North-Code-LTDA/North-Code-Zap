@@ -172,6 +172,10 @@ export class CampaignService {
     return this.state.find(c => c.id === id && c.workspaceId === workspaceId);
   }
 
+  public getByScheduleId(scheduleId: string): Campaign | undefined {
+    return this.state.find(c => c.scheduleId === scheduleId);
+  }
+
   public getByScheduleIdForWorkspace(scheduleId: string, workspaceId: string): Campaign | undefined {
     return this.state.find(c => c.scheduleId === scheduleId && c.workspaceId === workspaceId);
   }
