@@ -219,10 +219,8 @@ export function TemplatesView() {
                 <h3 className="font-semibold text-white text-lg truncate pr-4">{t.name}</h3>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
+                    type="button"
                     onClick={() => openEditModal(t)}
-                    className="p-1.5 text-neutral-400 hover:text-emerald-400 hover:bg-emerald-400/10 rounded-lg transition-colors"
-                    aria-label="Editar"
-                    title="Editar"
                     className="p-1.5 text-neutral-400 hover:text-emerald-400 hover:bg-emerald-400/10 rounded-lg transition-colors"
                     aria-label="Editar"
                     title="Editar"
@@ -230,10 +228,8 @@ export function TemplatesView() {
                     <Edit2 className="w-4 h-4" />
                   </button>
                   <button
+                    type="button"
                     onClick={() => { setTemplateToDelete(t); setDeleteError(null); }}
-                    className="p-1.5 text-neutral-400 hover:text-rose-400 hover:bg-rose-400/10 rounded-lg transition-colors"
-                    aria-label="Excluir"
-                    title="Excluir"
                     className="p-1.5 text-neutral-400 hover:text-rose-400 hover:bg-rose-400/10 rounded-lg transition-colors"
                     aria-label="Excluir"
                     title="Excluir"
