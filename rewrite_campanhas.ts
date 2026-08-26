@@ -1,8 +1,10 @@
-import React, { useState, useMemo, type FormEvent, type ChangeEvent, useRef, useEffect } from 'react';
+import fs from 'fs';
+
+const header = `import React, { useState, useMemo, type FormEvent, type ChangeEvent, useRef, useEffect } from 'react';
 import { 
   Megaphone, Plus, Search, Calendar, Clock, Image as ImageIcon,
   Play, Pause, Trash2, Edit3, X, AlertTriangle, Users, FileText,
-  Upload, Trash, Sparkles, Link as LinkIcon, CheckCircle
+  Upload, Trash, Sparkles
 } from 'lucide-react';
 import { useCampaigns } from '../hooks/useCampaigns';
 import { useAudiences } from '../hooks/useAudiences';
@@ -23,62 +25,22 @@ const WEEK_DAYS = [
 interface CampanhasViewProps {
   selectedInstanceId: string | null;
 }
+`;
 
+const content = fs.readFileSync('src/components/CampanhasView.tsx', 'utf8');
+
+// Using regex to replace the main visual structure
+// I'll extract all hooks first
+const hooksRegex = /export function CampanhasView\(\{\s*selectedInstanceId\s*\}\s*:\s*CampanhasViewProps\)\s*\{([\s\S]*?)const filteredCampaigns = useMemo/m;
+const matchHooks = content.match(hooksRegex);
+let hooks = matchHooks ? matchHooks[1] : '';
+
+// Remove the getStatusPresentation and metrics since I will define them clearly
+hooks = hooks.replace(/const metrics = useMemo[\s\S]*?\}, \[campaigns, search\]\);/g, '');
+
+const viewDefinition = `
 export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
-  const {
-    state: campaigns, loading: campaignsLoading, error: campaignsError,
-    createCampaign, updateCampaign, scheduleCampaign,
-    pauseCampaign, resumeCampaign, unscheduleCampaign, deleteCampaign
-  } = useCampaigns(selectedInstanceId);
-
-  const { state: audiences } = useAudiences(selectedInstanceId);
-
-  const [search, setSearch] = useState('');
-  const [actionError, setActionError] = useState<string | null>(null);
-  
-  // Create / Edit modal state
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  
-  // Form State
-  const [name, setName] = useState('');
-  const [audienceListId, setAudienceListId] = useState('');
-  const [message, setMessage] = useState('');
-  const [fallbackName, setFallbackName] = useState('amigo(a)');
-  
-  // Schedule
-  const [formType, setFormType] = useState<ScheduleType>('once');
-  const [formDate, setFormDate] = useState('');
-  const [formTime, setFormTime] = useState('08:00');
-  
-  const [formDailyTimes, setFormDailyTimes] = useState<string[]>(['08:00']);
-  const [newDailyTimeInput, setNewDailyTimeInput] = useState('14:00');
-
-  const [formWeeklyDays, setFormWeeklyDays] = useState<number[]>([1]); // Seg
-  const [formWeeklySlots, setFormWeeklySlots] = useState<WeeklyTimeSlot[]>([
-    { day: 1, times: ['08:00'] }
-  ]);
-  const [selectedWeeklyDayForTimes, setSelectedWeeklyDayForTimes] = useState<number>(1);
-  const [newWeeklyTimeInput, setNewWeeklyTimeInput] = useState('14:00');
-
-  // Media
-  const [formMedia, setFormMedia] = useState<ScheduledMedia | null>(null);
-  const [mediaTab, setMediaTab] = useState<'upload' | 'url'>('upload');
-  const [mediaUrlInput, setMediaUrlInput] = useState('');
-  const [mediaUploading, setMediaUploading] = useState(false);
-  const [mediaError, setMediaError] = useState<string | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Delivery Options
-  const [formIntervalSeconds, setFormIntervalSeconds] = useState(5);
-  const [formBatchPauseEnabled, setFormBatchPauseEnabled] = useState(false);
-  const [formBatchSize, setFormBatchSize] = useState(5);
-  const [formBatchPauseMinutes, setFormBatchPauseMinutes] = useState(5);
-
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
+${hooks}
 
   const filteredCampaigns = useMemo(() => {
     if (!campaigns) return [];
@@ -113,207 +75,6 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     }
   };
 
-
-  const resetForm = () => {
-    setEditingId(null);
-    setName('');
-    setAudienceListId('');
-    setMessage('');
-    setFallbackName('amigo(a)');
-    
-    setFormType('once');
-    setFormDate('');
-    setFormTime('08:00');
-    setFormDailyTimes(['08:00']);
-    setNewDailyTimeInput('14:00');
-    setFormWeeklyDays([1]);
-    setFormWeeklySlots([{ day: 1, times: ['08:00'] }]);
-    setSelectedWeeklyDayForTimes(1);
-    setNewWeeklyTimeInput('14:00');
-
-    setFormMedia(null);
-    setMediaTab('upload');
-    setMediaUrlInput('');
-    setMediaError(null);
-
-    setFormIntervalSeconds(5);
-    setFormBatchPauseEnabled(false);
-    setFormBatchSize(5);
-    setFormBatchPauseMinutes(5);
-
-    setActionError(null);
-  };
-
-  const handleOpenCreate = () => {
-    resetForm();
-    setIsModalOpen(true);
-  };
-
-  const handleOpenEdit = (c: Campaign) => {
-    resetForm();
-    setEditingId(c.id);
-    setName(c.name);
-    setAudienceListId(c.audienceListId || '');
-    setMessage(c.message);
-    setFallbackName(c.fallbackName);
-    
-    setFormType(c.schedule.scheduleType);
-    if (c.schedule.scheduleType === 'once' && c.schedule.scheduledAt) {
-      const d = new Date(c.schedule.scheduledAt);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      const hh = String(d.getHours()).padStart(2, '0');
-      const min = String(d.getMinutes()).padStart(2, '0');
-      setFormDate(`${yyyy}-${mm}-${dd}`);
-      setFormTime(`${hh}:${min}`);
-    }
-    if (c.schedule.dailyTimes) setFormDailyTimes([...c.schedule.dailyTimes]);
-    if (c.schedule.weeklyTimeSlots) {
-      setFormWeeklySlots([...c.schedule.weeklyTimeSlots]);
-      setFormWeeklyDays(c.schedule.weeklyTimeSlots.map(s => s.day));
-      if (c.schedule.weeklyTimeSlots.length > 0) {
-        setSelectedWeeklyDayForTimes(c.schedule.weeklyTimeSlots[0].day);
-      }
-    }
-
-    if (c.media) {
-      setFormMedia(c.media);
-      if (c.media.source === 'url' && c.media.url) {
-        setMediaTab('url');
-        setMediaUrlInput(c.media.url);
-      }
-    }
-
-    if (c.schedule.deliveryOptions) {
-      setFormIntervalSeconds(c.schedule.deliveryOptions.intervalBetweenMessagesMs / 1000);
-      setFormBatchPauseEnabled(c.schedule.deliveryOptions.batchPauseEnabled);
-      setFormBatchSize(c.schedule.deliveryOptions.batchSize);
-      setFormBatchPauseMinutes(c.schedule.deliveryOptions.batchPauseMs / 60000);
-    }
-
-    setIsModalOpen(true);
-  };
-
-  const uploadMedia = async (file: File): Promise<ScheduledMedia> => {
-    if (!selectedInstanceId) throw new Error('Nenhuma instância selecionada');
-    const formData = new FormData();
-    formData.append('file', file);
-    const res = await fetch(`/api/instances/${selectedInstanceId}/media/upload`, {
-      method: 'POST',
-      body: formData,
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Falha ao fazer upload da mídia');
-    return data.media;
-  };
-
-  const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      setMediaUploading(true);
-      setMediaError(null);
-      const media = await uploadMedia(file);
-      setFormMedia(media);
-    } catch (err: any) {
-      setMediaError(err.message || 'Erro no upload');
-    } finally {
-      setMediaUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
-  const handleAddMediaUrl = () => {
-    if (!mediaUrlInput.trim()) {
-      setMediaError('Insira uma URL válida');
-      return;
-    }
-    try {
-      new URL(mediaUrlInput.trim());
-      setFormMedia({
-        type: 'image',
-        source: 'url',
-        url: mediaUrlInput.trim()
-      });
-      setMediaError(null);
-    } catch {
-      setMediaError('A URL fornecida é inválida');
-    }
-  };
-
-  const handleSaveDraft = async () => {
-    try {
-      setActionError(null);
-      if (!name.trim()) throw new Error('Nome é obrigatório');
-
-      let scheduledAt: string | null = null;
-      if (formType === 'once' && formDate && formTime) {
-        const d = new Date(`${formDate}T${formTime}`);
-        if (!isNaN(d.getTime())) {
-          scheduledAt = d.toISOString();
-        }
-      }
-
-      const scheduleConfig: CampaignScheduleConfig = {
-        scheduleType: formType,
-        scheduledAt,
-        dailyTimes: formType === 'daily' ? formDailyTimes : [],
-        weeklyTimeSlots: formType === 'weekly' ? formWeeklySlots : [],
-        deliveryOptions: {
-          intervalBetweenMessagesMs: (formIntervalSeconds || 5) * 1000,
-          batchPauseEnabled: formBatchPauseEnabled,
-          batchSize: formBatchSize || 5,
-          batchPauseMs: (formBatchPauseMinutes || 5) * 60000
-        }
-      };
-
-      const payload: Partial<Campaign> = {
-        name,
-        audienceListId: audienceListId || null,
-        message,
-        fallbackName,
-        media: formMedia,
-        schedule: scheduleConfig
-      };
-
-      setIsSubmitting(true);
-      if (editingId) {
-        await updateCampaign(editingId, payload);
-      } else {
-        if (!selectedInstanceId) throw new Error('Instância não selecionada');
-        await createCampaign({ ...payload, instanceId: selectedInstanceId } as Partial<Campaign>);
-      }
-      setIsModalOpen(false);
-    } catch (e: any) {
-      setActionError(e.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleSchedule = async (id: string) => {
-    try { setActionError(null); await scheduleCampaign(id); }
-    catch (e: any) { setActionError(e.message); }
-  };
-  const handlePause = async (id: string) => {
-    try { setActionError(null); await pauseCampaign(id); }
-    catch (e: any) { setActionError(e.message); }
-  };
-  const handleResume = async (id: string) => {
-    try { setActionError(null); await resumeCampaign(id); }
-    catch (e: any) { setActionError(e.message); }
-  };
-  const handleUnschedule = async (id: string) => {
-    try { setActionError(null); await unscheduleCampaign(id); }
-    catch (e: any) { setActionError(e.message); }
-  };
-  const handleDelete = async (id: string) => {
-    try { setActionError(null); await deleteCampaign(id); setDeleteConfirm(null); }
-    catch (e: any) { setActionError(e.message); }
-  };
-
-
   const handleOpenCreateWrapper = () => {
     handleOpenCreate();
   };
@@ -336,8 +97,9 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
   }, [isModalOpen]);
 
   const selectedListObj = audiences?.lists.find(l => l.id === audienceListId);
+`;
 
-
+const viewRest = `
   if (!selectedInstanceId) {
     return (
       <div className="flex flex-col items-center justify-center h-[50vh] text-center px-4 animate-in fade-in duration-500">
@@ -355,7 +117,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
       {/* Header */}
-      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-xl">
+      <div className="bg-neutral-900/60 border border-neutral-800/80 rounded-3xl p-6 shadow-xl">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
@@ -366,7 +128,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
               <p className="text-sm text-neutral-400 mt-1">Organize ações de comunicação para suas audiências e acompanhe o ciclo de cada campanha.</p>
             </div>
           </div>
-          <Button variant="primary" onClick={handleOpenCreateWrapper} className="shrink-0 bg-emerald-500 hover:bg-emerald-600 border-emerald-500/50">
+          <Button variant="primary" onClick={handleOpenCreateWrapper} className="shrink-0 bg-emerald-500 hover:bg-emerald-600">
             <Plus className="w-5 h-5 mr-2" />
             Nova Campanha
           </Button>
@@ -387,11 +149,11 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
       {/* Metrics Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 shadow-sm flex items-center gap-4">
-          <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
-            <Megaphone className="w-5 h-5 text-emerald-400" />
+          <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
+            <Megaphone className="w-5 h-5 text-blue-400" />
           </div>
           <div>
-            <p className="text-xs text-neutral-400 font-medium uppercase tracking-wider">Total de Campanhas</p>
+            <p className="text-xs text-neutral-400 font-medium uppercase tracking-wider">Total</p>
             <p className="text-2xl font-bold text-white mt-0.5">{metrics.total}</p>
           </div>
         </div>
@@ -405,12 +167,12 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
           </div>
         </div>
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 shadow-sm flex items-center gap-4">
-          <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
-            <Play className="w-5 h-5 text-blue-400" />
+          <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
+            <Play className="w-5 h-5 text-emerald-400" />
           </div>
           <div>
             <p className="text-xs text-neutral-400 font-medium uppercase tracking-wider">Ativas</p>
-            <p className="text-2xl font-bold text-blue-400 mt-0.5">{metrics.active}</p>
+            <p className="text-2xl font-bold text-emerald-400 mt-0.5">{metrics.active}</p>
           </div>
         </div>
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 shadow-sm flex items-center gap-4">
@@ -433,7 +195,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
             placeholder="Buscar campanhas..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
+            className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
           />
         </div>
       </div>
@@ -453,13 +215,13 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
           <p className="text-neutral-400 max-w-sm mb-6">
             Crie uma campanha para organizar uma audiência, mensagem e programação.
           </p>
-          <Button variant="primary" onClick={handleOpenCreateWrapper} className="bg-emerald-500 hover:bg-emerald-600 border-emerald-500/50">
+          <Button variant="primary" onClick={handleOpenCreateWrapper}>
             <Plus className="w-4 h-4 mr-2" />
             Criar primeira campanha
           </Button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {filteredCampaigns.map(c => {
             const isDraft = c.scheduleId === null;
             const backendStatus = isDraft ? 'draft' : ((c as any).status || 'missing_schedule');
@@ -479,12 +241,12 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
             }
 
             return (
-              <div key={c.id} className="bg-neutral-900/90 border border-neutral-800 hover:border-neutral-700/90 rounded-2xl p-5 shadow-sm flex flex-col gap-4 transition-all">
-                <div className="flex items-start justify-between min-w-0">
-                  <div className="space-y-1 min-w-0 flex-1">
-                    <h3 className="font-bold text-white truncate pr-2" title={c.name}>{c.name}</h3>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${statusColor}`}>
+              <div key={c.id} className="bg-neutral-900/90 border border-neutral-800 hover:border-neutral-700/90 rounded-2xl p-5 shadow-sm flex flex-col gap-4 transition-colors">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <h3 className="font-bold text-white truncate max-w-[200px] sm:max-w-xs" title={c.name}>{c.name}</h3>
+                    <div className="flex items-center gap-2">
+                      <span className={\`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border \${statusColor}\`}>
                         {statusLabel}
                       </span>
                       <span className="text-[11px] text-neutral-500 font-mono">
@@ -492,7 +254,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-1">
                     {deleteConfirm === c.id ? (
                       <div className="flex items-center gap-2 bg-neutral-950 p-1.5 rounded-lg border border-rose-500/30">
                         <span className="text-xs text-rose-400 font-medium px-2">Excluir?</span>
@@ -507,30 +269,30 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                       <>
                         {isDraft && (
                           <>
-                            <button type="button" title="Agendar Disparo" className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors" onClick={() => handleSchedule(c.id)}>
+                            <button title="Agendar Disparo" className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors" onClick={() => handleSchedule(c.id)}>
                               <Calendar className="w-4 h-4" />
                             </button>
-                            <button type="button" title="Editar Rascunho" className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" onClick={() => handleOpenEdit(c)}>
+                            <button title="Editar Rascunho" className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" onClick={() => handleOpenEdit(c)}>
                               <Edit3 className="w-4 h-4" />
                             </button>
                           </>
                         )}
                         {(backendStatus === 'active' || backendStatus === 'running') && (
-                          <button type="button" title="Pausar" className="p-1.5 rounded-lg text-amber-400 hover:bg-amber-500/10 transition-colors" onClick={() => handlePause(c.id)}>
+                          <button title="Pausar" className="p-1.5 rounded-lg text-amber-400 hover:bg-amber-500/10 transition-colors" onClick={() => handlePause(c.id)}>
                             <Pause className="w-4 h-4" />
                           </button>
                         )}
                         {backendStatus === 'paused' && (
-                          <button type="button" title="Retomar" className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/10 transition-colors" onClick={() => handleResume(c.id)}>
+                          <button title="Retomar" className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/10 transition-colors" onClick={() => handleResume(c.id)}>
                             <Play className="w-4 h-4" />
                           </button>
                         )}
                         {!isDraft && (
-                           <button type="button" title="Voltar Rascunho" className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" onClick={() => handleUnschedule(c.id)}>
+                           <button title="Voltar Rascunho" className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" onClick={() => handleUnschedule(c.id)}>
                             <Edit3 className="w-4 h-4" />
                           </button>
                         )}
-                        <button type="button" title="Excluir" className="p-1.5 rounded-lg text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 transition-colors" onClick={() => setDeleteConfirm(c.id)}>
+                        <button title="Excluir" className="p-1.5 rounded-lg text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 transition-colors" onClick={() => setDeleteConfirm(c.id)}>
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </>
@@ -538,39 +300,37 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 text-xs mt-auto pt-2">
+                <div className="grid grid-cols-2 gap-4 text-xs">
                   <div className="space-y-1">
                     <span className="text-neutral-500 font-medium uppercase tracking-wider text-[10px]">AUDIÊNCIA</span>
                     <div className="flex items-center gap-1.5 text-neutral-300">
                       <Users className="w-3.5 h-3.5" />
-                      <span className="truncate">{audienceLabel}</span>
+                      <span className="truncate max-w-[120px]">{audienceLabel}</span>
                     </div>
-                    <div className="text-neutral-500">{targetCount} {targetCount === 1 ? 'contato' : 'contatos'}</div>
+                    <div className="text-neutral-500">{targetCount} contatos</div>
                   </div>
-                  <div className="space-y-1 min-w-0">
+                  <div className="space-y-1">
                     <span className="text-neutral-500 font-medium uppercase tracking-wider text-[10px]">PROGRAMAÇÃO</span>
                     <div className="flex items-center gap-1.5 text-neutral-300">
                       <Clock className="w-3.5 h-3.5" />
-                      <span className="truncate">{c.schedule.scheduleType === 'once' ? 'Envio Único' : c.schedule.scheduleType === 'daily' ? 'Diário' : 'Semanal'}</span>
+                      <span>{c.schedule.scheduleType === 'once' ? 'Envio Único' : c.schedule.scheduleType === 'daily' ? 'Diário' : 'Semanal'}</span>
                     </div>
-                    <div className="text-neutral-500 truncate">
-                      {c.schedule.scheduleType === 'once' && c.schedule.scheduledAt && (
-                        new Date(c.schedule.scheduledAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
-                      )}
-                      {c.schedule.scheduleType === 'daily' && (
-                        c.schedule.dailyTimes.join(', ')
-                      )}
-                      {c.schedule.scheduleType === 'weekly' && (
-                        `${c.schedule.weeklyTimeSlots.length} dias`
-                      )}
-                    </div>
+                    {c.schedule.scheduleType === 'once' && c.schedule.scheduledAt && (
+                      <div className="text-neutral-500 truncate">{new Date(c.schedule.scheduledAt).toLocaleString('pt-BR')}</div>
+                    )}
+                    {c.schedule.scheduleType === 'daily' && (
+                      <div className="text-neutral-500 truncate">{c.schedule.dailyTimes.join(', ')}</div>
+                    )}
+                    {c.schedule.scheduleType === 'weekly' && (
+                      <div className="text-neutral-500 truncate">{c.schedule.weeklyTimeSlots.length} dias programados</div>
+                    )}
                   </div>
                 </div>
 
                 {c.media && (
                   <div className="pt-3 border-t border-neutral-800/60 flex items-center gap-2">
                     <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
-                    <span className="text-xs text-purple-300 truncate">Imagem anexada ({c.media.source === 'upload' ? 'Upload' : 'URL'})</span>
+                    <span className="text-xs text-purple-300 truncate">Com mídia anexada</span>
                   </div>
                 )}
               </div>
@@ -579,7 +339,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
         </div>
       )}
 
-      {/* Modal Nova/Editar Campanha */}
+      {/* Modal */}
       {isModalOpen && (
         <div
           className="fixed inset-0 z-50 overflow-hidden p-4 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
@@ -601,7 +361,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   {editingId ? 'Editar Campanha' : 'Nova Campanha'}
                 </h3>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Configure audiência, mensagem, imagem e programação.
+                  Configure audiência, mensagem, mídia e programação da campanha.
                 </p>
               </div>
               <button
@@ -613,7 +373,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
               </button>
             </div>
 
-            {/* Modal Scrollable Body */}
+            {/* Modal Body */}
             <form
               id="campaign-form"
               onSubmit={handleSubmit}
@@ -634,7 +394,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                 <input
                   type="text"
                   required
-                  placeholder="Ex: Oferta Black Friday, Lembrete Mensal..."
+                  placeholder="Ex: Black Friday 2026, Clientes VIP Agosto, Reativação..."
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
@@ -643,8 +403,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
 
               {/* 2. Audiência */}
               <div className="space-y-3 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
-                <label className="text-xs font-semibold text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
-                  <Users className="w-4 h-4 text-emerald-400" />
+                <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
                   2. Audiência (Listas)
                 </label>
                 <select
@@ -652,20 +411,26 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   onChange={(e) => setAudienceListId(e.target.value)}
                   className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
                 >
-                  <option value="">Selecione uma lista de contatos...</option>
+                  <option value="">Selecione uma lista de contatos</option>
                   {audiences?.lists.map(list => (
                     <option key={list.id} value={list.id}>{list.name}</option>
                   ))}
                 </select>
                 {selectedListObj && (
                   <div className="flex items-center gap-2 p-3 bg-neutral-900 rounded-xl border border-neutral-800">
-                    <span className="text-sm text-white font-medium truncate">{selectedListObj.name}</span>
-                    <span className="text-xs text-neutral-400 ml-auto shrink-0">{selectedListObj.contactJids.length} contatos</span>
+                    <Users className="w-4 h-4 text-emerald-400" />
+                    <span className="text-sm text-white font-medium">{selectedListObj.name}</span>
+                    <span className="text-xs text-neutral-400 ml-auto">{selectedListObj.contactJids.length} contatos</span>
                   </div>
                 )}
                 {selectedListObj && selectedListObj.contactJids.length === 0 && (
                   <p className="text-[11px] text-amber-400 flex items-center gap-1">
-                    <AlertTriangle className="w-3.5 h-3.5" /> Esta lista está vazia. O rascunho pode ser salvo, mas não programado.
+                    <AlertTriangle className="w-3.5 h-3.5" /> Esta lista está vazia. O rascunho pode ser salvo, mas não poderá ser programado.
+                  </p>
+                )}
+                {audienceListId && !selectedListObj && audiences && (
+                  <p className="text-[11px] text-rose-400 flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Lista não encontrada. Selecione outra audiência antes de programar.
                   </p>
                 )}
               </div>
@@ -697,18 +462,18 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                         alt="Preview"
                         className="w-full h-full object-cover"
                         onError={(e) => {
-                          (e.target).src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM1MjUyNTIiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHg9IjMiIHk9IjMiIHJ4PSIyIiByeT0iMiIvPjxjaXJjbGUgY3g9IjkiIGN5PSI5IiByPSIyIi8+PHBhdGggZD0ibTIxIDE1LTMuMDgtMy4wOGExLjIgMS4yIDAgMCAwLTEuNzIgMGwtMS44MSAxLjgxIi8+PC9zdmc+';
+                          (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM1MjUyNTIiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHg9IjMiIHk9IjMiIHJ4PSIyIiByeT0iMiIvPjxjaXJjbGUgY3g9IjkiIGN5PSI5IiByPSIyIi8+PHBhdGggZD0ibTIxIDE1LTMuMDgtMy4wOGExLjIgMS4yIDAgMCAwLTEuNzIgMGwtMS44MSAxLjgxIi8+PC9zdmc+';
                         }}
                       />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-white truncate">
-                        {formMedia.fileName || (formMedia.source === 'url' ? 'Imagem remota' : 'Upload local')}
+                        {formMedia.fileName || (formMedia.source === 'url' ? 'Imagem externa' : 'Upload')}
                       </p>
                       <div className="flex items-center gap-3 text-xs text-neutral-400 mt-1">
                         <span className="flex items-center gap-1">
                           {formMedia.source === 'upload' ? <Upload className="w-3 h-3" /> : <LinkIcon className="w-3 h-3" />}
-                          {formMedia.source === 'upload' ? 'Upload' : 'URL Remota'}
+                          {formMedia.source === 'upload' ? 'Upload local' : 'URL Remota'}
                         </span>
                         {formMedia.size !== undefined && (
                           <span className="font-mono text-[10px]">{(formMedia.size / 1024).toFixed(1)} KB</span>
@@ -722,14 +487,14 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                       <button
                         type="button"
                         onClick={() => setMediaTab('upload')}
-                        className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${mediaTab === 'upload' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-300'}`}
+                        className={\`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors \${mediaTab === 'upload' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-300'}\`}
                       >
                         Upload Local
                       </button>
                       <button
                         type="button"
                         onClick={() => setMediaTab('url')}
-                        className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${mediaTab === 'url' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-300'}`}
+                        className={\`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors \${mediaTab === 'url' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-300'}\`}
                       >
                         URL da Imagem
                       </button>
@@ -771,13 +536,13 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
-                    4. Mensagem & Personalização {formMedia && '(Opcional)'}
+                    4. Mensagem & Personalização {formMedia && '(Opcional se houver imagem)'}
                   </label>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setMessage((prev) => `${prev} {nome}`)}
-                      className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+                      onClick={() => setMessage((prev) => \`\${prev} {nome}\`)}
+                      className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 px-2 py-1 rounded-md"
                       title="Inserir variável de nome"
                     >
                       <Sparkles className="w-3 h-3" />
@@ -785,8 +550,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setMessage((prev) => `${prev} {Oi|Olá|Bom dia}`)}
-                      className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+                      onClick={() => setMessage((prev) => \`\${prev} {Oi|Olá|Bom dia}\`)}
+                      className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 px-2 py-1 rounded-md"
                       title="Inserir Spintax"
                     >
                       <Sparkles className="w-3 h-3" />
@@ -796,30 +561,30 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                 </div>
                 
                 <textarea
-                  placeholder="Olá {nome}, tudo bem? ..."
+                  placeholder="Olá {nome}, temos uma novidade para você..."
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 min-h-[120px] resize-y transition-colors"
                 />
 
-                <div className="flex flex-col gap-3 pt-2">
+                <div className="flex flex-col gap-2 pt-1">
                   <div className="flex items-center gap-2">
-                    <label className="text-xs text-neutral-400 font-medium uppercase tracking-wider">Fallback para {'{nome}'}:</label>
+                    <label className="text-xs text-neutral-400">Fallback para {'{nome}'} (se contato não tiver nome):</label>
                     <input
                       type="text"
                       value={fallbackName}
                       onChange={(e) => setFallbackName(e.target.value)}
-                      className="bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500 w-32"
+                      className="bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-emerald-500 w-32"
                     />
                   </div>
                   
                   {/* Dynamic Preview */}
-                  <div className="bg-neutral-950/60 border border-neutral-800/80 rounded-xl p-3">
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3">
                     <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold block mb-1">Preview (Exemplo)</span>
                     <p className="text-sm text-neutral-300 whitespace-pre-wrap font-mono leading-relaxed">
                       {message || formMedia 
-                        ? (message ? renderMessageTemplate(message, { jid: 'preview', name: 'João Silva' }, fallbackName) : '(Apenas imagem)') 
-                        : <span className="text-neutral-600 italic">Escreva uma mensagem para ver o preview</span>}
+                        ? (message ? renderMessageTemplate(message, { jid: 'preview', name: 'João Silva' }, fallbackName) : '(Apenas envio da imagem anexada)') 
+                        : <span className="text-neutral-600">Escreva uma mensagem para ver o preview</span>}
                     </p>
                   </div>
                 </div>
@@ -832,18 +597,18 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                 </label>
                 
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setFormType('once')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors ${formType === 'once' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}`}>
+                  <button type="button" onClick={() => setFormType('once')} className={\`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg border transition-colors \${formType === 'once' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}\`}>
                     Envio Único
                   </button>
-                  <button type="button" onClick={() => setFormType('daily')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors ${formType === 'daily' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}`}>
+                  <button type="button" onClick={() => setFormType('daily')} className={\`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg border transition-colors \${formType === 'daily' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}\`}>
                     Diário
                   </button>
-                  <button type="button" onClick={() => setFormType('weekly')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors ${formType === 'weekly' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}`}>
+                  <button type="button" onClick={() => setFormType('weekly')} className={\`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg border transition-colors \${formType === 'weekly' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}\`}>
                     Semanal
                   </button>
                 </div>
 
-                <div className="bg-neutral-950 p-4 rounded-2xl border border-neutral-800 mt-2">
+                <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 mt-2">
                   {formType === 'once' && (
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -870,7 +635,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   {formType === 'daily' && (
                     <div className="space-y-3">
                       <div>
-                        <label className="block text-xs text-neutral-400 mb-1.5">Horários diários (ex: manhã e tarde):</label>
+                        <label className="block text-xs text-neutral-400 mb-1.5">Horários de envio diário:</label>
                         <div className="flex flex-wrap gap-2">
                           {formDailyTimes.map(time => (
                             <span
@@ -917,7 +682,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   {formType === 'weekly' && (
                     <div className="space-y-3">
                       <div>
-                        <label className="block text-xs text-neutral-400 mb-1.5">Dias da semana ativos:</label>
+                        <label className="block text-xs text-neutral-400 mb-1.5">Dias da semana:</label>
                         <div className="flex flex-wrap gap-1.5">
                           {WEEK_DAYS.map(day => {
                             const isSelected = formWeeklyDays.includes(day.id);
@@ -946,11 +711,11 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                                     return next;
                                   });
                                 }}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                className={\`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors \${
                                   isSelected
                                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                                     : 'bg-neutral-900 text-neutral-400 border border-neutral-800 hover:bg-neutral-800'
-                                }`}
+                                }\`}
                               >
                                 {day.label}
                               </button>
@@ -960,16 +725,16 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                       </div>
 
                       {formWeeklyDays.length > 0 && (
-                        <div className="p-3 bg-neutral-900/50 border border-neutral-800 rounded-xl">
-                          <label className="block text-xs font-medium text-neutral-400 mb-2 flex items-center gap-2">
-                            Horários para:
+                        <div className="p-3 bg-neutral-900/50 border border-neutral-800 rounded-lg">
+                          <label className="block text-xs font-medium text-neutral-400 mb-2">
+                            Horários para:{' '}
                             <select
                               value={selectedWeeklyDayForTimes}
                               onChange={e => setSelectedWeeklyDayForTimes(Number(e.target.value))}
-                              className="bg-neutral-950 text-emerald-400 font-semibold focus:outline-none border border-neutral-800 rounded-md px-2 py-0.5 cursor-pointer"
+                              className="bg-transparent text-emerald-400 font-semibold focus:outline-none ml-1 cursor-pointer"
                             >
                               {formWeeklyDays.map(d => (
-                                <option key={d} value={d}>{WEEK_DAYS.find(w => w.id === d)?.full}</option>
+                                <option key={d} value={d} className="bg-neutral-900 text-white">{WEEK_DAYS.find(w => w.id === d)?.full}</option>
                               ))}
                             </select>
                           </label>
@@ -978,7 +743,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                             {formWeeklySlots.find(s => s.day === selectedWeeklyDayForTimes)?.times.map(t => (
                               <span
                                 key={t}
-                                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-neutral-950 border border-emerald-500/30 text-emerald-300 font-mono text-xs"
+                                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-neutral-950 border border-emerald-500/30 text-emerald-300 font-mono text-xs"
                               >
                                 <Clock className="w-3 h-3 text-emerald-400" />
                                 {t}
@@ -1036,7 +801,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                 <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
                   6. Opções de Entrega
                 </label>
-                <div className="space-y-4 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
+                <div className="space-y-4 bg-neutral-950 p-4 rounded-xl border border-neutral-800">
                   <div>
                     <label className="block text-xs font-medium text-neutral-400 mb-2">Intervalo entre mensagens (segundos)</label>
                     <input
@@ -1049,7 +814,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   </div>
                   
                   <div className="pt-2 border-t border-neutral-800/50">
-                    <label className="flex items-center gap-3 cursor-pointer group">
+                    <label className="flex items-center gap-3 cursor-pointer">
                       <div className="relative">
                         <input
                           type="checkbox"
@@ -1057,15 +822,15 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                           onChange={e => setFormBatchPauseEnabled(e.target.checked)}
                           className="sr-only peer"
                         />
-                        <div className="w-9 h-5 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all group-hover:bg-neutral-700 peer-checked:group-hover:bg-emerald-400"></div>
+                        <div className="w-9 h-5 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
                       </div>
-                      <span className="text-sm text-neutral-300 group-hover:text-white transition-colors">Pausar a cada lote (anti-spam)</span>
+                      <span className="text-sm text-neutral-300">Pausar a cada lote (anti-spam)</span>
                     </label>
                   </div>
                   {formBatchPauseEnabled && (
-                    <div className="grid grid-cols-2 gap-4 mt-3 p-3 bg-neutral-900/50 rounded-xl border border-neutral-800/80">
+                    <div className="grid grid-cols-2 gap-4 mt-3">
                       <div>
-                        <label className="block text-xs font-medium text-neutral-500 mb-1">Tamanho do lote (msgs)</label>
+                        <label className="block text-xs font-medium text-neutral-500 mb-1">Tamanho do lote</label>
                         <input
                           type="number"
                           min="1"
@@ -1091,7 +856,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
 
             </form>
 
-            <div className="p-4 border-t border-neutral-800 bg-neutral-950/60 shrink-0 flex items-center justify-end gap-3 rounded-b-3xl">
+            <div className="p-6 border-t border-neutral-800 bg-neutral-900 shrink-0 flex items-center justify-end gap-3 rounded-b-3xl">
               <Button type="button" variant="secondary" onClick={() => setIsModalOpen(false)}>
                 Cancelar
               </Button>
@@ -1108,3 +873,6 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     </div>
   );
 }
+`;
+
+fs.writeFileSync('src/components/CampanhasView.tsx', header + viewDefinition + hooks.replace(/const handleOpenCreate[\s\S]*?const handleSaveDraft/m, 'const handleSaveDraft') + viewRest);

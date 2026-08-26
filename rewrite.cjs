@@ -1,319 +1,38 @@
-import React, { useState, useMemo, type FormEvent, type ChangeEvent, useRef, useEffect } from 'react';
-import { 
-  Megaphone, Plus, Search, Calendar, Clock, Image as ImageIcon,
-  Play, Pause, Trash2, Edit3, X, AlertTriangle, Users, FileText,
-  Upload, Trash, Sparkles, Link as LinkIcon, CheckCircle
-} from 'lucide-react';
-import { useCampaigns } from '../hooks/useCampaigns';
-import { useAudiences } from '../hooks/useAudiences';
-import { Button } from './ui/Button';
-import type { Campaign, CampaignScheduleConfig, DeliveryOptions, ScheduledMedia, ScheduleType, WeeklyTimeSlot } from '../types';
-import { renderMessageTemplate } from '../utils/template';
+const fs = require('fs');
+const orig = fs.readFileSync('/tmp/CampanhasView.tsx.backup', 'utf8');
 
-const WEEK_DAYS = [
-  { id: 0, label: 'Dom', full: 'Domingo' },
-  { id: 1, label: 'Seg', full: 'Segunda-feira' },
-  { id: 2, label: 'Ter', full: 'Terça-feira' },
-  { id: 3, label: 'Qua', full: 'Quarta-feira' },
-  { id: 4, label: 'Qui', full: 'Quinta-feira' },
-  { id: 5, label: 'Sex', full: 'Sexta-feira' },
-  { id: 6, label: 'Sáb', full: 'Sábado' },
-];
+// Replace imports
+let content = orig.replace(
+  "import React, { useState, useMemo, type FormEvent, type ChangeEvent, useRef } from 'react';",
+  "import React, { useState, useMemo, type FormEvent, type ChangeEvent, useRef, useEffect } from 'react';"
+);
 
-interface CampanhasViewProps {
-  selectedInstanceId: string | null;
+// Add missing Lucide icons (Sparkles, LinkIcon, CheckCircle)
+content = content.replace(
+  "Upload, Trash",
+  "Upload, Trash, Sparkles, Link as LinkIcon, CheckCircle"
+);
+
+// Add renderMessageTemplate
+if (!content.includes('renderMessageTemplate')) {
+  content = content.replace(
+    "import type { Campaign, CampaignScheduleConfig, DeliveryOptions, ScheduledMedia, ScheduleType, WeeklyTimeSlot } from '../types';",
+    "import type { Campaign, CampaignScheduleConfig, DeliveryOptions, ScheduledMedia, ScheduleType, WeeklyTimeSlot } from '../types';\nimport { renderMessageTemplate } from '../utils/template';"
+  );
 }
 
-export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
-  const {
-    state: campaigns, loading: campaignsLoading, error: campaignsError,
-    createCampaign, updateCampaign, scheduleCampaign,
-    pauseCampaign, resumeCampaign, unscheduleCampaign, deleteCampaign
-  } = useCampaigns(selectedInstanceId);
+// Fix {{nome}}
+content = content.replace(/\{\{nome\}\}/g, '{nome}');
 
-  const { state: audiences } = useAudiences(selectedInstanceId);
+const splitTarget = "  return (\n    <div className=\"flex flex-col h-full overflow-hidden\">";
+const parts = content.split(splitTarget);
 
-  const [search, setSearch] = useState('');
-  const [actionError, setActionError] = useState<string | null>(null);
-  
-  // Create / Edit modal state
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  
-  // Form State
-  const [name, setName] = useState('');
-  const [audienceListId, setAudienceListId] = useState('');
-  const [message, setMessage] = useState('');
-  const [fallbackName, setFallbackName] = useState('amigo(a)');
-  
-  // Schedule
-  const [formType, setFormType] = useState<ScheduleType>('once');
-  const [formDate, setFormDate] = useState('');
-  const [formTime, setFormTime] = useState('08:00');
-  
-  const [formDailyTimes, setFormDailyTimes] = useState<string[]>(['08:00']);
-  const [newDailyTimeInput, setNewDailyTimeInput] = useState('14:00');
+if (parts.length < 2) {
+  console.log("Could not find the split point!");
+  process.exit(1);
+}
 
-  const [formWeeklyDays, setFormWeeklyDays] = useState<number[]>([1]); // Seg
-  const [formWeeklySlots, setFormWeeklySlots] = useState<WeeklyTimeSlot[]>([
-    { day: 1, times: ['08:00'] }
-  ]);
-  const [selectedWeeklyDayForTimes, setSelectedWeeklyDayForTimes] = useState<number>(1);
-  const [newWeeklyTimeInput, setNewWeeklyTimeInput] = useState('14:00');
-
-  // Media
-  const [formMedia, setFormMedia] = useState<ScheduledMedia | null>(null);
-  const [mediaTab, setMediaTab] = useState<'upload' | 'url'>('upload');
-  const [mediaUrlInput, setMediaUrlInput] = useState('');
-  const [mediaUploading, setMediaUploading] = useState(false);
-  const [mediaError, setMediaError] = useState<string | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Delivery Options
-  const [formIntervalSeconds, setFormIntervalSeconds] = useState(5);
-  const [formBatchPauseEnabled, setFormBatchPauseEnabled] = useState(false);
-  const [formBatchSize, setFormBatchSize] = useState(5);
-  const [formBatchPauseMinutes, setFormBatchPauseMinutes] = useState(5);
-
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-
-  const filteredCampaigns = useMemo(() => {
-    if (!campaigns) return [];
-    if (!search.trim()) return campaigns;
-    const lower = search.toLowerCase();
-    return campaigns.filter(c => c.name.toLowerCase().includes(lower));
-  }, [campaigns, search]);
-
-  const metrics = useMemo(() => {
-    if (!campaigns) return { total: 0, drafts: 0, active: 0, paused: 0 };
-    return {
-      total: campaigns.length,
-      drafts: campaigns.filter(c => c.scheduleId === null).length,
-      active: campaigns.filter(c => {
-        const s = (c as any).status;
-        return s === 'active' || s === 'running';
-      }).length,
-      paused: campaigns.filter(c => (c as any).status === 'paused').length
-    };
-  }, [campaigns]);
-
-  const getStatusPresentation = (status: string) => {
-    switch (status) {
-      case 'draft': return { label: 'Rascunho', color: 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20' };
-      case 'active': return { label: 'Ativa', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' };
-      case 'running': return { label: 'Executando', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' };
-      case 'paused': return { label: 'Pausada', color: 'bg-amber-500/10 text-amber-400 border-amber-500/20' };
-      case 'completed': return { label: 'Concluída', color: 'bg-purple-500/10 text-purple-400 border-purple-500/20' };
-      case 'error': return { label: 'Erro', color: 'bg-rose-500/10 text-rose-400 border-rose-500/20' };
-      case 'missing_schedule': return { label: 'Agendamento ausente', color: 'bg-rose-500/10 text-rose-400 border-rose-500/20' };
-      default: return { label: status, color: 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20' };
-    }
-  };
-
-
-  const resetForm = () => {
-    setEditingId(null);
-    setName('');
-    setAudienceListId('');
-    setMessage('');
-    setFallbackName('amigo(a)');
-    
-    setFormType('once');
-    setFormDate('');
-    setFormTime('08:00');
-    setFormDailyTimes(['08:00']);
-    setNewDailyTimeInput('14:00');
-    setFormWeeklyDays([1]);
-    setFormWeeklySlots([{ day: 1, times: ['08:00'] }]);
-    setSelectedWeeklyDayForTimes(1);
-    setNewWeeklyTimeInput('14:00');
-
-    setFormMedia(null);
-    setMediaTab('upload');
-    setMediaUrlInput('');
-    setMediaError(null);
-
-    setFormIntervalSeconds(5);
-    setFormBatchPauseEnabled(false);
-    setFormBatchSize(5);
-    setFormBatchPauseMinutes(5);
-
-    setActionError(null);
-  };
-
-  const handleOpenCreate = () => {
-    resetForm();
-    setIsModalOpen(true);
-  };
-
-  const handleOpenEdit = (c: Campaign) => {
-    resetForm();
-    setEditingId(c.id);
-    setName(c.name);
-    setAudienceListId(c.audienceListId || '');
-    setMessage(c.message);
-    setFallbackName(c.fallbackName);
-    
-    setFormType(c.schedule.scheduleType);
-    if (c.schedule.scheduleType === 'once' && c.schedule.scheduledAt) {
-      const d = new Date(c.schedule.scheduledAt);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      const hh = String(d.getHours()).padStart(2, '0');
-      const min = String(d.getMinutes()).padStart(2, '0');
-      setFormDate(`${yyyy}-${mm}-${dd}`);
-      setFormTime(`${hh}:${min}`);
-    }
-    if (c.schedule.dailyTimes) setFormDailyTimes([...c.schedule.dailyTimes]);
-    if (c.schedule.weeklyTimeSlots) {
-      setFormWeeklySlots([...c.schedule.weeklyTimeSlots]);
-      setFormWeeklyDays(c.schedule.weeklyTimeSlots.map(s => s.day));
-      if (c.schedule.weeklyTimeSlots.length > 0) {
-        setSelectedWeeklyDayForTimes(c.schedule.weeklyTimeSlots[0].day);
-      }
-    }
-
-    if (c.media) {
-      setFormMedia(c.media);
-      if (c.media.source === 'url' && c.media.url) {
-        setMediaTab('url');
-        setMediaUrlInput(c.media.url);
-      }
-    }
-
-    if (c.schedule.deliveryOptions) {
-      setFormIntervalSeconds(c.schedule.deliveryOptions.intervalBetweenMessagesMs / 1000);
-      setFormBatchPauseEnabled(c.schedule.deliveryOptions.batchPauseEnabled);
-      setFormBatchSize(c.schedule.deliveryOptions.batchSize);
-      setFormBatchPauseMinutes(c.schedule.deliveryOptions.batchPauseMs / 60000);
-    }
-
-    setIsModalOpen(true);
-  };
-
-  const uploadMedia = async (file: File): Promise<ScheduledMedia> => {
-    if (!selectedInstanceId) throw new Error('Nenhuma instância selecionada');
-    const formData = new FormData();
-    formData.append('file', file);
-    const res = await fetch(`/api/instances/${selectedInstanceId}/media/upload`, {
-      method: 'POST',
-      body: formData,
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Falha ao fazer upload da mídia');
-    return data.media;
-  };
-
-  const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      setMediaUploading(true);
-      setMediaError(null);
-      const media = await uploadMedia(file);
-      setFormMedia(media);
-    } catch (err: any) {
-      setMediaError(err.message || 'Erro no upload');
-    } finally {
-      setMediaUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
-  const handleAddMediaUrl = () => {
-    if (!mediaUrlInput.trim()) {
-      setMediaError('Insira uma URL válida');
-      return;
-    }
-    try {
-      new URL(mediaUrlInput.trim());
-      setFormMedia({
-        type: 'image',
-        source: 'url',
-        url: mediaUrlInput.trim()
-      });
-      setMediaError(null);
-    } catch {
-      setMediaError('A URL fornecida é inválida');
-    }
-  };
-
-  const handleSaveDraft = async () => {
-    try {
-      setActionError(null);
-      if (!name.trim()) throw new Error('Nome é obrigatório');
-
-      let scheduledAt: string | null = null;
-      if (formType === 'once' && formDate && formTime) {
-        const d = new Date(`${formDate}T${formTime}`);
-        if (!isNaN(d.getTime())) {
-          scheduledAt = d.toISOString();
-        }
-      }
-
-      const scheduleConfig: CampaignScheduleConfig = {
-        scheduleType: formType,
-        scheduledAt,
-        dailyTimes: formType === 'daily' ? formDailyTimes : [],
-        weeklyTimeSlots: formType === 'weekly' ? formWeeklySlots : [],
-        deliveryOptions: {
-          intervalBetweenMessagesMs: (formIntervalSeconds || 5) * 1000,
-          batchPauseEnabled: formBatchPauseEnabled,
-          batchSize: formBatchSize || 5,
-          batchPauseMs: (formBatchPauseMinutes || 5) * 60000
-        }
-      };
-
-      const payload: Partial<Campaign> = {
-        name,
-        audienceListId: audienceListId || null,
-        message,
-        fallbackName,
-        media: formMedia,
-        schedule: scheduleConfig
-      };
-
-      setIsSubmitting(true);
-      if (editingId) {
-        await updateCampaign(editingId, payload);
-      } else {
-        if (!selectedInstanceId) throw new Error('Instância não selecionada');
-        await createCampaign({ ...payload, instanceId: selectedInstanceId } as Partial<Campaign>);
-      }
-      setIsModalOpen(false);
-    } catch (e: any) {
-      setActionError(e.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleSchedule = async (id: string) => {
-    try { setActionError(null); await scheduleCampaign(id); }
-    catch (e: any) { setActionError(e.message); }
-  };
-  const handlePause = async (id: string) => {
-    try { setActionError(null); await pauseCampaign(id); }
-    catch (e: any) { setActionError(e.message); }
-  };
-  const handleResume = async (id: string) => {
-    try { setActionError(null); await resumeCampaign(id); }
-    catch (e: any) { setActionError(e.message); }
-  };
-  const handleUnschedule = async (id: string) => {
-    try { setActionError(null); await unscheduleCampaign(id); }
-    catch (e: any) { setActionError(e.message); }
-  };
-  const handleDelete = async (id: string) => {
-    try { setActionError(null); await deleteCampaign(id); setDeleteConfirm(null); }
-    catch (e: any) { setActionError(e.message); }
-  };
-
-
+const hooksToAdd = `
   const handleOpenCreateWrapper = () => {
     handleOpenCreate();
   };
@@ -337,7 +56,9 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
 
   const selectedListObj = audiences?.lists.find(l => l.id === audienceListId);
 
+`;
 
+const newViewRest = `
   if (!selectedInstanceId) {
     return (
       <div className="flex flex-col items-center justify-center h-[50vh] text-center px-4 animate-in fade-in duration-500">
@@ -484,7 +205,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   <div className="space-y-1 min-w-0 flex-1">
                     <h3 className="font-bold text-white truncate pr-2" title={c.name}>{c.name}</h3>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${statusColor}`}>
+                      <span className={\`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border \${statusColor}\`}>
                         {statusLabel}
                       </span>
                       <span className="text-[11px] text-neutral-500 font-mono">
@@ -561,7 +282,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                         c.schedule.dailyTimes.join(', ')
                       )}
                       {c.schedule.scheduleType === 'weekly' && (
-                        `${c.schedule.weeklyTimeSlots.length} dias`
+                        \`\${c.schedule.weeklyTimeSlots.length} dias\`
                       )}
                     </div>
                   </div>
@@ -722,14 +443,14 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                       <button
                         type="button"
                         onClick={() => setMediaTab('upload')}
-                        className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${mediaTab === 'upload' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-300'}`}
+                        className={\`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors \${mediaTab === 'upload' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-300'}\`}
                       >
                         Upload Local
                       </button>
                       <button
                         type="button"
                         onClick={() => setMediaTab('url')}
-                        className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${mediaTab === 'url' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-300'}`}
+                        className={\`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors \${mediaTab === 'url' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-300'}\`}
                       >
                         URL da Imagem
                       </button>
@@ -776,7 +497,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setMessage((prev) => `${prev} {nome}`)}
+                      onClick={() => setMessage((prev) => \`\${prev} {nome}\`)}
                       className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
                       title="Inserir variável de nome"
                     >
@@ -785,7 +506,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setMessage((prev) => `${prev} {Oi|Olá|Bom dia}`)}
+                      onClick={() => setMessage((prev) => \`\${prev} {Oi|Olá|Bom dia}\`)}
                       className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
                       title="Inserir Spintax"
                     >
@@ -832,13 +553,13 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                 </label>
                 
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setFormType('once')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors ${formType === 'once' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}`}>
+                  <button type="button" onClick={() => setFormType('once')} className={\`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors \${formType === 'once' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}\`}>
                     Envio Único
                   </button>
-                  <button type="button" onClick={() => setFormType('daily')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors ${formType === 'daily' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}`}>
+                  <button type="button" onClick={() => setFormType('daily')} className={\`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors \${formType === 'daily' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}\`}>
                     Diário
                   </button>
-                  <button type="button" onClick={() => setFormType('weekly')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors ${formType === 'weekly' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}`}>
+                  <button type="button" onClick={() => setFormType('weekly')} className={\`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors \${formType === 'weekly' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}\`}>
                     Semanal
                   </button>
                 </div>
@@ -946,11 +667,11 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                                     return next;
                                   });
                                 }}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                className={\`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors \${
                                   isSelected
                                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                                     : 'bg-neutral-900 text-neutral-400 border border-neutral-800 hover:bg-neutral-800'
-                                }`}
+                                }\`}
                               >
                                 {day.label}
                               </button>
@@ -1108,3 +829,6 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     </div>
   );
 }
+`;
+
+fs.writeFileSync('src/components/CampanhasView.tsx', parts[0] + hooksToAdd + newViewRest);
