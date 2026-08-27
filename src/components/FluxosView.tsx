@@ -298,6 +298,19 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
     }
   };
 
+  const findStepById = (steps: FlowStep[], id: string): FlowStep | null => {
+    for (const step of steps) {
+      if (step.id === id) return step;
+      if (step.type === 'condition') {
+        const fromTrue = findStepById(step.ifTrue, id);
+        if (fromTrue) return fromTrue;
+        const fromFalse = findStepById(step.ifFalse, id);
+        if (fromFalse) return fromFalse;
+      }
+    }
+    return null;
+  };
+
   const insertVariable = (stepId: string, variable: string) => {
     setFormSteps(prev => updateStepInTree(prev, stepId, step => {
       if (step.type === 'send_message') {
@@ -325,28 +338,15 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
     const t = templates.find(x => x.id === templateId);
     if (!t) return;
     
-    // Auto apply se message empty
-    let isEmpty = false;
-    setFormSteps(prev => {
-      let foundEmpty = false;
-      const copy = updateStepInTree(prev, stepId, step => {
-        if (step.type === 'send_message') {
-          if (!step.message.trim()) {
-            foundEmpty = true;
-          }
-        }
-        return step;
-      });
-      isEmpty = foundEmpty;
-      return prev;
-    });
+    const step = findStepById(formSteps, stepId);
+    if (step?.type !== 'send_message') return;
 
-    if (isEmpty) {
-      setFormSteps(prev => updateStepInTree(prev, stepId, step => {
-        if (step.type === 'send_message') {
-          return { ...step, message: t.message, fallbackName: t.fallbackName };
+    if (!step.message.trim()) {
+      setFormSteps(prev => updateStepInTree(prev, stepId, s => {
+        if (s.type === 'send_message') {
+          return { ...s, message: t.message, fallbackName: t.fallbackName };
         }
-        return step;
+        return s;
       }));
     } else {
       setTemplateConfirmation({ stepId, templateId });
@@ -441,14 +441,14 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
                   <span className="text-sm font-bold text-white">{STEP_NAMES[step.type]}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button type="button" aria-label="Mover para cima" onClick={() => moveStep(step.id, 'up')} disabled={index === 0} className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-800 rounded disabled:opacity-30 disabled:hover:bg-transparent">
+                  <button type="button" aria-label="Mover para cima" title="Mover para cima" onClick={() => moveStep(step.id, 'up')} disabled={index === 0} className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-800 rounded disabled:opacity-30 disabled:hover:bg-transparent">
                     <ArrowUp className="w-3.5 h-3.5" />
                   </button>
-                  <button type="button" aria-label="Mover para baixo" onClick={() => moveStep(step.id, 'down')} disabled={index === steps.length - 1} className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-800 rounded disabled:opacity-30 disabled:hover:bg-transparent">
+                  <button type="button" aria-label="Mover para baixo" title="Mover para baixo" onClick={() => moveStep(step.id, 'down')} disabled={index === steps.length - 1} className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-800 rounded disabled:opacity-30 disabled:hover:bg-transparent">
                     <ArrowDown className="w-3.5 h-3.5" />
                   </button>
                   <div className="w-px h-4 bg-neutral-800 mx-1"></div>
-                  <button type="button" aria-label="Excluir passo" onClick={() => deleteStep(step.id)} className="p-1.5 text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 rounded">
+                  <button type="button" aria-label="Excluir passo" title="Excluir passo" onClick={() => deleteStep(step.id)} className="p-1.5 text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 rounded">
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -517,16 +517,23 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
               className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
-          {step.message && (
             <div className="bg-neutral-950 p-3 rounded-lg border border-neutral-800 relative group overflow-hidden mt-2">
               <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-neutral-800 text-[10px] text-neutral-400 rounded">
                 Preview
               </div>
               <div className="text-sm text-neutral-300 whitespace-pre-wrap font-mono mt-1">
-                {renderMessageTemplate(step.message, { jid: '', name: 'João' })}
+                {step.message.trim() ? (
+                  renderMessageTemplate(step.message, { 
+                    jid: '5511999999999@s.whatsapp.net', 
+                    name: 'João Silva',
+                    label: 'João Silva',
+                    type: 'person'
+                  } as any, step.fallbackName, { seed: `flow-preview-${step.id}` })
+                ) : (
+                  <span className="text-neutral-500 italic">Escreva uma mensagem para ver o preview</span>
+                )}
               </div>
             </div>
-          )}
         </div>
       );
     }
@@ -600,25 +607,47 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
             <div>
               <label className="block text-[10px] uppercase text-neutral-500 font-medium mb-1">Recurso</label>
               {step.condition.type === 'has_tag' ? (
-                <select
-                  required
-                  value={(step.condition as any).tagId || ''}
-                  onChange={(e) => update({ condition: { type: 'has_tag', tagId: e.target.value } })}
-                  className="w-full px-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-md text-sm text-white focus:outline-none focus:border-emerald-500"
-                >
-                  <option value="" disabled>Selecione uma tag...</option>
-                  {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
+                <div>
+                  <select
+                    required
+                    value={(step.condition as any).tagId || ''}
+                    onChange={(e) => update({ condition: { type: 'has_tag', tagId: e.target.value } })}
+                    className="w-full px-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-md text-sm text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="" disabled>Selecione uma tag...</option>
+                    {(step.condition as any).tagId && !tags.some(t => t.id === (step.condition as any).tagId) && (
+                      <option value={(step.condition as any).tagId}>Recurso indisponível</option>
+                    )}
+                    {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  {(step.condition as any).tagId && !tags.some(t => t.id === (step.condition as any).tagId) && (
+                    <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <span>Recurso indisponível</span>
+                    </div>
+                  )}
+                </div>
               ) : (
-                <select
-                  required
-                  value={(step.condition as any).listId || ''}
-                  onChange={(e) => update({ condition: { type: 'in_list', listId: e.target.value } })}
-                  className="w-full px-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-md text-sm text-white focus:outline-none focus:border-emerald-500"
-                >
-                  <option value="" disabled>Selecione uma lista...</option>
-                  {lists.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
+                <div>
+                  <select
+                    required
+                    value={(step.condition as any).listId || ''}
+                    onChange={(e) => update({ condition: { type: 'in_list', listId: e.target.value } })}
+                    className="w-full px-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-md text-sm text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="" disabled>Selecione uma lista...</option>
+                    {(step.condition as any).listId && !lists.some(l => l.id === (step.condition as any).listId) && (
+                      <option value={(step.condition as any).listId}>Recurso indisponível</option>
+                    )}
+                    {lists.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                  {(step.condition as any).listId && !lists.some(l => l.id === (step.condition as any).listId) && (
+                    <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <span>Recurso indisponível</span>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -653,8 +682,17 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
             className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500"
           >
             <option value="" disabled>Selecione...</option>
+            {(step as any).tagId && !tags.some(t => t.id === (step as any).tagId) && (
+              <option value={(step as any).tagId}>Recurso indisponível</option>
+            )}
             {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
+          {(step as any).tagId && !tags.some(t => t.id === (step as any).tagId) && (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>Recurso indisponível</span>
+            </div>
+          )}
         </div>
       );
     }
@@ -670,8 +708,17 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
             className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500"
           >
             <option value="" disabled>Selecione...</option>
+            {(step as any).listId && !lists.some(l => l.id === (step as any).listId) && (
+              <option value={(step as any).listId}>Recurso indisponível</option>
+            )}
             {lists.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
+          {(step as any).listId && !lists.some(l => l.id === (step as any).listId) && (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>Recurso indisponível</span>
+            </div>
+          )}
         </div>
       );
     }
@@ -682,10 +729,10 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
   const getResourceName = (f: Flow) => {
     if (f.trigger.type === 'contact_added_to_list') {
       const l = lists.find(list => list.id === (f.trigger as any).listId);
-      return l ? l.name : null;
+      return l ? l.name : 'Gatilho indisponível';
     } else {
       const t = tags.find(tag => tag.id === (f.trigger as any).tagId);
-      return t ? t.name : null;
+      return t ? t.name : 'Gatilho indisponível';
     }
   };
 
@@ -998,13 +1045,32 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
                         className="w-full px-4 py-2.5 bg-neutral-900 border border-neutral-800 rounded-xl text-sm text-white focus:outline-none focus:border-indigo-500"
                       >
                         <option value="" disabled>Selecione...</option>
-                        {formTriggerType === 'contact_added_to_list' && lists.map(l => (
-                          <option key={l.id} value={l.id}>{l.name}</option>
-                        ))}
-                        {formTriggerType === 'tag_added_to_contact' && tags.map(t => (
-                          <option key={t.id} value={t.id}>{t.name}</option>
-                        ))}
+                        {formTriggerType === 'contact_added_to_list' && (
+                          <>
+                            {formTriggerResource && !lists.some(l => l.id === formTriggerResource) && (
+                              <option value={formTriggerResource}>Recurso indisponível</option>
+                            )}
+                            {lists.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                          </>
+                        )}
+                        {formTriggerType === 'tag_added_to_contact' && (
+                          <>
+                            {formTriggerResource && !tags.some(t => t.id === formTriggerResource) && (
+                              <option value={formTriggerResource}>Recurso indisponível</option>
+                            )}
+                            {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </>
+                        )}
                       </select>
+                      {formTriggerResource && (
+                        (formTriggerType === 'contact_added_to_list' && !lists.some(l => l.id === formTriggerResource)) ||
+                        (formTriggerType === 'tag_added_to_contact' && !tags.some(t => t.id === formTriggerResource))
+                      ) && (
+                        <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-1.5 rounded-lg">
+                          <AlertTriangle className="w-4 h-4" />
+                          <span>Recurso indisponível</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   

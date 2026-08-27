@@ -546,8 +546,7 @@ async function startServer() {
       const flow = flowService.create(req.auth!.workspace.id, req.params.instanceId, req.body);
       res.status(201).json(flow);
     } catch (err: any) {
-      if (err.message.includes('Duplicate')) res.status(409).json({ error: err.message });
-      else res.status(400).json({ error: err.message });
+      res.status(err.status || 400).json({ error: err.message });
     }
   });
 
@@ -558,7 +557,7 @@ async function startServer() {
       const flow = flowService.update(req.params.flowId, req.auth!.workspace.id, req.params.instanceId, req.body);
       res.json(flow);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(err.status || 400).json({ error: err.message });
     }
   });
 

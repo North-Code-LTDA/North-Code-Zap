@@ -17,6 +17,48 @@ export function isValidDateStr(d: any) {
   return !isNaN(date.getTime());
 }
 
+export function normalizeFlowTrigger(input: any): FlowTrigger {
+  if (input?.type === 'contact_added_to_list') {
+    return { type: 'contact_added_to_list', listId: input.listId };
+  }
+  if (input?.type === 'tag_added_to_contact') {
+    return { type: 'tag_added_to_contact', tagId: input.tagId };
+  }
+  throw Object.assign(new Error('Invalid trigger type'), { status: 400 });
+}
+
+export function normalizeFlowSteps(steps: any[]): FlowStep[] {
+  if (!Array.isArray(steps)) return [];
+  return steps.map(s => {
+    if (!s || typeof s !== 'object') throw Object.assign(new Error('Invalid step'), { status: 400 });
+    if (s.type === 'send_message') {
+      return { id: s.id, type: 'send_message', message: s.message, fallbackName: s.fallbackName };
+    }
+    if (s.type === 'delay') {
+      return { id: s.id, type: 'delay', durationSeconds: s.durationSeconds };
+    }
+    if (s.type === 'condition') {
+      let cond: any = undefined;
+      if (s.condition?.type === 'has_tag') cond = { type: 'has_tag', tagId: s.condition.tagId };
+      if (s.condition?.type === 'in_list') cond = { type: 'in_list', listId: s.condition.listId };
+      return { 
+        id: s.id, 
+        type: 'condition', 
+        condition: cond, 
+        ifTrue: normalizeFlowSteps(s.ifTrue), 
+        ifFalse: normalizeFlowSteps(s.ifFalse) 
+      };
+    }
+    if (s.type === 'add_tag' || s.type === 'remove_tag') {
+      return { id: s.id, type: s.type, tagId: s.tagId };
+    }
+    if (s.type === 'add_to_list' || s.type === 'remove_from_list') {
+      return { id: s.id, type: s.type, listId: s.listId };
+    }
+    throw Object.assign(new Error('Unknown step type'), { status: 400 });
+  }) as FlowStep[];
+}
+
 export function validateFlowStepsStructure(steps: any[], depth = 0, ids = new Set<string>(), total = { count: 0 }) {
   if (!Array.isArray(steps)) throw new Error('Steps must be an array');
   if (depth > 5) throw new Error('Max condition depth 5 exceeded');
@@ -44,8 +86,11 @@ export function validateFlowStepsStructure(steps: any[], depth = 0, ids = new Se
       const nextDepth = depth + 1;
       if (nextDepth > 5) throw new Error('Max condition depth 5 exceeded');
       
-      validateFlowStepsStructure(step.ifTrue || [], nextDepth, ids, total);
-      validateFlowStepsStructure(step.ifFalse || [], nextDepth, ids, total);
+      if (!Array.isArray(step.ifTrue)) throw new Error('Condition ifTrue must be an array');
+      if (!Array.isArray(step.ifFalse)) throw new Error('Condition ifFalse must be an array');
+      
+      validateFlowStepsStructure(step.ifTrue, nextDepth, ids, total);
+      validateFlowStepsStructure(step.ifFalse, nextDepth, ids, total);
     } else if (['add_tag', 'remove_tag'].includes(step.type)) {
       if (!isValidUUID(step.tagId)) throw new Error('Invalid action tagId');
     } else if (['add_to_list', 'remove_from_list'].includes(step.type)) {
@@ -179,8 +224,11 @@ export class FlowService {
     if (!data.trigger || typeof data.trigger !== 'object') throw Object.assign(new Error('Invalid trigger'), { status: 400 });
     if (!Array.isArray(data.steps) || data.steps.length === 0) throw Object.assign(new Error('Steps cannot be empty'), { status: 400 });
 
-    validateFlowStepsStructure(data.steps);
-    this.validateResources(data.trigger, data.steps, workspaceId, instanceId);
+    const trigger = normalizeFlowTrigger(data.trigger);
+    const steps = normalizeFlowSteps(data.steps);
+
+    validateFlowStepsStructure(steps);
+    this.validateResources(trigger, steps, workspaceId, instanceId);
 
     const flow: Flow = {
       id: randomUUID(),
@@ -188,8 +236,8 @@ export class FlowService {
       instanceId,
       name,
       enabled,
-      trigger: structuredClone(data.trigger),
-      steps: structuredClone(data.steps),
+      trigger,
+      steps,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -223,13 +271,14 @@ export class FlowService {
 
     if (data.trigger !== undefined) {
       if (!data.trigger || typeof data.trigger !== 'object') throw Object.assign(new Error('Invalid trigger'), { status: 400 });
-      flow.trigger = structuredClone(data.trigger);
+      flow.trigger = normalizeFlowTrigger(data.trigger);
     }
 
     if (data.steps !== undefined) {
       if (!Array.isArray(data.steps) || data.steps.length === 0) throw Object.assign(new Error('Steps cannot be empty'), { status: 400 });
-      validateFlowStepsStructure(data.steps);
-      flow.steps = structuredClone(data.steps);
+      const steps = normalizeFlowSteps(data.steps);
+      validateFlowStepsStructure(steps);
+      flow.steps = steps;
     }
 
     if (data.trigger !== undefined || data.steps !== undefined) {

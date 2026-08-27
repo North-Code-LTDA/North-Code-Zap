@@ -74,9 +74,10 @@ export class FlowRunner {
         }
         valid.push(ex);
       }
-      this.executions = valid;
       if (discardedAny) {
-        this.persistState(this.executions);
+        this.persistState(valid);
+      } else {
+        this.executions = valid;
       }
     }
   }
@@ -95,11 +96,17 @@ export class FlowRunner {
 
   async dispatchMany(events: AutomationTriggerEvent[]) {
     for (const e of events) {
+      let flows: any[] = [];
       try {
-        const flows = this.flowService.findEnabledByTrigger(e.workspaceId, e.instanceId, e.type, 
+        flows = this.flowService.findEnabledByTrigger(e.workspaceId, e.instanceId, e.type, 
           e.type === 'contact_added_to_list' ? e.listId! : e.tagId!);
-        
-        for (const flow of flows) {
+      } catch (err) {
+        console.error('[Flow] failed to find flows:', err);
+        continue;
+      }
+
+      for (const flow of flows) {
+        try {
           if (!flow.steps || flow.steps.length === 0) continue;
           const ex: FlowExecution = {
             id: randomUUID(),
@@ -119,9 +126,9 @@ export class FlowRunner {
           this.persistState(nextState);
           
           this.runExecution(ex).catch(err => console.error(err));
+        } catch (err) {
+          console.error(`[Flow] failed to start flow ${flow.id}:`, err);
         }
-      } catch (err) {
-        console.error('[Flow] failed to dispatch event:', err);
       }
     }
   }
