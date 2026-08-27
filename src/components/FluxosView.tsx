@@ -423,7 +423,7 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
     );
   };
 
-  const renderStepList = (steps: FlowStep[], parentId: string | null, branch: 'true' | 'false' | null, depth = 1) => {
+  const renderStepList = (steps: FlowStep[], parentId: string | null, branch: 'true' | 'false' | null, depth = 0) => {
     return (
       <div className="space-y-4">
         {steps.map((step, index) => (
