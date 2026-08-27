@@ -100,6 +100,8 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
         const t = tags.find(tag => tag.id === (f.trigger as any).tagId);
         if (t && t.name.toLowerCase().includes(s)) return true;
       }
+      const stepsStr = JSON.stringify(f.steps).toLowerCase();
+      if (stepsStr.includes(s)) return true;
       return false;
     });
   }, [flows, search, lists, tags]);
@@ -299,6 +301,20 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
   const insertVariable = (stepId: string, variable: string) => {
     setFormSteps(prev => updateStepInTree(prev, stepId, step => {
       if (step.type === 'send_message') {
+        const textarea = document.getElementById(`textarea-${step.id}`) as HTMLTextAreaElement | null;
+        if (textarea) {
+          const start = textarea.selectionStart;
+          const end = textarea.selectionEnd;
+          const msg = step.message || '';
+          const newMsg = msg.substring(0, start) + variable + msg.substring(end);
+          
+          setTimeout(() => {
+             const ta = document.getElementById(`textarea-${step.id}`) as HTMLTextAreaElement;
+             if (ta) { ta.focus(); ta.setSelectionRange(start + variable.length, start + variable.length); }
+          }, 0);
+          
+          return { ...step, message: newMsg };
+        }
         return { ...step, message: step.message + variable };
       }
       return step;
@@ -306,7 +322,35 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
   };
 
   const applyTemplate = (stepId: string, templateId: string) => {
-    setTemplateConfirmation({ stepId, templateId });
+    const t = templates.find(x => x.id === templateId);
+    if (!t) return;
+    
+    // Auto apply se message empty
+    let isEmpty = false;
+    setFormSteps(prev => {
+      let foundEmpty = false;
+      const copy = updateStepInTree(prev, stepId, step => {
+        if (step.type === 'send_message') {
+          if (!step.message.trim()) {
+            foundEmpty = true;
+          }
+        }
+        return step;
+      });
+      isEmpty = foundEmpty;
+      return prev;
+    });
+
+    if (isEmpty) {
+      setFormSteps(prev => updateStepInTree(prev, stepId, step => {
+        if (step.type === 'send_message') {
+          return { ...step, message: t.message, fallbackName: t.fallbackName };
+        }
+        return step;
+      }));
+    } else {
+      setTemplateConfirmation({ stepId, templateId });
+    }
   };
 
   const confirmApplyTemplate = () => {
@@ -326,7 +370,7 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
 
   // Sub-componentes para o modal
 
-  const AddStepUI = ({ onAdd }: { onAdd: (type: string) => void }) => {
+  const AddStepUI = ({ onAdd, depth }: { onAdd: (type: string) => void, depth: number }) => {
     const [open, setOpen] = useState(false);
     if (!open) {
       return (
@@ -343,19 +387,30 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
       <div className="bg-neutral-900 border border-neutral-800 p-4 rounded-xl space-y-3">
         <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">Escolha o tipo de passo:</div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {Object.entries(STEP_NAMES).map(([type, name]) => (
-            <button
-              key={type}
-              type="button"
-              onClick={() => { onAdd(type); setOpen(false); }}
-              className="flex items-center gap-3 p-3 rounded-lg bg-neutral-950 border border-neutral-800 hover:border-emerald-500/50 hover:bg-neutral-800 text-sm text-left transition-colors"
-            >
-              <div className="w-8 h-8 rounded-lg bg-neutral-900 flex items-center justify-center shrink-0">
-                {STEP_ICONS[type]}
-              </div>
-              <span className="text-neutral-200 font-medium">{name}</span>
-            </button>
-          ))}
+          {Object.entries(STEP_NAMES).map(([type, name]) => {
+            const disabled = type === 'condition' && depth >= 5;
+            return (
+              <button
+                key={type}
+                type="button"
+                disabled={disabled}
+                onClick={() => { onAdd(type); setOpen(false); }}
+                className={`flex items-center gap-3 p-3 rounded-lg border text-sm text-left transition-colors ${
+                  disabled 
+                    ? 'bg-neutral-950/50 border-neutral-800/50 text-neutral-600 cursor-not-allowed'
+                    : 'bg-neutral-950 border-neutral-800 hover:border-emerald-500/50 hover:bg-neutral-800 text-neutral-200'
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${disabled ? 'bg-neutral-900/50' : 'bg-neutral-900'}`}>
+                  {STEP_ICONS[type]}
+                </div>
+                <div className="flex flex-col">
+                  <span className="font-medium">{name}</span>
+                  {disabled && <span className="text-[10px] text-neutral-600">Limite de profundidade atingido</span>}
+                </div>
+              </button>
+            );
+          })}
         </div>
         <button 
           type="button" 
@@ -368,7 +423,7 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
     );
   };
 
-  const renderStepList = (steps: FlowStep[], parentId: string | null, branch: 'true' | 'false' | null) => {
+  const renderStepList = (steps: FlowStep[], parentId: string | null, branch: 'true' | 'false' | null, depth = 1) => {
     return (
       <div className="space-y-4">
         {steps.map((step, index) => (
@@ -386,20 +441,20 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
                   <span className="text-sm font-bold text-white">{STEP_NAMES[step.type]}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button type="button" onClick={() => moveStep(step.id, 'up')} disabled={index === 0} className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-800 rounded disabled:opacity-30 disabled:hover:bg-transparent">
+                  <button type="button" aria-label="Mover para cima" onClick={() => moveStep(step.id, 'up')} disabled={index === 0} className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-800 rounded disabled:opacity-30 disabled:hover:bg-transparent">
                     <ArrowUp className="w-3.5 h-3.5" />
                   </button>
-                  <button type="button" onClick={() => moveStep(step.id, 'down')} disabled={index === steps.length - 1} className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-800 rounded disabled:opacity-30 disabled:hover:bg-transparent">
+                  <button type="button" aria-label="Mover para baixo" onClick={() => moveStep(step.id, 'down')} disabled={index === steps.length - 1} className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-800 rounded disabled:opacity-30 disabled:hover:bg-transparent">
                     <ArrowDown className="w-3.5 h-3.5" />
                   </button>
                   <div className="w-px h-4 bg-neutral-800 mx-1"></div>
-                  <button type="button" onClick={() => deleteStep(step.id)} className="p-1.5 text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 rounded">
+                  <button type="button" aria-label="Excluir passo" onClick={() => deleteStep(step.id)} className="p-1.5 text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 rounded">
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
               <div className="p-4">
-                {renderStepBody(step)}
+                {renderStepBody(step, depth)}
               </div>
             </div>
           </div>
@@ -408,13 +463,13 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
           {steps.length > 0 && (
             <div className="absolute -top-2 left-6 w-0.5 h-4 bg-neutral-800"></div>
           )}
-          <AddStepUI onAdd={(type) => addStep(parentId, branch, type)} />
+          <AddStepUI onAdd={(type) => addStep(parentId, branch, type)} depth={depth} />
         </div>
       </div>
     );
   };
 
-  const renderStepBody = (step: FlowStep) => {
+  const renderStepBody = (step: FlowStep, depth: number) => {
     const update = (updater: Partial<FlowStep>) => {
       setFormSteps(prev => updateStepInTree(prev, step.id, s => ({ ...s, ...updater }) as FlowStep));
     };
@@ -445,6 +500,7 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
             )}
           </div>
           <textarea
+            id={`textarea-${step.id}`}
             required
             value={step.message}
             onChange={(e) => update({ message: e.target.value })}
@@ -461,22 +517,63 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
               className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
+          {step.message && (
+            <div className="bg-neutral-950 p-3 rounded-lg border border-neutral-800 relative group overflow-hidden mt-2">
+              <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-neutral-800 text-[10px] text-neutral-400 rounded">
+                Preview
+              </div>
+              <div className="text-sm text-neutral-300 whitespace-pre-wrap font-mono mt-1">
+                {renderMessageTemplate(step.message, { jid: '', name: 'João' })}
+              </div>
+            </div>
+          )}
         </div>
       );
     }
 
     if (step.type === 'delay') {
+      const getUnit = (sec: number) => {
+        if (sec % 86400 === 0 && sec >= 86400) return { val: sec / 86400, unit: 'days' };
+        if (sec % 3600 === 0 && sec >= 3600) return { val: sec / 3600, unit: 'hours' };
+        if (sec % 60 === 0 && sec >= 60) return { val: sec / 60, unit: 'minutes' };
+        return { val: sec, unit: 'seconds' };
+      };
+      
+      const current = getUnit(step.durationSeconds);
+      
+      const handleChange = (val: string, unit: string) => {
+        let n = parseInt(val) || 0;
+        if (n < 0) n = 0;
+        let sec = n;
+        if (unit === 'minutes') sec = n * 60;
+        if (unit === 'hours') sec = n * 3600;
+        if (unit === 'days') sec = n * 86400;
+        update({ durationSeconds: sec });
+      };
+
       return (
         <div>
-          <label className="block text-xs font-medium text-neutral-400 mb-1">Aguardar (segundos)</label>
-          <input
-            type="number"
-            required
-            min="1"
-            value={step.durationSeconds}
-            onChange={(e) => update({ durationSeconds: parseInt(e.target.value) || 0 })}
-            className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500"
-          />
+          <label className="block text-xs font-medium text-neutral-400 mb-1">Aguardar (tempo)</label>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              required
+              min="1"
+              value={current.val}
+              onChange={(e) => handleChange(e.target.value, current.unit)}
+              className="w-24 px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500"
+            />
+            <select
+              value={current.unit}
+              onChange={(e) => handleChange(current.val.toString(), e.target.value)}
+              className="flex-1 px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500"
+            >
+              <option value="seconds">Segundos</option>
+              <option value="minutes">Minutos</option>
+              <option value="hours">Horas</option>
+              <option value="days">Dias</option>
+            </select>
+          </div>
         </div>
       );
     }
@@ -531,14 +628,14 @@ export function FluxosView({ selectedInstanceId }: FluxosViewProps) {
                 <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
                 <h4 className="text-sm font-bold text-emerald-400">Se Verdadeiro</h4>
               </div>
-              {renderStepList(step.ifTrue, step.id, 'true')}
+              {renderStepList(step.ifTrue, step.id, 'true', depth + 1)}
             </div>
             <div className="border border-rose-500/20 rounded-xl p-4 bg-rose-500/5">
               <div className="flex items-center gap-2 mb-4">
                 <div className="w-2 h-2 rounded-full bg-rose-500"></div>
                 <h4 className="text-sm font-bold text-rose-400">Se Falso</h4>
               </div>
-              {renderStepList(step.ifFalse, step.id, 'false')}
+              {renderStepList(step.ifFalse, step.id, 'false', depth + 1)}
             </div>
           </div>
         </div>
