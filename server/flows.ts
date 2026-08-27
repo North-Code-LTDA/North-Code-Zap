@@ -38,6 +38,13 @@ export function normalizeFlowSteps(steps: any[]): FlowStep[] {
       return { id: s.id, type: 'delay', durationSeconds: s.durationSeconds };
     }
     if (s.type === 'condition') {
+      if (!Array.isArray(s.ifTrue)) {
+        throw Object.assign(new Error('Condition ifTrue must be an array'), { status: 400 });
+      }
+      if (!Array.isArray(s.ifFalse)) {
+        throw Object.assign(new Error('Condition ifFalse must be an array'), { status: 400 });
+      }
+      
       let cond: any = undefined;
       if (s.condition?.type === 'has_tag') cond = { type: 'has_tag', tagId: s.condition.tagId };
       if (s.condition?.type === 'in_list') cond = { type: 'in_list', listId: s.condition.listId };
