@@ -23,6 +23,10 @@ import type {
 
 const MAX_MESSAGES_IN_MEMORY = 100;
 
+const RECONNECT_BACKOFF_MS = [2000, 5000, 10000, 20000, 30000, 60000];
+const CONNECTION_SUPERVISOR_INTERVAL_MS = 30000;
+const CONNECTING_STALL_MS = 90000;
+
 export class WhatsAppService {
 
   private sock: WASocket | null = null;
@@ -44,6 +48,11 @@ export class WhatsAppService {
   private messages: ReceivedMessage[] = [];
   private groupCache: Map<string, { data: any; expiresAt: number }> = new Map();
   private groupsListCache: { data: WhatsAppGroup[]; expiresAt: number } | null = null;
+  private reconnectAttempt = 0;
+  private connectionSupervisorTimer: NodeJS.Timeout | null = null;
+  private autoReconnectBlocked = false;
+  private lastDisconnectCode: number | null = null;
+  private statusChangedAt = Date.now();
 
   
   public instanceId: string;
@@ -415,6 +424,7 @@ export class WhatsAppService {
     status: WhatsAppStatus,
     extra: Partial<WhatsAppAccountInfo> = {}
   ) {
+    this.statusChangedAt = Date.now();
     this.currentStatus = status;
     if (extra.error !== undefined) this.lastError = extra.error;
     if (extra.qrCode !== undefined) {
@@ -440,6 +450,8 @@ export class WhatsAppService {
     }
 
     console.log('[WhatsApp] start requested');
+    this.autoReconnectBlocked = false;
+    this.startConnectionSupervisor();
     this.lastError = null;
 
     if (this.reconnectTimer) {
@@ -732,6 +744,10 @@ export class WhatsAppService {
         this.currentQRDataUrl = null;
         this.lastError = null;
 
+        this.reconnectAttempt = 0;
+        this.lastDisconnectCode = null;
+        this.autoReconnectBlocked = false;
+
         const userJid = this.sock?.user?.id || '';
         const rawNumber = userJid.split(':')[0].split('@')[0];
         const userName = this.sock?.user?.name || this.sock?.user?.notify || 'WhatsApp User';
@@ -744,6 +760,7 @@ export class WhatsAppService {
         this.connectedAt = new Date().toISOString();
 
         this.updateStatus('connected', { qrCode: null, error: null });
+        this.startConnectionSupervisor();
       }
 
       if (connection === 'close') {
@@ -751,6 +768,7 @@ export class WhatsAppService {
         const boomError = lastDisconnect?.error as any;
         const statusCode = boomError?.output?.statusCode ?? boomError?.statusCode ?? (lastDisconnect?.error as any)?.statusCode;
         const errorMessage = lastDisconnect?.error?.message || 'Connection closed';
+        this.lastDisconnectCode = statusCode ?? null;
 
         console.log(`[WhatsApp] disconnected code=${statusCode} reason=${errorMessage} generation=${currentGen}`);
 
@@ -767,6 +785,9 @@ export class WhatsAppService {
         // 2. LOGGED OUT (401)
         if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
           console.log(`[WhatsApp] disconnected loggedOut (401) generation=${currentGen}`);
+          this.autoReconnectBlocked = true;
+          this.reconnectAttempt = 0;
+          this.stopConnectionSupervisor();
           this.restartInProgress = false;
           this.clearSessionFiles();
           this.accountInfo = { name: null, number: null, jid: null };
@@ -777,14 +798,12 @@ export class WhatsAppService {
         }
 
         // 3. TRANSIENT DROPS (408 timedOut, 428 connectionClosed, 503 unavailable)
-        if (
-          statusCode === DisconnectReason.connectionClosed ||
-          statusCode === DisconnectReason.connectionLost ||
-          statusCode === DisconnectReason.timedOut
-        ) {
-          console.log(`[WhatsApp] connection closed/lost (code=${statusCode}) generation=${currentGen}, scheduling 1 controlled reconnect...`);
+        if (this.isTransientDisconnectCode(statusCode)) {
+          const delay = this.getReconnectDelay();
+          this.reconnectAttempt++;
+          console.log(`[WhatsApp] transient disconnect code=${statusCode} attempt=${this.reconnectAttempt} reconnectIn=${delay}ms generation=${currentGen}`);
           this.updateStatus('connecting', { error: null });
-          this.restartWhatsAppConnection(2000);
+          this.restartWhatsAppConnection(delay);
           return;
         }
 
@@ -817,7 +836,15 @@ export class WhatsAppService {
       } catch (err: any) {
         console.log(`[WhatsApp] error recreating socket: ${err?.message || err}`);
         this.restartInProgress = false;
-        this.updateStatus('error', { error: err?.message || 'Erro ao recriar conexão WhatsApp' });
+        if (!this.autoReconnectBlocked && this.hasSavedSession()) {
+          const nextDelay = this.getReconnectDelay();
+          this.reconnectAttempt++;
+          console.log(`[WhatsApp] reconnect attempt failed scheduling next in ${nextDelay}ms`);
+          this.reconnectTimer = null;
+          this.restartWhatsAppConnection(nextDelay);
+        } else {
+          this.updateStatus('error', { error: err?.message || 'Erro ao recriar conexão WhatsApp' });
+        }
       } finally {
         this.restartInProgress = false;
       }
@@ -836,6 +863,9 @@ export class WhatsAppService {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.autoReconnectBlocked = true;
+    this.reconnectAttempt = 0;
+    this.stopConnectionSupervisor();
     this.isStarting = false;
     this.restartInProgress = false;
 
@@ -874,6 +904,72 @@ export class WhatsAppService {
     } catch (err: any) {
       console.error('[WhatsApp] error clearing auth dir:', err?.message);
     }
+  }
+
+  private hasSavedSession(): boolean {
+    return fs.existsSync(path.join(this.authDir, 'creds.json'));
+  }
+
+  private isTransientDisconnectCode(statusCode: number | undefined | null): boolean {
+    return statusCode === DisconnectReason.connectionClosed ||
+           statusCode === DisconnectReason.connectionLost ||
+           statusCode === DisconnectReason.timedOut ||
+           statusCode === 503;
+  }
+
+  private getReconnectDelay(): number {
+    const index = Math.min(this.reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1);
+    return RECONNECT_BACKOFF_MS[index];
+  }
+
+  private startConnectionSupervisor() {
+    if (this.connectionSupervisorTimer) return;
+    this.connectionSupervisorTimer = setInterval(() => {
+      if (this.autoReconnectBlocked) return;
+      if (!this.hasSavedSession()) return;
+      
+      const currentStatus = this.currentStatus;
+      if (currentStatus === 'connected') return;
+      if (this.isStarting || this.restartInProgress || this.reconnectTimer) return;
+
+      let shouldRecover = false;
+
+      if (currentStatus === 'error' && this.isTransientDisconnectCode(this.lastDisconnectCode)) {
+        shouldRecover = true;
+      } else if (currentStatus === 'disconnected' && !this.autoReconnectBlocked && this.hasSavedSession()) {
+        shouldRecover = true;
+      } else if (currentStatus === 'connecting' && Date.now() - this.statusChangedAt > CONNECTING_STALL_MS) {
+        shouldRecover = true;
+      }
+
+      if (shouldRecover) {
+        console.log(`[WhatsApp] supervisor requesting recovery status=${currentStatus} code=${this.lastDisconnectCode}`);
+        const delay = this.getReconnectDelay();
+        this.reconnectAttempt++;
+        this.restartWhatsAppConnection(delay);
+      }
+    }, CONNECTION_SUPERVISOR_INTERVAL_MS);
+    this.connectionSupervisorTimer.unref?.();
+  }
+
+  private stopConnectionSupervisor() {
+    if (this.connectionSupervisorTimer) {
+      clearInterval(this.connectionSupervisorTimer);
+      this.connectionSupervisorTimer = null;
+    }
+  }
+
+  public ensureConnected(reason = 'external'): boolean {
+    if (this.currentStatus === 'connected') return true;
+    if (this.autoReconnectBlocked) return false;
+    if (!this.hasSavedSession()) return false;
+    if (this.isStarting || this.restartInProgress || this.reconnectTimer) return false;
+
+    console.log(`[WhatsApp] ensureConnected requested reason=${reason} status=${this.currentStatus}`);
+    const delay = this.getReconnectDelay();
+    this.reconnectAttempt++;
+    this.restartWhatsAppConnection(delay);
+    return false;
   }
 
   public clearReconnectTimer() {

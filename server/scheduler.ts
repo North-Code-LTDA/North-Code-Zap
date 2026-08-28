@@ -674,6 +674,17 @@ export class SchedulerService {
           continue;
         }
 
+        // Preflight WhatsApp Status
+        const instance = this.instanceManager.get(schedule.instanceId);
+        if (instance && instance.whatsapp) {
+          const state = instance.whatsapp.getState();
+          if (state.status !== 'connected') {
+            instance.whatsapp.ensureConnected('scheduler_due');
+            console.log(`[Scheduler] waiting for WhatsApp reconnect schedule=${schedule.id} status=${state.status} dueAt=${new Date(schedule.nextRunAt!).toISOString()}`);
+            continue;
+          }
+        }
+
         // Execute due schedule
         await this.executeSchedule(schedule, false);
       }
