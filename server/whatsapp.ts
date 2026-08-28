@@ -787,6 +787,7 @@ export class WhatsAppService {
           console.log(`[WhatsApp] disconnected loggedOut (401) generation=${currentGen}`);
           this.autoReconnectBlocked = true;
           this.reconnectAttempt = 0;
+          this.clearReconnectTimer();
           this.stopConnectionSupervisor();
           this.restartInProgress = false;
           this.clearSessionFiles();
@@ -808,6 +809,11 @@ export class WhatsAppService {
         }
 
         // 4. OTHER ERRORS
+        this.autoReconnectBlocked = true;
+        this.reconnectAttempt = 0;
+        this.clearReconnectTimer();
+        this.stopConnectionSupervisor();
+        
         this.restartInProgress = false;
         this.updateStatus('error', {
           error: statusCode ? `Conexão encerrada (código ${statusCode})` : errorMessage,
@@ -830,6 +836,12 @@ export class WhatsAppService {
     }
 
     const doRestart = async () => {
+      this.reconnectTimer = null;
+      if (this.autoReconnectBlocked) {
+        console.log('[WhatsApp] reconnect cancelled because auto reconnect is blocked');
+        this.restartInProgress = false;
+        return;
+      }
       try {
         console.log(`[WhatsApp] recreating socket generation=${this.socketGeneration + 1}`);
         await this.createSocket();
@@ -964,6 +976,27 @@ export class WhatsAppService {
     if (this.autoReconnectBlocked) return false;
     if (!this.hasSavedSession()) return false;
     if (this.isStarting || this.restartInProgress || this.reconnectTimer) return false;
+
+    let recoverable = false;
+
+    if (this.currentStatus === 'disconnected') {
+      recoverable = true;
+    } else if (
+      this.currentStatus === 'error' &&
+      this.isTransientDisconnectCode(this.lastDisconnectCode)
+    ) {
+      recoverable = true;
+    } else if (
+      this.currentStatus === 'connecting' &&
+      Date.now() - this.statusChangedAt > CONNECTING_STALL_MS
+    ) {
+      recoverable = true;
+    }
+
+    if (!recoverable) {
+      console.log(`[WhatsApp] ensureConnected ignored reason=${reason} status=${this.currentStatus} code=${this.lastDisconnectCode}`);
+      return false;
+    }
 
     console.log(`[WhatsApp] ensureConnected requested reason=${reason} status=${this.currentStatus}`);
     const delay = this.getReconnectDelay();
