@@ -132,7 +132,7 @@ function AppContent() {
       <div className="flex-1 flex max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 gap-8">
         {/* Sidebar Navigation */}
         <aside
-          className={`fixed inset-y-0 left-0 z-30 w-64 bg-neutral-900/95 border-r border-neutral-800 p-6 flex flex-col justify-between transition-transform md:static md:translate-x-0 md:bg-transparent md:border-r-0 md:p-0 md:w-56 shrink-0 ${
+          className={`fixed top-16 bottom-0 left-0 z-30 w-64 bg-neutral-900/95 border-r border-neutral-800 p-6 flex flex-col justify-between transition-transform overflow-y-auto md:static md:translate-x-0 md:bg-transparent md:border-r-0 md:p-0 md:w-56 md:overflow-visible shrink-0 ${
             mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
         >

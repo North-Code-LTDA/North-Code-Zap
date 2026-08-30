@@ -239,6 +239,19 @@ export function ContatosView() {
     }
   };
 
+  const handleRemoveFromList = async (listId: string) => {
+    try {
+      const list = audiences?.lists.find(l => l.id === listId);
+      if (!list) return;
+      const jidsToRemove = Array.from(selectedJids);
+      const remaining = list.contactJids.filter(jid => !jidsToRemove.includes(jid));
+      await updateListContacts(listId, remaining);
+      setSelectedJids(new Set());
+    } catch (e: any) {
+      handleError(e);
+    }
+  };
+
   const loading = contactsLoading || audiencesLoading;
   const error = contactsError || audiencesError;
 

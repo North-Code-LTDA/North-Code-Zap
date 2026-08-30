@@ -541,8 +541,12 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                       <>
                         {isDraft && (
                           <>
-                            <button type="button" aria-label="Agendar" title="Agendar Disparo" className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors" onClick={() => handleSchedule(c.id)}>
+                            {c.scheduleType === 'once' && c.scheduledAt && new Date(c.scheduledAt) < new Date() && (
+                              <span className="text-xs text-rose-400 font-medium mr-2 px-2 py-1 bg-rose-500/10 rounded">Horário Expirado</span>
+                            )}
+                            <button type="button" aria-label="Agendar" title="Agendar campanha" className="px-2.5 py-1.5 flex items-center gap-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 font-medium text-xs transition-colors" onClick={() => handleSchedule(c.id)}>
                               <Calendar className="w-4 h-4" />
+                              Agendar campanha
                             </button>
                             <button type="button" aria-label="Editar" title="Editar Rascunho" className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" onClick={() => handleOpenEdit(c)}>
                               <Edit3 className="w-4 h-4" />
@@ -1159,6 +1163,10 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
               </div>
 
             </form>
+            
+            <div className="px-6 pb-2 text-xs text-neutral-400">
+              <span className="text-amber-500/80 font-medium">Importante:</span> Salvar Rascunho não ativa a campanha. Após salvar, use <b>Agendar campanha</b> para ativar a programação.
+            </div>
 
             <div className="p-4 border-t border-neutral-800 bg-neutral-950/60 shrink-0 flex items-center justify-end gap-3 rounded-b-3xl">
               <Button type="button" variant="secondary" onClick={() => setIsModalOpen(false)}>

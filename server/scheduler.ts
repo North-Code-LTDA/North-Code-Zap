@@ -391,6 +391,9 @@ export class SchedulerService {
       nextRunAt: current.nextRunAt,
       instanceId,
     };
+    if (updated.status === 'completed') {
+      updated.status = 'active';
+    }
     if (updated.status === 'active') {
       updated.nextRunAt = this.calculateNextRunAt(updated);
     }
