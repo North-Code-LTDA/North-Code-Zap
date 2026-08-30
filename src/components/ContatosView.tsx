@@ -348,18 +348,32 @@ export function ContatosView() {
               <Button variant="primary-soft" className="h-8 text-xs px-3 bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/30 hover:border-emerald-500/50">
                 <Tag className="w-3.5 h-3.5 mr-1.5" /> Tag (+/-)
               </Button>
-              <div className="absolute right-0 mt-2 w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+              <div className="absolute right-0 mt-2 w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
                 <div className="p-2 space-y-1 max-h-48 overflow-y-auto">
-                  {audiences?.tags.map(t => (
-                    <div key={t.id} className="flex gap-1">
-                      <button onClick={() => handleApplyTag(t.id)} className="flex-1 text-left px-2 py-1.5 text-xs text-emerald-400 hover:bg-neutral-800 rounded-lg truncate">
-                        + {t.name}
-                      </button>
-                      <button onClick={() => handleRemoveTag(t.id)} className="px-2 py-1.5 text-xs text-rose-400 hover:bg-neutral-800 rounded-lg shrink-0">
-                        -
-                      </button>
-                    </div>
-                  ))}
+                  {audiences?.tags.map(t => {
+                    let membershipCount = 0;
+                    selectedJids.forEach(jid => {
+                      if (audiences?.contactTags?.[jid]?.includes(t.id)) membershipCount++;
+                    });
+                    
+                    return (
+                      <div key={t.id} className="flex flex-col gap-1 py-1 border-b border-neutral-800/50 last:border-0">
+                        <div className="px-2 py-0.5 text-xs text-neutral-400 truncate">{t.name}</div>
+                        <div className="flex gap-1">
+                          {membershipCount < selectedJids.size && (
+                            <button onClick={() => handleApplyTag(t.id)} aria-label={`Adicionar tag ${t.name}`} title={`Adicionar tag ${t.name}`} className="flex-1 text-center px-2 py-1 text-xs text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-md">
+                              Adicionar
+                            </button>
+                          )}
+                          {membershipCount > 0 && (
+                            <button onClick={() => handleRemoveTag(t.id)} aria-label={`Remover tag ${t.name}`} title={`Remover tag ${t.name}`} className="flex-1 text-center px-2 py-1 text-xs text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 rounded-md">
+                              Remover
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                   {audiences?.tags.length === 0 && <div className="text-xs text-neutral-500 p-2 text-center">Crie tags primeiro</div>}
                 </div>
               </div>
@@ -367,15 +381,34 @@ export function ContatosView() {
             
             <div className="relative group">
               <Button variant="primary-soft" className="h-8 text-xs px-3 bg-amber-500/20 text-amber-400 border-amber-500/30 hover:bg-amber-500/30 hover:border-amber-500/50">
-                <List className="w-3.5 h-3.5 mr-1.5" /> Adicionar à lista
+                <List className="w-3.5 h-3.5 mr-1.5" /> Lista (+/-)
               </Button>
-              <div className="absolute right-0 mt-2 w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+              <div className="absolute right-0 mt-2 w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
                 <div className="p-2 space-y-1 max-h-48 overflow-y-auto">
-                  {audiences?.lists.map(l => (
-                    <button key={l.id} onClick={() => handleApplyToList(l.id)} className="w-full text-left px-2 py-1.5 text-xs text-amber-400 hover:bg-neutral-800 rounded-lg truncate">
-                      + {l.name}
-                    </button>
-                  ))}
+                  {audiences?.lists.map(l => {
+                    let countInList = 0;
+                    selectedJids.forEach(jid => {
+                      if (l.contactJids.includes(jid)) countInList++;
+                    });
+                    
+                    return (
+                      <div key={l.id} className="flex flex-col gap-1 py-1 border-b border-neutral-800/50 last:border-0">
+                        <div className="px-2 py-0.5 text-xs text-neutral-400 truncate">{l.name}</div>
+                        <div className="flex gap-1">
+                          {countInList < selectedJids.size && (
+                            <button onClick={() => handleApplyToList(l.id)} aria-label={`Adicionar à lista ${l.name}`} title={`Adicionar à lista ${l.name}`} className="flex-1 text-center px-2 py-1 text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded-md">
+                              Adicionar
+                            </button>
+                          )}
+                          {countInList > 0 && (
+                            <button onClick={() => handleRemoveFromList(l.id)} aria-label={`Remover da lista ${l.name}`} title={`Remover da lista ${l.name}`} className="flex-1 text-center px-2 py-1 text-xs text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 rounded-md">
+                              Remover
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                   {audiences?.lists.length === 0 && <div className="text-xs text-neutral-500 p-2 text-center">Nenhuma lista criada</div>}
                 </div>
               </div>

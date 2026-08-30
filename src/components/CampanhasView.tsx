@@ -541,7 +541,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                       <>
                         {isDraft && (
                           <>
-                            {c.scheduleType === 'once' && c.scheduledAt && new Date(c.scheduledAt) < new Date() && (
+                            {c.schedule?.scheduleType === 'once' && c.schedule?.scheduledAt && new Date(c.schedule.scheduledAt).getTime() <= Date.now() && (
                               <span className="text-xs text-rose-400 font-medium mr-2 px-2 py-1 bg-rose-500/10 rounded">Horário Expirado</span>
                             )}
                             <button type="button" aria-label="Agendar" title="Agendar campanha" className="px-2.5 py-1.5 flex items-center gap-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 font-medium text-xs transition-colors" onClick={() => handleSchedule(c.id)}>
