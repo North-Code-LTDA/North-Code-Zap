@@ -13,6 +13,7 @@ import { campaignService } from './campaigns';
 import { campaignHistoryService } from './campaign-history';
 import { templateService } from './templates';
 import { automationService } from './automations';
+import { validateFlowStepsStructure } from './flows';
 
 export class RestoreService {
   private restoringWorkspaces = new Set<string>();
@@ -109,11 +110,24 @@ export class RestoreService {
       if (fs.existsSync(ALL_USERS_FILE)) {
          globalUsers = JSON.parse(fs.readFileSync(ALL_USERS_FILE, 'utf-8'));
       }
+      const backupEmailSet = new Set<string>();
+      
       for (const u of backup.data.auth.users) {
+        if (!isUUID(u.id) || u.workspaceId !== wsId || typeof u.name !== 'string' || u.name.trim() === '') throw new Error('User field inválido');
+        if (typeof u.email !== 'string' || !u.email.includes('@')) throw new Error('User email inválido');
+        if (typeof u.passwordSalt !== 'string' || u.passwordSalt === '' || typeof u.passwordHash !== 'string' || u.passwordHash === '') throw new Error('User password field inválido');
+        const isValidDateString = (d: any) => typeof d === 'string' && !isNaN(new Date(d).getTime());
+        if (!isValidDateString(u.createdAt) || !isValidDateString(u.updatedAt)) throw new Error('User dates inválidas');
+        
+        const normEmail = u.email.trim().toLowerCase();
+        u.email = normEmail;
+        if (backupEmailSet.has(normEmail)) throw new Error('Email duplicado no backup');
+        backupEmailSet.add(normEmail);
+
         const existingId = globalUsers.find(x => x.id === u.id);
         if (existingId && existingId.workspaceId !== wsId) throw new Error('Colisão de usuário com outro workspace.');
-        const existingEmail = globalUsers.find(x => x.email === u.email);
-        if (existingEmail && existingEmail.workspaceId !== wsId) throw new Error('Colisão de usuário com outro workspace.');
+        const existingEmail = globalUsers.find(x => x.email.trim().toLowerCase() === normEmail);
+        if (existingEmail && existingEmail.workspaceId !== wsId) throw new Error('Colisão de e-mail de usuário com outro workspace.');
       }
       
       const ALL_SESSIONS_FILE = path.join(DATA_DIR, 'auth', 'sessions.json');
@@ -121,7 +135,22 @@ export class RestoreService {
       if (fs.existsSync(ALL_SESSIONS_FILE)) {
          globalSessions = JSON.parse(fs.readFileSync(ALL_SESSIONS_FILE, 'utf-8'));
       }
+      
+      const backupSessionIds = new Set<string>();
+      const backupTokenHashes = new Set<string>();
+      
       for (const s of backup.data.auth.sessions) {
+         if (!isUUID(s.id) || !isUUID(s.userId)) throw new Error('Session ID ou userId inválido');
+         if (typeof s.tokenHash !== 'string' || s.tokenHash.trim() === '') throw new Error('Session tokenHash inválido');
+         const isValidDateString = (d: any) => typeof d === 'string' && !isNaN(new Date(d).getTime());
+         if (!isValidDateString(s.createdAt) || !isValidDateString(s.expiresAt)) throw new Error('Session dates inválidas');
+         
+         if (backupSessionIds.has(s.id)) throw new Error('Session ID duplicado no backup');
+         backupSessionIds.add(s.id);
+         
+         if (backupTokenHashes.has(s.tokenHash)) throw new Error('Session tokenHash duplicado no backup');
+         backupTokenHashes.add(s.tokenHash);
+
          const existingSession = globalSessions.find(x => x.id === s.id);
          if (existingSession) {
             const eu = globalUsers.find(x => x.id === existingSession.userId);
@@ -135,19 +164,43 @@ export class RestoreService {
       }
 
       // Check structures of flows and flowExecutions
-      const { validateFlowStepsStructure } = require('./flows');
       for (const f of backup.data.flows) {
-        if (!f.trigger || !f.trigger.type) throw new Error('Flow sem trigger struct');
-        if (f.trigger.type === 'contact_added_to_list' && !isUUID(f.trigger.listId)) throw new Error('Flow trigger listId inválido');
-        if (f.trigger.type === 'tag_added_to_contact' && !isUUID(f.trigger.tagId)) throw new Error('Flow trigger tagId inválido');
-        if (typeof f.name !== 'string' || typeof f.enabled !== 'boolean') throw new Error('Flow name ou enabled inválido');
-        if (!validateFlowStepsStructure(f.steps || [])) throw new Error('Flow steps malformados.');
+        if (!f || typeof f !== 'object') throw new Error('Flow is not an object');
+        if (!isUUID(f.id) || !isUUID(f.workspaceId) || !isUUID(f.instanceId)) throw new Error('Flow UUIDs inválidos');
+        if (f.workspaceId !== wsId) throw new Error('Flow workspaceId incorreto');
+        if (typeof f.name !== 'string' || f.name.trim() === '') throw new Error('Flow name inválido');
+        if (typeof f.enabled !== 'boolean') throw new Error('Flow enabled inválido');
+        const isValidDateString = (d: any) => typeof d === 'string' && !isNaN(new Date(d).getTime());
+        if (!isValidDateString(f.createdAt) || !isValidDateString(f.updatedAt)) throw new Error('Flow dates inválidas');
+        
+        if (!f.trigger || typeof f.trigger !== 'object') throw new Error('Flow sem trigger struct');
+        if (f.trigger.type === 'contact_added_to_list') {
+           if (!isUUID(f.trigger.listId)) throw new Error('Flow trigger listId inválido');
+        } else if (f.trigger.type === 'tag_added_to_contact') {
+           if (!isUUID(f.trigger.tagId)) throw new Error('Flow trigger tagId inválido');
+        } else {
+           throw new Error('Flow trigger type inválido');
+        }
+        
+        if (!Array.isArray(f.steps) || f.steps.length < 1) throw new Error('Flow steps array inválido');
+        validateFlowStepsStructure(f.steps);
       }
       for (const e of backup.data.flowExecutions) {
+        if (!e || typeof e !== 'object') throw new Error('FlowExecution is not an object');
         if (!isUUID(e.id) || !isUUID(e.workspaceId) || !isUUID(e.instanceId) || !isUUID(e.flowId)) throw new Error('FlowExecution com id UUID inválido');
-        if (typeof e.flowName !== 'string' || typeof e.jid !== 'string') throw new Error('FlowExecution string incorreta');
+        if (typeof e.flowName !== 'string' || e.flowName.trim() === '') throw new Error('FlowExecution flowName incorreta');
+        if (typeof e.jid !== 'string' || e.jid.trim() === '' || !e.jid.endsWith('@s.whatsapp.net')) throw new Error('FlowExecution jid incorreta');
         if (e.status !== 'waiting' && e.status !== 'running') throw new Error('FlowExecution status incorreto');
-        if (e.remainingSteps?.length > 0 && !validateFlowStepsStructure(e.remainingSteps)) throw new Error('FlowExecution steps malformados.');
+        const isValidDateString = (d: any) => typeof d === 'string' && !isNaN(new Date(d).getTime());
+        if (!isValidDateString(e.createdAt) || !isValidDateString(e.updatedAt)) throw new Error('FlowExecution dates inválidas');
+        
+        if (e.status === 'waiting' && !isValidDateString(e.resumeAt)) throw new Error('FlowExecution resumeAt inválido');
+        if (e.status === 'running' && e.resumeAt !== null) throw new Error('FlowExecution resumeAt não null em running');
+        
+        if (!Array.isArray(e.remainingSteps)) throw new Error('FlowExecution remainingSteps inválido');
+        if (e.remainingSteps.length > 0) {
+          validateFlowStepsStructure(e.remainingSteps);
+        }
       }
 
 
@@ -647,7 +700,6 @@ export class RestoreService {
       const instancesRoot = path.join(DATA_DIR, 'instances');
       const currentInstancesFile = path.join(DATA_DIR, 'instances.json');
       if (fs.existsSync(currentInstancesFile)) {
-         try {
            const currentInstances = JSON.parse(fs.readFileSync(currentInstancesFile, 'utf-8'));
            for (const i of currentInstances) {
               if (i.workspaceId === workspaceId && !restoredInstanceIds.has(i.id)) {
@@ -666,7 +718,6 @@ export class RestoreService {
                }
              }
            }
-         } catch(e){}
       }
 
       const allUserIdsToClear = new Set([...preRestoreWorkspaceUserIds, ...targetRestoreUserIds, ...backupUserIds]);
@@ -714,7 +765,7 @@ export class RestoreService {
       automationService.init();
       this.flowService.init();
       
-      this.schedulerService.reloadWorkspaceFromDisk(workspaceId);
+      this.schedulerService.reloadWorkspaceFromDisk(workspaceId, allInstanceIdsToClear);
       this.flowRunner.reloadWorkspaceFromDisk(workspaceId);
   }
 }

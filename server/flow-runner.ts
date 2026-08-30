@@ -42,63 +42,63 @@ export class FlowRunner {
   }
 
 
-  private validateExecution(ex: any): boolean {
+  private assertValidExecution(ex: any): asserts ex is FlowExecution {
     const isValidUUID = (s: any) => typeof s === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
     const isValidDateStr = (s: any) => typeof s === 'string' && !isNaN(new Date(s).getTime());
 
-    if (!ex || typeof ex !== 'object') return false;
-    if (!isValidUUID(ex.id) || !isValidUUID(ex.workspaceId) || !isValidUUID(ex.instanceId) || !isValidUUID(ex.flowId)) return false;
-    if (typeof ex.flowName !== 'string' || !ex.flowName.trim()) return false;
-    if (typeof ex.jid !== 'string' || !ex.jid.trim() || !ex.jid.endsWith('@s.whatsapp.net')) return false;
-    if (ex.status !== 'waiting' && ex.status !== 'running') return false;
-    if (!isValidDateStr(ex.createdAt) || !isValidDateStr(ex.updatedAt)) return false;
+    if (!ex || typeof ex !== 'object' || Array.isArray(ex)) throw new Error('Execution record is not an object');
+    if (!isValidUUID(ex.id) || !isValidUUID(ex.workspaceId) || !isValidUUID(ex.instanceId) || !isValidUUID(ex.flowId)) throw new Error('Invalid UUIDs');
+    if (typeof ex.flowName !== 'string' || !ex.flowName.trim()) throw new Error('Invalid flowName');
+    if (typeof ex.jid !== 'string' || !ex.jid.trim() || !ex.jid.endsWith('@s.whatsapp.net')) throw new Error('Invalid jid');
+    if (ex.status !== 'waiting' && ex.status !== 'running') throw new Error('Invalid status');
+    if (!isValidDateStr(ex.createdAt) || !isValidDateStr(ex.updatedAt)) throw new Error('Invalid dates');
     
     if (ex.status === 'waiting') {
-      if (!isValidDateStr(ex.resumeAt)) return false;
+      if (!isValidDateStr(ex.resumeAt)) throw new Error('Invalid resumeAt');
     } else if (ex.status === 'running') {
-      if (ex.resumeAt !== null) return false;
+      if (ex.resumeAt !== null) throw new Error('resumeAt must be null for running');
     }
     
-    if (!Array.isArray(ex.remainingSteps)) return false;
-    // We trust validateFlowStepsStructure from util or inline it here
-    
-    return true;
+    if (!Array.isArray(ex.remainingSteps)) throw new Error('remainingSteps must be an array');
+    if (ex.remainingSteps.length > 0) {
+      validateFlowStepsStructure(ex.remainingSteps);
+    }
   }
 
   public reloadWorkspaceFromDisk(workspaceId: string) {
-    const EXECUTIONS_FILE = require('path').join(require('./instances.ts').DATA_DIR, 'flows', 'executions.json');
     if (!fs.existsSync(EXECUTIONS_FILE)) return;
-    try {
-       const data = JSON.parse(fs.readFileSync(EXECUTIONS_FILE, 'utf8'));
-       let discardedAny = false;
-       const workspaceExecutions = data.filter((e) => {
-         if (e.workspaceId !== workspaceId) return false;
-         if (!this.validateExecution(e)) {
-            // we'll fail if invalid metadata
-            throw new Error(`Execução inválida: ${e.id}`);
-         }
-         return true;
-       });
-       
-       // Remove old ones for this workspace
-       this.executions = this.executions.filter((e) => e.workspaceId !== workspaceId);
-       
-       // Add the loaded ones
-       for (const ex of workspaceExecutions) {
-          if (ex.status === 'running') {
-             discardedAny = true;
-             continue; // Discard completely
-          }
-          this.executions.push(ex);
+    const raw = fs.readFileSync(EXECUTIONS_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) throw new Error('executions.json is not an array.');
+    
+    let discardedAny = false;
+    const validWorkspaceExecutions: FlowExecution[] = [];
+    
+    for (const e of data) {
+      if (e.workspaceId === workspaceId) {
+        this.assertValidExecution(e);
+        validWorkspaceExecutions.push(e);
+      }
+    }
+    
+    // Remove old ones for this workspace
+    this.executions = this.executions.filter((e) => e.workspaceId !== workspaceId);
+    
+    // Add the loaded ones
+    for (const ex of validWorkspaceExecutions) {
+       if (ex.status === 'running') {
+          discardedAny = true;
+          continue; // Discard completely
        }
-       if (discardedAny) {
-          // Sync to disk to remove running executions from file
-          const allDisk = JSON.parse(fs.readFileSync(EXECUTIONS_FILE, 'utf8'));
-          const filteredDisk = allDisk.filter(d => !(d.workspaceId === workspaceId && d.status === 'running'));
-          fs.writeFileSync(EXECUTIONS_FILE, JSON.stringify(filteredDisk, null, 2));
-       }
-    } catch(e) {
-       console.error('[FlowRunner] Error reloading workspace', e);
+       this.executions.push(ex);
+    }
+    
+    if (discardedAny) {
+       // Sync to disk to remove running executions from file
+       const allDisk = JSON.parse(fs.readFileSync(EXECUTIONS_FILE, 'utf8'));
+       const filteredDisk = allDisk.filter((d: any) => !(d.workspaceId === workspaceId && d.status === 'running'));
+       fs.writeFileSync(EXECUTIONS_TMP_FILE, JSON.stringify(filteredDisk, null, 2), { mode: 0o600 });
+       fs.renameSync(EXECUTIONS_TMP_FILE, EXECUTIONS_FILE);
     }
   }
 
@@ -124,10 +124,7 @@ export class FlowRunner {
       let discardedAny = false;
       
       for (const ex of data) {
-        if (!this.validateExecution(ex)) throw new Error(`Invalid execution record: ${ex?.id || 'unknown'}`);
-        if (ex.remainingSteps.length > 0) {
-          validateFlowStepsStructure(ex.remainingSteps);
-        }
+        this.assertValidExecution(ex);
         
         if (ex.status === 'running') {
           console.log(`[Flow] interrupted running execution discarded id=${ex.id}`);

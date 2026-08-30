@@ -190,9 +190,9 @@ export class SchedulerService {
 
     if (typeof s.id !== 'string' || s.id.trim() === '') return false;
     if (typeof s.instanceId !== 'string' || s.instanceId.trim() === '') return false;
-    if (typeof s.name !== 'string') return false;
+    if (typeof s.name !== 'string' || s.name.trim() === '') return false;
     if (typeof s.message !== 'string') return false;
-    if (typeof s.fallbackName !== 'string') return false;
+    if (typeof s.fallbackName !== 'string' || s.fallbackName.trim() === '') return false;
 
     if (!['once', 'daily', 'weekly'].includes(s.scheduleType)) return false;
     const validStatuses = ['active', 'paused', 'completed', 'error', 'running'];
@@ -214,7 +214,7 @@ export class SchedulerService {
     for (const t of s.targets) {
       if (!t || typeof t !== 'object' || Array.isArray(t)) return false;
       if (typeof t.jid !== 'string' || t.jid.trim() === '') return false;
-      if (typeof t.label !== 'string') return false;
+      if (typeof t.label !== 'string' || t.label.trim() === '') return false;
       if (t.type !== 'person' && t.type !== 'group') return false;
       if (!['directory', 'manual', 'import', 'group_member', 'group'].includes(t.source)) return false;
       if (t.source === 'group' && t.type !== 'group') return false;
