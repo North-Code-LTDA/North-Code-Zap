@@ -9,7 +9,7 @@ export interface BackupOptions {
   workspaceId: string;
   userId: string;
   mode: BackupMode;
-  scopes: string[]; 
+  scopes: string[];
 }
 
 export class BackupService {
@@ -24,19 +24,33 @@ export class BackupService {
     }
   }
 
-  private collectFiles(dirPath: string, instanceId: string, baseRelativePath: string, filesArray: any[]) {
-    // Basic protection against directory traversal attacks for input baseRelativePath (though internally generated)
-    if (baseRelativePath.includes('..') || path.isAbsolute(baseRelativePath)) {
-      console.warn(`[BackupService] Path traversal detected: ${baseRelativePath}`);
+  private isPathInside(root: string, candidate: string): boolean {
+    const resolvedRoot = path.resolve(root);
+    const resolvedCandidate = path.resolve(candidate);
+    const relative = path.relative(resolvedRoot, resolvedCandidate);
+    
+    return (
+      relative === '' ||
+      (
+        relative !== '..' &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative)
+      )
+    );
+  }
+
+  private collectFiles(dirPath: string, allowedRoot: string, instanceId: string, filesArray: any[]) {
+    const resolvedDir = path.resolve(dirPath);
+    if (!this.isPathInside(allowedRoot, resolvedDir)) {
+      console.warn(`[BackupService] Path boundary violation: ${resolvedDir}`);
       return;
     }
 
-    if (!fs.existsSync(dirPath)) return;
+    if (!fs.existsSync(resolvedDir)) return;
 
-    // Reject symbolic links in this V1 as requested
     let stat;
     try {
-      stat = fs.lstatSync(dirPath);
+      stat = fs.lstatSync(resolvedDir);
     } catch {
       return;
     }
@@ -46,15 +60,19 @@ export class BackupService {
     if (stat.isDirectory()) {
       let items;
       try {
-         items = fs.readdirSync(dirPath);
+         items = fs.readdirSync(resolvedDir);
       } catch {
          return;
       }
       
       for (const item of items) {
-        // Prevent path traversal
         if (item === '.' || item === '..') continue;
-        const itemPath = path.join(dirPath, item);
+        
+        const itemPath = path.resolve(resolvedDir, item);
+        
+        if (!this.isPathInside(allowedRoot, itemPath)) {
+          continue;
+        }
         
         let itemStat;
         try {
@@ -66,14 +84,14 @@ export class BackupService {
         if (itemStat.isSymbolicLink()) continue; // ignore symlinks
 
         if (itemStat.isDirectory()) {
-          this.collectFiles(itemPath, instanceId, path.join(baseRelativePath, item), filesArray);
+          this.collectFiles(itemPath, allowedRoot, instanceId, filesArray);
         } else if (itemStat.isFile()) {
-          // Read as base64
           try {
             const content = fs.readFileSync(itemPath, 'base64');
+            const relativeToInstance = path.relative(allowedRoot, itemPath);
             filesArray.push({
               instanceId,
-              relativePath: path.join(baseRelativePath, item).replace(/\\/g, '/'), // normalize separators
+              relativePath: relativeToInstance.replace(/\\/g, '/'), // normalize separators
               encoding: 'base64',
               content
             });
@@ -92,7 +110,6 @@ export class BackupService {
       'auth', 'instances', 'contacts', 'media', 'templates', 
       'schedules', 'campaigns', 'automations', 'flows'
     ];
-
     const activeScopes = mode === 'full' ? allScopes : scopes;
 
     const result = {
@@ -147,6 +164,8 @@ export class BackupService {
     const allInstances = this.safeReadJson(instancesFile) || [];
     const workspaceInstances = allInstances.filter((inst: any) => inst.workspaceId === workspaceId);
     const instanceIds = new Set(workspaceInstances.map((i: any) => i.id));
+    
+    const instancesRoot = path.resolve(DATA_DIR, 'instances');
 
     // --- SCOPE: instances ---
     if (activeScopes.includes('instances')) {
@@ -154,24 +173,36 @@ export class BackupService {
       
       // Include DATA_DIR/instances/<id>/auth/**
       for (const inst of workspaceInstances) {
-        const authDir = path.join(DATA_DIR, 'instances', inst.id, 'auth');
-        this.collectFiles(authDir, inst.id, 'auth', result.files);
+        const instanceRoot = path.resolve(instancesRoot, inst.id);
+        if (!this.isPathInside(instancesRoot, instanceRoot)) {
+           throw new Error(`Invalid instance ID: ${inst.id}`);
+        }
+        const authDir = path.resolve(instanceRoot, 'auth');
+        this.collectFiles(authDir, instanceRoot, inst.id, result.files);
       }
     }
 
     // --- SCOPE: contacts ---
     if (activeScopes.includes('contacts')) {
       for (const instId of instanceIds as unknown as Set<string>) {
-        const recipientsDir = path.join(DATA_DIR, 'instances', instId, 'recipients');
-        this.collectFiles(recipientsDir, instId, 'recipients', result.files);
+        const instanceRoot = path.resolve(instancesRoot, instId);
+        if (!this.isPathInside(instancesRoot, instanceRoot)) {
+           throw new Error(`Invalid instance ID: ${instId}`);
+        }
+        const recipientsDir = path.resolve(instanceRoot, 'recipients');
+        this.collectFiles(recipientsDir, instanceRoot, instId, result.files);
       }
     }
 
     // --- SCOPE: media ---
     if (activeScopes.includes('media')) {
       for (const instId of instanceIds as unknown as Set<string>) {
-        const mediaDir = path.join(DATA_DIR, 'instances', instId, 'media');
-        this.collectFiles(mediaDir, instId, 'media', result.files);
+        const instanceRoot = path.resolve(instancesRoot, instId);
+        if (!this.isPathInside(instancesRoot, instanceRoot)) {
+           throw new Error(`Invalid instance ID: ${instId}`);
+        }
+        const mediaDir = path.resolve(instanceRoot, 'media');
+        this.collectFiles(mediaDir, instanceRoot, instId, result.files);
       }
     }
 

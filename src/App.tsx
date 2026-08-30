@@ -300,7 +300,8 @@ function AppContent() {
             currentTab !== 'templates' &&
             currentTab !== 'campanhas' &&
             currentTab !== 'automacoes' &&
-            currentTab !== 'fluxos' && (
+            currentTab !== 'fluxos' &&
+            currentTab !== 'configuracoes' && (
               <PlaceholderView tab={currentTab} />
             )}
             </>

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, CheckSquare, Square, Loader2, Database } from 'lucide-react';
+import { Download, CheckSquare, Square, Loader2, Database, CheckCircle2 } from 'lucide-react';
 import { Button } from './ui/Button';
 
 export function ConfiguracoesView() {
@@ -8,6 +8,7 @@ export function ConfiguracoesView() {
   
   const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   
   const selectableScopes = [
     { id: 'auth', label: 'Conta e autenticação' },
@@ -32,6 +33,8 @@ export function ConfiguracoesView() {
     if (mode === 'selective' && selectedScopes.size === 0) return;
     
     setError(null);
+    setSuccess(null);
+    
     if (mode === 'full') setIsExportingFull(true);
     else setIsExportingSelective(true);
     
@@ -71,9 +74,12 @@ export function ConfiguracoesView() {
       window.URL.revokeObjectURL(url);
       a.remove();
       
+      setSuccess('Backup gerado e download iniciado.');
+      
     } catch (e: any) {
       console.error('Backup error:', e);
       setError(e.message || 'Erro ao processar backup');
+      setSuccess(null);
     } finally {
       if (mode === 'full') setIsExportingFull(false);
       else setIsExportingSelective(false);
@@ -97,6 +103,13 @@ export function ConfiguracoesView() {
         {error && (
           <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm">
             {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            {success}
           </div>
         )}
 
