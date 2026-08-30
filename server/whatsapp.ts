@@ -28,6 +28,32 @@ const CONNECTION_SUPERVISOR_INTERVAL_MS = 30000;
 const CONNECTING_STALL_MS = 90000;
 
 export class WhatsAppService {
+  public suspendForRestore(): void {
+    console.log(`[WhatsApp] suspending instance ${this.instanceId} for restore`);
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.autoReconnectBlocked = true;
+    if (typeof (this as any).stopConnectionSupervisor === 'function') {
+      (this as any).stopConnectionSupervisor();
+    }
+    this.isStarting = false;
+    this.restartInProgress = false;
+
+    try {
+      if (this.sock) {
+        this.sock.end(undefined);
+        this.sock = null;
+      }
+    } catch (err: any) {
+      console.error(`[WhatsApp] error during suspendForRestore for ${this.instanceId}:`, err?.message);
+    } finally {
+      this.currentQR = null;
+      this.currentQRDataUrl = null;
+    }
+  }
+
 
   private sock: WASocket | null = null;
   private io: SocketIOServer | null = null;

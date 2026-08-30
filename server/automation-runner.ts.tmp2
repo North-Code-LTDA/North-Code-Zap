@@ -20,22 +20,6 @@ export type AutomationTriggerEvent =
     };
 
 export class AutomationRunner {
-  private activeDispatches = new Map<string, number>();
-  private suspendedWorkspaces = new Set<string>();
-
-  public suspendWorkspace(workspaceId: string) {
-    this.suspendedWorkspaces.add(workspaceId);
-  }
-
-  public resumeWorkspace(workspaceId: string) {
-    this.suspendedWorkspaces.delete(workspaceId);
-  }
-
-  public isWorkspaceBusy(workspaceId: string): boolean {
-    const count = this.activeDispatches.get(workspaceId) || 0;
-    return count > 0;
-  }
-
   constructor(
     private instanceManager: InstanceManager,
     private schedulerService: SchedulerService

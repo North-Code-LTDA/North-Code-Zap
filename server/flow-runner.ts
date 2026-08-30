@@ -27,6 +27,44 @@ const EXECUTIONS_FILE = path.join(FLOWS_DIR, 'executions.json');
 const EXECUTIONS_TMP_FILE = path.join(FLOWS_DIR, 'executions.json.tmp');
 
 export class FlowRunner {
+  private suspendedWorkspaces = new Set<string>();
+
+  public suspendWorkspace(workspaceId: string) {
+    this.suspendedWorkspaces.add(workspaceId);
+  }
+
+  public resumeWorkspace(workspaceId: string) {
+    this.suspendedWorkspaces.delete(workspaceId);
+  }
+
+  public isWorkspaceBusy(workspaceId: string): boolean {
+    return this.executions.some(e => e.workspaceId === workspaceId && e.status === 'running');
+  }
+
+  public reloadWorkspaceFromDisk(workspaceId: string) {
+    const EXECUTIONS_FILE = require('path').join(require('./instances.ts').DATA_DIR, 'flows', 'executions.json');
+    if (!fs.existsSync(EXECUTIONS_FILE)) return;
+    try {
+       const data = JSON.parse(fs.readFileSync(EXECUTIONS_FILE, 'utf8'));
+       const workspaceExecutions = data.filter((e) => e.workspaceId === workspaceId);
+       
+       // Remove old ones for this workspace
+       this.executions = this.executions.filter((e) => e.workspaceId !== workspaceId);
+       
+       // Add the loaded ones
+       for (const ex of workspaceExecutions) {
+          if (ex.status === 'running') {
+             // discard or treat as interrupted
+             ex.status = 'interrupted';
+             if (!ex.error) ex.error = 'Sistema reiniciado ou restaurado durante a execução';
+          }
+          this.executions.push(ex);
+       }
+    } catch(e) {
+       console.error('[FlowRunner] Error reloading workspace', e);
+    }
+  }
+
   private executions: FlowExecution[] = [];
   private loopTimer: NodeJS.Timeout | null = null;
   private instanceManager: InstanceManager;
@@ -96,6 +134,7 @@ export class FlowRunner {
 
   async dispatchMany(events: AutomationTriggerEvent[]) {
     for (const e of events) {
+      if (this.suspendedWorkspaces.has(e.workspaceId)) continue;
       let flows: any[] = [];
       try {
         flows = this.flowService.findEnabledByTrigger(e.workspaceId, e.instanceId, e.type, 
@@ -135,14 +174,14 @@ export class FlowRunner {
 
   private async tick() {
     const now = new Date().toISOString();
-    const due = this.executions.filter(ex => ex.status === 'waiting' && ex.resumeAt && ex.resumeAt <= now);
+    const due = this.executions.filter(ex => ex.status === 'waiting' && ex.resumeAt && ex.resumeAt <= now && !this.suspendedWorkspaces.has(ex.workspaceId));
     if (due.length === 0) return;
 
     const nextState = structuredClone(this.executions);
     const updatedDue: FlowExecution[] = [];
 
     for (const ex of nextState) {
-      if (ex.status === 'waiting' && ex.resumeAt && ex.resumeAt <= now) {
+      if (ex.status === 'waiting' && ex.resumeAt && ex.resumeAt <= now && !this.suspendedWorkspaces.has(ex.workspaceId)) {
         ex.status = 'running';
         ex.resumeAt = null;
         ex.updatedAt = new Date().toISOString();

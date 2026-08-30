@@ -17,6 +17,8 @@ import { FlowService } from './server/flows.ts';
 import { FlowRunner } from './server/flow-runner.ts';
 import { authService, User, Workspace, Session } from './server/auth.ts';
 import { backupService } from './server/backup.ts';
+import { RestoreService } from './server/restore.ts';
+
 import { getCookieFromRequest, getCookieFromSocket } from './server/cookie.ts';
 
 declare global {
@@ -39,6 +41,8 @@ const schedulerService = new SchedulerService(instanceManager);
 const automationRunner = new AutomationRunner(instanceManager, schedulerService);
 const flowService = new FlowService(instanceManager);
 const flowRunner = new FlowRunner(instanceManager, schedulerService, flowService);
+const restoreService = new RestoreService(instanceManager, schedulerService, flowRunner, automationRunner, flowService);
+
 
 function dispatchReactiveEvents(events: Array<{ type: 'contact_added_to_list'|'tag_added_to_contact', workspaceId: string, instanceId: string, listId?: string, tagId?: string, jid: string }>) {
   const typedEvents = events as AutomationTriggerEvent[];
@@ -289,6 +293,14 @@ async function startServer() {
   });
 
   // Auth Middleware
+  
+  const maintenanceMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.auth && restoreService.isRestoring(req.auth.workspace.id) && !req.path.startsWith('/api/backups')) {
+      return res.status(423).json({ error: 'Restauração em andamento.' });
+    }
+    next();
+  };
+
   const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const token = getCookieFromRequest(req, 'ncz_session');
     if (!token) return res.status(401).json({ error: 'Não autenticado.' });
@@ -304,7 +316,7 @@ async function startServer() {
     next();
   };
 
-  app.use('/api', requireAuth);
+  app.use('/api', requireAuth, maintenanceMiddleware);
 
   app.get('/api/templates', (req, res) => {
     try {
@@ -1235,6 +1247,50 @@ async function startServer() {
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
+
+  
+  
+const backupUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 512 * 1024 * 1024 }
+});
+
+  app.post('/api/backups/inspect', backupUpload.single('backup'), (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'Arquivo não fornecido.' });
+      const buffer = req.file.buffer;
+      const result = restoreService.inspectBackup(buffer);
+      // clean up tmp upload file
+      
+      
+      if (result.manifest.workspaceId !== req.auth!.workspace.id) {
+        return res.status(400).json({ error: 'Este backup pertence a outro workspace e não pode ser restaurado nesta conta.' });
+      }
+
+      delete result.backupObj;
+      res.json(result);
+    } catch (e: any) {
+      
+      res.status(400).json({ error: e.message || 'Erro na inspeção.' });
+    }
+  });
+
+  app.post('/api/backups/restore', backupUpload.single('backup'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'Arquivo não fornecido.' });
+      if (req.body.confirm !== 'RESTORE' && req.body.confirm !== 'true') {
+        return res.status(400).json({ error: 'Confirmação ausente.' });
+      }
+      const buffer = req.file.buffer;
+      const result = await restoreService.restoreBackup(req.auth!.workspace.id, req.auth!.user.id, buffer);
+      
+      fs.unlinkSync(req.file.path);
+      res.json(result);
+    } catch (e: any) {
+      
+      res.status(e.message.includes('Aguarde') ? 409 : 500).json({ error: e.message || 'Erro no restore.' });
+    }
+  });
 
   app.post('/api/backups/export', (req, res) => {
     try {

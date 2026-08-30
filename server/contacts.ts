@@ -3,6 +3,14 @@ import path from 'path';
 import type { KnownContact } from '../src/types';
 
 export class ContactsService {
+  public flushPendingSave() {
+    if (this.saveDebounceTimer) {
+      clearTimeout(this.saveDebounceTimer);
+      this.saveDebounceTimer = null;
+      this.saveContacts();
+    }
+  }
+
   private contactsMap: Map<string, KnownContact> = new Map();
   private saveDebounceTimer: NodeJS.Timeout | null = null;
   private contactsFile: string;

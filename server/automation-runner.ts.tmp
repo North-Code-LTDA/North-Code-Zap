@@ -45,6 +45,7 @@ export class AutomationRunner {
   public async dispatchMany(events: AutomationTriggerEvent[]) {
     for (const event of events) {
       if (this.suspendedWorkspaces.has(event.workspaceId)) continue;
+      
       const current = this.activeDispatches.get(event.workspaceId) || 0;
       this.activeDispatches.set(event.workspaceId, current + 1);
       
@@ -55,6 +56,15 @@ export class AutomationRunner {
       } finally {
         const count = this.activeDispatches.get(event.workspaceId) || 0;
         if (count > 0) this.activeDispatches.set(event.workspaceId, count - 1);
+      }
+    }
+  }
+
+    for (const event of events) {
+      try {
+        await this.dispatch(event);
+      } catch (err) {
+        console.error('[Automation] Failed to dispatch event:', err);
       }
     }
   }

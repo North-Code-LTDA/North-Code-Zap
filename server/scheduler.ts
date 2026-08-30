@@ -70,6 +70,61 @@ export type ExecutionCompletedHandler = (
 ) => void | Promise<void>;
 
 export class SchedulerService {
+  private suspendedWorkspaces = new Set<string>();
+
+  public suspendWorkspace(workspaceId: string) {
+    this.suspendedWorkspaces.add(workspaceId);
+  }
+
+  public resumeWorkspace(workspaceId: string) {
+    this.suspendedWorkspaces.delete(workspaceId);
+  }
+
+  public isWorkspaceBusy(workspaceId: string): boolean {
+    for (const scheduleId of this.processingSchedules) {
+      const sched = this.schedules.find(s => s.id === scheduleId);
+      if (sched) {
+        const inst = this.instanceManager.get(sched.instanceId);
+        if (inst && inst.metadata.workspaceId === workspaceId) return true;
+      }
+    }
+    for (const sched of this.schedules) {
+      if (sched.status === 'running') {
+        const inst = this.instanceManager.get(sched.instanceId);
+        if (inst && inst.metadata.workspaceId === workspaceId) return true;
+      }
+    }
+    return false;
+  }
+
+  public reloadWorkspaceFromDisk(workspaceId: string) {
+    let allFromDisk = [];
+    try {
+      if (fs.existsSync(SCHEDULES_FILE)) {
+        allFromDisk = JSON.parse(fs.readFileSync(SCHEDULES_FILE, 'utf-8'));
+      }
+    } catch(e) {
+      console.error('[Scheduler] error loading schedules for reload', e);
+    }
+    
+    const validRestored = [];
+    for (const raw of allFromDisk) {
+       const inst = this.instanceManager.get(raw.instanceId);
+       if (inst && inst.metadata.workspaceId === workspaceId) {
+          validRestored.push(raw);
+       }
+    }
+
+    // Keep schedules from other workspaces
+    const otherWorkspaces = this.schedules.filter(s => {
+       const inst = this.instanceManager.get(s.instanceId);
+       return !inst || inst.metadata.workspaceId !== workspaceId;
+    });
+
+    this.schedules = [...otherWorkspaces, ...validRestored];
+    this.validateAndRepairOnStartup(); // applies standard cleanup only once more, to all.
+  }
+
   private schedules: ScheduledMessage[] = [];
   private processingSchedules: Set<string> = new Set();
   private io: SocketIOServer | null = null;
@@ -679,6 +734,9 @@ export class SchedulerService {
 
         // Preflight WhatsApp Status
         const instance = this.instanceManager.get(schedule.instanceId);
+        if (instance && this.suspendedWorkspaces.has(instance.metadata.workspaceId)) {
+          continue;
+        }
         if (instance && instance.whatsapp) {
           const state = instance.whatsapp.getState();
           if (state.status !== 'connected') {
@@ -699,7 +757,16 @@ export class SchedulerService {
    */
   public async runNow(
     id: string, instanceId: string
-  ): Promise<{ success: boolean; result?: ScheduleLastResult; error?: string }> {
+  ): Promise<{ success: boolean; result?: any; error?: string }> {
+    const inst = this.instanceManager.get(instanceId);
+    if (inst && this.suspendedWorkspaces.has(inst.metadata.workspaceId)) {
+      return { success: false, error: 'Restauração em andamento.' };
+    }
+    return this._runNow(id, instanceId);
+  }
+  public async _runNow(
+    id: string, instanceId: string
+  ): Promise<{ success: boolean; result?: any; error?: string }> {
     const schedule = this.schedules.find((s) => s.id === id && s.instanceId === instanceId);
     if (!schedule) {
       return { success: false, error: 'Agendamento não encontrado.' };
