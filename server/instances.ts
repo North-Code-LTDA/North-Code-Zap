@@ -59,6 +59,40 @@ export class InstanceManager {
     }
   }
 
+
+  private validateInstanceMetadata(meta: any, seenIds: Set<string>): boolean {
+    const isValidUuid = (str: any) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+    const isValidDateString = (d: any) => typeof d === 'string' && !isNaN(new Date(d).getTime());
+
+
+    if (!meta || typeof meta.id !== 'string' || !isValidUuid(meta.id)) {
+      console.warn('[InstanceManager] Invalid or missing id in instances.json');
+      return false;
+    }
+    if (typeof meta.workspaceId !== 'string' || !isValidUuid(meta.workspaceId)) {
+      console.warn(`[InstanceManager] Missing or invalid workspaceId for instance: ${meta.id}`);
+      return false;
+    }
+    if (seenIds.has(meta.id)) {
+      console.warn(`[InstanceManager] Duplicate instance ID found: ${meta.id}. Ignoring duplicate.`);
+      return false;
+    }
+    if (typeof meta.name !== 'string' || meta.name.trim() === '') {
+       console.warn(`[InstanceManager] Missing or invalid name for instance: ${meta.id}`);
+       return false;
+    }
+    if (!isValidDateString(meta.createdAt)) {
+       console.warn(`[InstanceManager] Missing or invalid createdAt for instance: ${meta.id}`);
+       return false;
+    }
+    if (!isValidDateString(meta.updatedAt)) {
+       console.warn(`[InstanceManager] Missing or invalid updatedAt for instance: ${meta.id}`);
+       return false;
+    }
+    seenIds.add(meta.id);
+    return true;
+  }
+
   public async reloadWorkspaceFromDisk(workspaceId: string) {
     const INSTANCES_FILE = require('path').join(DATA_DIR, 'instances.json');
     let metadatas: any[] = [];
@@ -68,19 +102,28 @@ export class InstanceManager {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           metadatas = parsed;
+        } else {
+          throw new Error('instances.json is not an array.');
         }
       }
-    } catch (err) {}
+    } catch (err) {
+      throw new Error('Falha ao carregar instances.json no restore. Corrompido.');
+    }
 
     const validMetas = [];
     const seenIds = new Set<string>();
 
+    const allValidMetas = [];
     for (const meta of metadatas) {
-      if (!meta || typeof meta.id !== 'string') continue;
-      if (meta.workspaceId !== workspaceId) continue;
-      if (seenIds.has(meta.id)) continue;
-      seenIds.add(meta.id);
-      validMetas.push(meta);
+      if (!this.validateInstanceMetadata(meta, seenIds)) {
+        throw new Error(`Metadata inválida para instância ${meta.id || 'unknown'}`);
+      }
+      allValidMetas.push(meta);
+    }
+    for (const meta of allValidMetas) {
+      if (meta.workspaceId === workspaceId) {
+        validMetas.push(meta);
+      }
     }
 
     for (const meta of validMetas) {

@@ -63,7 +63,7 @@ export class RestoreService {
           throw new Error(`Scope ausente: ${scope}`);
         }
       }
-      if (backupScopes.size !== expectedScopes.length) {
+      if (backup.manifest.scopes.length !== expectedScopes.length || backupScopes.size !== expectedScopes.length) {
         throw new Error('Scopes desconhecidos ou duplicados.');
       }
 
@@ -76,6 +76,9 @@ export class RestoreService {
       };
 
       enforceArray(backup.data.auth?.workspaces, 'auth.workspaces');
+      if (backup.data.auth.workspaces.length !== 1 || backup.data.auth.workspaces[0].id !== backup.manifest.workspaceId) {
+        throw new Error('Backup com metadata de workspace inválida ou estrangeira.');
+      }
       enforceArray(backup.data.auth?.users, 'auth.users');
       enforceArray(backup.data.auth?.sessions, 'auth.sessions');
       enforceArray(backup.data.instances, 'instances');
@@ -166,7 +169,7 @@ export class RestoreService {
 
       const scheduleIds = new Set<string>();
       for (const s of backup.data.schedules) {
-        if (!isUUID(s.id)) throw new Error('Schedule ID inválido.');
+        if (typeof s.id !== 'string' || s.id.trim() === '') throw new Error('Schedule ID inválido.');
         if (scheduleIds.has(s.id)) throw new Error('Schedule ID duplicado.');
         if (!instanceIds.has(s.instanceId)) throw new Error('Schedule aponta para instance ausente.');
         scheduleIds.add(s.id);
@@ -204,7 +207,11 @@ export class RestoreService {
 
       // Validate files
       const fileKeys = new Set<string>();
+      const instancesRoot = path.resolve(DATA_DIR, 'instances');
       for (const file of backup.files) {
+        if (file.relativePath.includes('\0')) {
+          throw new Error('Null byte detectado.');
+        }
         if (!instanceIds.has(file.instanceId)) {
           throw new Error('Arquivo aponta para instanceId não restaurado.');
         }
@@ -220,6 +227,13 @@ export class RestoreService {
         if (!file.relativePath.startsWith('auth/') && !file.relativePath.startsWith('recipients/') && !file.relativePath.startsWith('media/')) {
           throw new Error('Caminho de arquivo fora dos escopos permitidos.');
         }
+        
+        const instanceRoot = path.resolve(instancesRoot, file.instanceId);
+        const candidate = path.resolve(instanceRoot, file.relativePath);
+        if (!this.isPathInside(instancesRoot, instanceRoot) || !this.isPathInside(instanceRoot, candidate)) {
+          throw new Error('Caminho de arquivo perigoso bloqueado antes da mutação.');
+        }
+
         const key = `${file.instanceId}::${file.relativePath}`;
         if (fileKeys.has(key)) {
           throw new Error(`Arquivo duplicado no backup: ${file.relativePath}`);
@@ -229,12 +243,9 @@ export class RestoreService {
         // Strict base64 validation
         if (typeof file.content !== 'string') throw new Error('Conteúdo do arquivo não é string.');
         const decoded = Buffer.from(file.content, 'base64');
-        if (decoded.toString('base64') !== file.content) {
-           // Allow if just padding mismatch, otherwise reject
-           const reEncoded = decoded.toString('base64');
-           if (file.content.replace(/=/g, '') !== reEncoded.replace(/=/g, '')) {
-             throw new Error(`Base64 inválido para o arquivo: ${file.relativePath}`);
-           }
+        const reencoded = decoded.toString('base64');
+        if (reencoded !== file.content) {
+          throw new Error(`Base64 inválido para o arquivo: ${file.relativePath}`);
         }
       }
 
@@ -251,6 +262,64 @@ export class RestoreService {
 
       for (const s of backup.data.schedules) checkMediaRef(s.media, s.instanceId, 'agendamento');
       for (const c of backup.data.campaigns) checkMediaRef(c.media, c.instanceId, 'campanha');
+
+      // Cross references Audience
+      const instanceAudiences = new Map<string, any>();
+      for (const file of backup.files) {
+        if (file.relativePath === 'recipients/audiences.json') {
+          try {
+            const jsonStr = Buffer.from(file.content, 'base64').toString('utf-8');
+            instanceAudiences.set(file.instanceId, JSON.parse(jsonStr));
+          } catch(e) {
+            throw new Error(`Falha ao decodificar recipients/audiences.json de ${file.instanceId}`);
+          }
+        }
+      }
+
+      for (const instId of instanceIds) {
+        const aud = instanceAudiences.get(instId) || { tags: [], lists: [] };
+        const validTagIds = new Set(Array.isArray(aud.tags) ? aud.tags.map((t: any) => t.id) : []);
+        const validListIds = new Set(Array.isArray(aud.lists) ? aud.lists.map((l: any) => l.id) : []);
+
+        const checkStep = (step: any) => {
+          if (step.type === 'add_tag' || step.type === 'remove_tag' || step.type === 'has_tag') {
+            if (!validTagIds.has(step.tagId)) throw new Error('Step referencia tag ausente.');
+          }
+          if (step.type === 'add_to_list' || step.type === 'remove_from_list' || step.type === 'in_list') {
+            if (!validListIds.has(step.listId)) throw new Error('Step referencia list ausente.');
+          }
+          if (step.branches) {
+            for (const b of step.branches) {
+               for (const s of b.steps || []) checkStep(s);
+            }
+          }
+        };
+
+        for (const f of backup.data.flows) {
+          if (f.instanceId === instId) {
+            if (f.trigger?.type === 'contact_added_to_list' && !validListIds.has(f.trigger.listId)) {
+              throw new Error('Flow trigger referencia list ausente.');
+            }
+            if (f.trigger?.type === 'tag_added_to_contact' && !validTagIds.has(f.trigger.tagId)) {
+              throw new Error('Flow trigger referencia tag ausente.');
+            }
+            for (const step of f.steps || []) {
+              checkStep(step);
+            }
+          }
+        }
+
+        for (const a of backup.data.automations) {
+          if (a.instanceId === instId) {
+            if (a.trigger?.type === 'contact_added_to_list' && !validListIds.has(a.trigger.listId)) {
+              throw new Error('Automation trigger referencia list ausente.');
+            }
+            if (a.trigger?.type === 'tag_added_to_contact' && !validTagIds.has(a.trigger.tagId)) {
+              throw new Error('Automation trigger referencia tag ausente.');
+            }
+          }
+        }
+      }
 
       const counts = {
         users: backup.data.auth.users.length,
@@ -340,6 +409,8 @@ export class RestoreService {
     
     let preRestoreInstanceIds = new Set<string>();
     let preRestoreWorkspaceUserIds = new Set<string>();
+    let targetRestoreInstanceIds = new Set<string>();
+    let targetRestoreUserIds = new Set<string>();
 
     try {
       this.schedulerService.suspendWorkspace(workspaceId);
@@ -384,6 +455,10 @@ export class RestoreService {
       mutationStarted = true;
 
       const restoredInstanceIds = new Set<string>(backup.data.instances.map((i: any) => i.id));
+      targetRestoreInstanceIds = restoredInstanceIds;
+      targetRestoreUserIds = new Set<string>(backup.data.auth.users.map((u: any) => u.id));
+      targetRestoreInstanceIds = restoredInstanceIds;
+      targetRestoreUserIds = new Set<string>(backup.data.auth.users.map((u: any) => u.id));
 
       this.updateGlobalJson(path.join(DATA_DIR, 'auth', 'workspaces.json'), workspaceId, backup.data.auth.workspaces, (w) => w.id === workspaceId);
       this.updateGlobalJson(path.join(DATA_DIR, 'auth', 'users.json'), workspaceId, backup.data.auth.users, (u) => u.workspaceId === workspaceId);
@@ -462,7 +537,8 @@ export class RestoreService {
       automationService.init();
       this.flowService.init();
       
-      this.schedulerService.reloadWorkspaceFromDisk(workspaceId);
+      const affectedInstanceIds = new Set([...preRestoreInstanceIds, ...restoredInstanceIds]);
+      this.schedulerService.reloadWorkspaceFromDisk(workspaceId, affectedInstanceIds);
       this.flowRunner.reloadWorkspaceFromDisk(workspaceId);
 
       return {
@@ -474,13 +550,17 @@ export class RestoreService {
     } catch (err: any) {
       console.error('[Restore] Failure:', err);
       if (mutationStarted && safetyBackupBuffer) {
-         try {
-           await this.performRollback(workspaceId, safetyBackupBuffer, preRestoreInstanceIds, preRestoreWorkspaceUserIds);
-           throw new Error('Restore falhou. Rollback executado com sucesso. Erro original: ' + err.message);
-         } catch (rollbackErr: any) {
-           console.error('[Restore] CRITICAL rollback failure:', rollbackErr);
-           throw new Error('Falha crítica de rollback. ' + err.message);
-         }
+           let rollbackSucceeded = false;
+           try {
+             await this.performRollback(workspaceId, safetyBackupBuffer, preRestoreInstanceIds, preRestoreWorkspaceUserIds, targetRestoreInstanceIds, targetRestoreUserIds);
+             rollbackSucceeded = true;
+           } catch (rollbackErr: any) {
+             console.error('[Restore] CRITICAL rollback failure:', rollbackErr);
+             throw new Error('Falha crítica de rollback. Erro original: ' + err.message);
+           }
+           if (rollbackSucceeded) {
+             throw new Error('Restore falhou. Rollback executado com sucesso. Erro original: ' + err.message);
+           }
       } else {
          throw new Error('Restore falhou: ' + err.message);
       }
@@ -492,7 +572,7 @@ export class RestoreService {
     }
   }
 
-  private async performRollback(workspaceId: string, buffer: Buffer, preRestoreInstanceIds: Set<string>, preRestoreWorkspaceUserIds: Set<string>) {
+  private async performRollback(workspaceId: string, buffer: Buffer, preRestoreInstanceIds: Set<string>, preRestoreWorkspaceUserIds: Set<string>, targetRestoreInstanceIds: Set<string>, targetRestoreUserIds: Set<string>) {
       // Suspend newly reloaded runtimes just in case
       this.instanceManager.suspendWorkspaceForRestore(workspaceId);
 
@@ -517,11 +597,20 @@ export class RestoreService {
                  }
               }
            }
+           // Also clear target restore directories if they aren't in the safety backup
+           for (const tId of targetRestoreInstanceIds) {
+             if (!restoredInstanceIds.has(tId)) {
+               const instanceRoot = path.join(instancesRoot, tId);
+               if (this.isPathInside(instancesRoot, instanceRoot) && fs.existsSync(instanceRoot)) {
+                 fs.rmSync(instanceRoot, { recursive: true, force: true });
+               }
+             }
+           }
          } catch(e){}
       }
 
-      const allUserIdsToClear = new Set([...preRestoreWorkspaceUserIds, ...backupUserIds]);
-      const allInstanceIdsToClear = new Set([...preRestoreInstanceIds, ...restoredInstanceIds]);
+      const allUserIdsToClear = new Set([...preRestoreWorkspaceUserIds, ...targetRestoreUserIds, ...backupUserIds]);
+      const allInstanceIdsToClear = new Set([...preRestoreInstanceIds, ...targetRestoreInstanceIds, ...restoredInstanceIds]);
 
       this.updateGlobalJson(path.join(DATA_DIR, 'auth', 'workspaces.json'), workspaceId, backup.data.auth.workspaces || [], (w) => w.id === workspaceId);
       this.updateGlobalJson(path.join(DATA_DIR, 'auth', 'users.json'), workspaceId, backup.data.auth.users || [], (u) => u.workspaceId === workspaceId);
