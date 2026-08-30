@@ -38,6 +38,7 @@ import { AutomacoesView } from './components/AutomacoesView';
 import { FluxosView } from './components/FluxosView';
 import { ContatosView } from './components/ContatosView';
 import { TemplatesView } from './components/TemplatesView';
+import { ConfiguracoesView } from './components/ConfiguracoesView';
 import { PlaceholderView } from './components/PlaceholderView';
 import type { NavigationTab } from './types';
 
@@ -208,7 +209,7 @@ function AppContent() {
 
         {/* Main Content Area */}
         <main className="flex-1 flex flex-col min-w-0">
-          {!selectedInstanceId && currentTab !== 'templates' ? (
+          {!selectedInstanceId && currentTab !== 'templates' && currentTab !== 'configuracoes' ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-6 border border-neutral-800 border-dashed rounded-2xl bg-neutral-900/20">
               <div className="w-16 h-16 rounded-full bg-neutral-900 flex items-center justify-center border border-neutral-800 mb-6 shadow-sm">
                 <LayoutDashboard className="w-8 h-8 text-neutral-500" />
@@ -286,6 +287,9 @@ function AppContent() {
           {currentTab === 'fluxos' && (
             <FluxosView selectedInstanceId={selectedInstanceId} />
           )}
+
+          {/* TAB 10: CONFIGURAÇÕES */}
+          {currentTab === 'configuracoes' && <ConfiguracoesView />}
 
           {/* OTHER PLACEHOLDER TABS */}
           {currentTab !== 'dashboard' &&

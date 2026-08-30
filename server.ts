@@ -16,6 +16,7 @@ import { AutomationRunner, AutomationTriggerEvent } from './server/automation-ru
 import { FlowService } from './server/flows.ts';
 import { FlowRunner } from './server/flow-runner.ts';
 import { authService, User, Workspace, Session } from './server/auth.ts';
+import { backupService } from './server/backup.ts';
 import { getCookieFromRequest, getCookieFromSocket } from './server/cookie.ts';
 
 declare global {
@@ -1234,7 +1235,49 @@ async function startServer() {
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
   });
 
+
+  app.post('/api/backups/export', (req, res) => {
+    try {
+      const workspaceId = req.auth!.workspace.id;
+      const userId = req.auth!.user.id;
+      const { mode, scopes } = req.body;
+      
+      if (mode !== 'full' && mode !== 'selective') {
+        return res.status(400).json({ error: 'Invalid mode' });
+      }
+      
+      if (mode === 'selective' && (!Array.isArray(scopes) || scopes.length === 0)) {
+        return res.status(400).json({ error: 'Selective backup requires scopes' });
+      }
+      
+      const allowedScopes = ['auth', 'instances', 'contacts', 'media', 'templates', 'schedules', 'campaigns', 'automations', 'flows'];
+      if (mode === 'selective') {
+        for (const s of scopes) {
+          if (!allowedScopes.includes(s)) {
+            return res.status(400).json({ error: 'Invalid scope: ' + s });
+          }
+        }
+      }
+      
+      const buffer = backupService.exportBackup({
+        workspaceId,
+        userId,
+        mode,
+        scopes: mode === 'selective' ? scopes : []
+      });
+      
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="north-code-zap-${timestamp}.nczbackup"`);
+      res.send(buffer);
+    } catch (e: any) {
+      console.error('[Backup] Error exporting backup:', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Init manager
+
   await instanceManager.init();
   campaignService.init();
   campaignHistoryService.init();
