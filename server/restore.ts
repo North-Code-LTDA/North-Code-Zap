@@ -30,11 +30,11 @@ export class RestoreService {
     return this.restoringWorkspaces.has(workspaceId);
   }
 
-  public inspectBackup(buffer: Buffer, expectedWorkspaceId?: string): any {
-    return this.parseAndValidateBackup(buffer, expectedWorkspaceId);
+  public inspectBackup(buffer: Buffer, targetWorkspaceId: string, targetUserId: string): any {
+    return this.parseAndValidateBackup(buffer, targetWorkspaceId, targetUserId);
   }
 
-  private parseAndValidateBackup(buffer: Buffer, expectedWorkspaceId?: string): any {
+  private parseAndValidateBackup(buffer: Buffer, targetWorkspaceId: string, targetUserId: string): any {
     try {
       // GZIP Output limit: 1GB
       const decompressed = zlib.gunzipSync(buffer, { maxOutputLength: 1024 * 1024 * 1024 });
@@ -50,8 +50,10 @@ export class RestoreService {
       if (backup.manifest.mode !== 'full') {
         throw new Error('O Restore V1 aceita apenas backups completos.');
       }
-      if (expectedWorkspaceId && backup.manifest.workspaceId !== expectedWorkspaceId) {
-        throw new Error('Este backup pertence a outro workspace e não pode ser restaurado nesta conta.');
+      
+      let restoreMode: 'same_workspace' | 'portable_recovery' = 'same_workspace';
+      if (backup.manifest.workspaceId !== targetWorkspaceId) {
+        restoreMode = 'portable_recovery';
       }
       
       const expectedScopes = ['auth', 'instances', 'contacts', 'media', 'templates', 'schedules', 'campaigns', 'automations', 'flows'];
@@ -105,6 +107,12 @@ export class RestoreService {
          throw new Error('auth.workspaces must contain exactly 1 workspace corresponding to the backup manifest.');
       }
       
+      if (restoreMode === 'portable_recovery') {
+        if (backup.data.auth.users.length !== 1) {
+          throw new Error('Portable Recovery V1 só pode ser aceito se existir exatamente 1 user no backup.');
+        }
+      }
+      
       const ALL_USERS_FILE = path.join(DATA_DIR, 'auth', 'users.json');
       let globalUsers = [];
       if (fs.existsSync(ALL_USERS_FILE)) {
@@ -112,6 +120,16 @@ export class RestoreService {
       }
       const backupEmailSet = new Set<string>();
       
+      if (restoreMode === 'portable_recovery') {
+        const currentUser = globalUsers.find(x => x.id === targetUserId);
+        if (!currentUser) throw new Error('Portable Recovery exige o usuário autenticado atual.');
+        const targetEmail = currentUser.email.trim().toLowerCase();
+        const backupEmail = backup.data.auth.users[0].email.trim().toLowerCase();
+        if (targetEmail !== backupEmail) {
+          throw new Error('Portable Recovery exige o mesmo e-mail da conta do backup.');
+        }
+      }
+
       for (const u of backup.data.auth.users) {
         if (!isUUID(u.id) || u.workspaceId !== wsId || typeof u.name !== 'string' || u.name.trim() === '') throw new Error('User field inválido');
         if (typeof u.email !== 'string') throw new Error('User email inválido');
@@ -127,9 +145,9 @@ export class RestoreService {
         backupEmailSet.add(normEmail);
 
         const existingId = globalUsers.find(x => x.id === u.id);
-        if (existingId && existingId.workspaceId !== wsId) throw new Error('Colisão de usuário com outro workspace.');
+        if (existingId && existingId.workspaceId !== targetWorkspaceId) throw new Error('Colisão de usuário com outro workspace.');
         const existingEmail = globalUsers.find(x => x.email.trim().toLowerCase() === normEmail);
-        if (existingEmail && existingEmail.workspaceId !== wsId) throw new Error('Colisão de e-mail de usuário com outro workspace.');
+        if (existingEmail && existingEmail.workspaceId !== targetWorkspaceId) throw new Error('Colisão de e-mail de usuário com outro workspace.');
       }
       
       const ALL_SESSIONS_FILE = path.join(DATA_DIR, 'auth', 'sessions.json');
@@ -156,12 +174,12 @@ export class RestoreService {
          const existingSession = globalSessions.find(x => x.id === s.id);
          if (existingSession) {
             const eu = globalUsers.find(x => x.id === existingSession.userId);
-            if (eu && eu.workspaceId !== wsId) throw new Error('Colisão de sessão com outro workspace.');
+            if (eu && eu.workspaceId !== targetWorkspaceId) throw new Error('Colisão de sessão com outro workspace.');
          }
          const existingHash = globalSessions.find(x => x.tokenHash === s.tokenHash);
          if (existingHash) {
             const eu = globalUsers.find(x => x.id === existingHash.userId);
-            if (eu && eu.workspaceId !== wsId) throw new Error('Colisão de sessão com outro workspace.');
+            if (eu && eu.workspaceId !== targetWorkspaceId) throw new Error('Colisão de sessão com outro workspace.');
          }
       }
 
@@ -307,7 +325,7 @@ export class RestoreService {
           const currentInstances = JSON.parse(fs.readFileSync(INSTANCES_FILE, 'utf-8'));
           if (Array.isArray(currentInstances)) {
             for (const ci of currentInstances) {
-              if (instanceIds.has(ci.id) && ci.workspaceId !== wsId) {
+              if (instanceIds.has(ci.id) && ci.workspaceId !== targetWorkspaceId) {
                 throw new Error(`Colisão: A instância ${ci.id} já existe e pertence a outro workspace.`);
               }
             }
@@ -464,10 +482,13 @@ export class RestoreService {
         files: backup.files.length
       };
 
-      const warnings = [
-        "Este backup restaurará credenciais e sessões da conta.",
-        "As conexões WhatsApp serão reiniciadas usando as credenciais restauradas.",
-      ];
+      const warnings = [];
+      if (restoreMode === 'portable_recovery') {
+        warnings.push("Este backup pertence a uma instalação anterior. Os dados serão restaurados no workspace atual e o login atual será preservado.");
+      } else {
+        warnings.push("Este backup restaurará credenciais e sessões da conta.");
+      }
+      warnings.push("As conexões WhatsApp serão reiniciadas usando as credenciais restauradas.");
 
       const activeSchedules = backup.data.schedules.filter((s: any) => s.status === 'active');
       if (activeSchedules.length > 0) warnings.push(`Existem ${activeSchedules.length} agendamentos ativos neste backup.`);
@@ -484,12 +505,27 @@ export class RestoreService {
       const runningFlows = backup.data.flowExecutions.filter((f: any) => f.status === 'running');
       if (runningFlows.length > 0) warnings.push("Executions salvas como running serão descartadas conforme a regra de startup.");
 
+      let workingBackup = backup;
+      if (restoreMode === 'portable_recovery') {
+        workingBackup = JSON.parse(JSON.stringify(backup));
+        workingBackup.manifest.workspaceId = targetWorkspaceId;
+        
+        for (const i of workingBackup.data.instances) i.workspaceId = targetWorkspaceId;
+        for (const t of workingBackup.data.templates) t.workspaceId = targetWorkspaceId;
+        for (const c of workingBackup.data.campaigns) c.workspaceId = targetWorkspaceId;
+        for (const h of workingBackup.data.campaignHistory) h.workspaceId = targetWorkspaceId;
+        for (const a of workingBackup.data.automations) a.workspaceId = targetWorkspaceId;
+        for (const f of workingBackup.data.flows) f.workspaceId = targetWorkspaceId;
+        for (const e of workingBackup.data.flowExecutions) e.workspaceId = targetWorkspaceId;
+      }
+
       return {
         valid: true,
-        manifest: backup.manifest,
+        restoreMode,
+        manifest: workingBackup.manifest,
         counts,
         warnings,
-        backupObj: backup
+        backupObj: workingBackup
       };
 
     } catch (err: any) {
@@ -529,7 +565,7 @@ export class RestoreService {
       throw new Error('Restauração já em andamento (Lock Ativo).');
     }
 
-    const inspected = this.parseAndValidateBackup(buffer, workspaceId);
+    const inspected = this.parseAndValidateBackup(buffer, workspaceId, userId);
     const backup = inspected.backupObj;
 
     this.restoringWorkspaces.add(workspaceId);
@@ -590,10 +626,11 @@ export class RestoreService {
       targetRestoreInstanceIds = restoredInstanceIds;
       targetRestoreUserIds = new Set<string>(backup.data.auth.users.map((u: any) => u.id));
 
-      this.updateGlobalJson(path.join(DATA_DIR, 'auth', 'workspaces.json'), workspaceId, backup.data.auth.workspaces, (w) => w.id === workspaceId);
-      this.updateGlobalJson(path.join(DATA_DIR, 'auth', 'users.json'), workspaceId, backup.data.auth.users, (u) => u.workspaceId === workspaceId);
-      
-      this.updateGlobalJson(path.join(DATA_DIR, 'auth', 'sessions.json'), workspaceId, backup.data.auth.sessions, (s: any) => preRestoreWorkspaceUserIds.has(s.userId));
+      if (inspected.restoreMode !== 'portable_recovery') {
+        this.updateGlobalJson(path.join(DATA_DIR, 'auth', 'workspaces.json'), workspaceId, backup.data.auth.workspaces, (w) => w.id === workspaceId);
+        this.updateGlobalJson(path.join(DATA_DIR, 'auth', 'users.json'), workspaceId, backup.data.auth.users, (u) => u.workspaceId === workspaceId);
+        this.updateGlobalJson(path.join(DATA_DIR, 'auth', 'sessions.json'), workspaceId, backup.data.auth.sessions, (s: any) => preRestoreWorkspaceUserIds.has(s.userId));
+      }
       
       this.updateGlobalJson(path.join(DATA_DIR, 'instances.json'), workspaceId, backup.data.instances, (i) => i.workspaceId === workspaceId);
 

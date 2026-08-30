@@ -1259,14 +1259,8 @@ const backupUpload = multer({
     try {
       if (!req.file) return res.status(400).json({ error: 'Arquivo não fornecido.' });
       const buffer = req.file.buffer;
-      const result = restoreService.inspectBackup(buffer);
-      // clean up tmp upload file
+      const result = restoreService.inspectBackup(buffer, req.auth!.workspace.id, req.auth!.user.id);
       
-      
-      if (result.manifest.workspaceId !== req.auth!.workspace.id) {
-        return res.status(400).json({ error: 'Este backup pertence a outro workspace e não pode ser restaurado nesta conta.' });
-      }
-
       delete result.backupObj;
       res.json(result);
     } catch (e: any) {

@@ -94,7 +94,7 @@ export class InstanceManager {
   }
 
   public async reloadWorkspaceFromDisk(workspaceId: string) {
-    const INSTANCES_FILE = require('path').join(DATA_DIR, 'instances.json');
+    const INSTANCES_FILE = path.join(DATA_DIR, 'instances.json');
     let metadatas: any[] = [];
     try {
       if (fs.existsSync(INSTANCES_FILE)) {
@@ -133,8 +133,8 @@ export class InstanceManager {
     for (const meta of validMetas) {
       const runtime = this.runtimes.get(meta.id);
       if (runtime) {
-        const authDir = require('path').join(DATA_DIR, 'instances', runtime.metadata.id, 'auth');
-        const credsFile = require('path').join(authDir, 'creds.json');
+        const authDir = path.join(DATA_DIR, 'instances', runtime.metadata.id, 'auth');
+        const credsFile = path.join(authDir, 'creds.json');
         if (fs.existsSync(credsFile)) {
           runtime.whatsapp.connect().catch(err => {
             console.error(`[InstanceManager] Failed to auto-connect ${runtime.metadata.id} after restore:`, err);
