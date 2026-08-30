@@ -415,7 +415,7 @@ export class SchedulerService {
     return updated;
   }
 
-  public delete(id: string, instanceId: string, mediaSvc: MediaService): boolean {
+  public delete(id: string, instanceId: string, mediaSvc: MediaService, options?: { preserveMedia?: boolean }): boolean {
     const targetSchedule = this.schedules.find((s) => s.id === id && s.instanceId === instanceId);
     if (!targetSchedule) {
       console.warn(`[Scheduler] delete failed schedule=${id} reason=not_found`);
@@ -430,7 +430,7 @@ export class SchedulerService {
     console.log(`[Scheduler] deleted schedule=${id}`);
 
     // Cleanup associated uploaded media if no longer referenced
-    if (mediaToClean?.source === 'upload' && mediaToClean.localPath) {
+    if (!options?.preserveMedia && mediaToClean?.source === 'upload' && mediaToClean.localPath) {
       try {
         mediaSvc.deleteMediaIfUnreferenced(mediaToClean.localPath, this.schedules);
       } catch (mediaErr: any) {

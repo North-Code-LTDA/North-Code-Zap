@@ -56,6 +56,10 @@ export class CampaignService {
   }
 
 
+  private isValidSchedulerId(value: string): boolean {
+    return /^sched_\d+_[a-z0-9]+$/i.test(value);
+  }
+
   private isValidUuid(str: string): boolean {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     return uuidRegex.test(str);
@@ -144,7 +148,7 @@ export class CampaignService {
     if (!Number.isInteger(c.schedule.deliveryOptions.batchSize) || c.schedule.deliveryOptions.batchSize <= 0) throw new Error('Invalid batchSize');
     if (typeof c.schedule.deliveryOptions.batchPauseMs !== 'number' || !Number.isFinite(c.schedule.deliveryOptions.batchPauseMs) || c.schedule.deliveryOptions.batchPauseMs < 0) throw new Error('Invalid batchPauseMs');
 
-    if (c.scheduleId !== null && (typeof c.scheduleId !== 'string' || !this.isValidUuid(c.scheduleId))) throw new Error('Invalid scheduleId');
+    if (c.scheduleId !== null && (typeof c.scheduleId !== 'string' || !this.isValidSchedulerId(c.scheduleId))) throw new Error('Invalid scheduleId');
     
     if (c.scheduleId === null && c.audienceSnapshot !== null) throw new Error('audienceSnapshot must be null when scheduleId is null');
     if (c.scheduleId !== null && c.audienceSnapshot === null) throw new Error('audienceSnapshot must exist when scheduleId is not null');

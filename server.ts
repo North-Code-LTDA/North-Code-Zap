@@ -859,7 +859,7 @@ async function startServer() {
       if (validation.valid === false) return res.status(400).json({ success: false, error: validation.error });
       if (validation.payload.media?.source === 'upload') {
         if (!runtime.media.fileExists(validation.payload.media.localPath)) {
-          return res.status(400).json({ success: false, error: 'Mídia de upload inválida para esta instância.' });
+          return res.status(400).json({ success: false, error: 'A imagem deste rascunho não está mais disponível. Edite a campanha e envie a imagem novamente.' });
         }
       }
       const schedule = schedulerService.create(req.params.instanceId, validation.payload);
@@ -1140,7 +1140,7 @@ async function startServer() {
       } catch (e: any) {
         console.error('[Campaign] Error persisting scheduleId, rolling back schedule:', e);
         try {
-          const rolledBack = schedulerService.delete(schedule.id, c.instanceId, runtime.media);
+          const rolledBack = schedulerService.delete(schedule.id, c.instanceId, runtime.media, { preserveMedia: true });
           if (!rolledBack) {
             console.error('[Campaign] CRITICAL ERROR: rollback returned false for schedule', schedule.id);
           }
