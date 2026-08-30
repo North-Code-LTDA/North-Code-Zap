@@ -379,6 +379,18 @@ export class RestoreService {
       // Cross references Audience
       const instanceAudiences = new Map<string, any>();
       for (const file of backup.files) {
+        if (file.relativePath === 'recipients/contacts.json') {
+          let parsed;
+          try {
+            const jsonStr = Buffer.from(file.content, 'base64').toString('utf-8');
+            parsed = JSON.parse(jsonStr);
+          } catch (e) {
+            throw new Error(`contacts.json inválido para a instância ${file.instanceId}`);
+          }
+          if (!Array.isArray(parsed)) {
+            throw new Error(`contacts.json inválido para a instância ${file.instanceId}`);
+          }
+        }
         if (file.relativePath === 'recipients/audiences.json') {
           try {
             const jsonStr = Buffer.from(file.content, 'base64').toString('utf-8');

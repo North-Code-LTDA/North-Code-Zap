@@ -43,7 +43,18 @@ export class WhatsAppService {
 
     try {
       if (this.sock) {
-        this.sock.end(undefined);
+        const oldSock = this.sock;
+        try {
+          oldSock.ev.removeAllListeners('creds.update');
+          oldSock.ev.removeAllListeners('connection.update');
+          oldSock.ev.removeAllListeners('messages.upsert');
+          oldSock.ev.removeAllListeners('contacts.upsert');
+          oldSock.ev.removeAllListeners('contacts.update');
+          oldSock.ev.removeAllListeners('messaging-history.set');
+        } catch (e) {
+          console.warn('[WhatsApp] error removing listeners:', e);
+        }
+        oldSock.end(undefined);
         this.sock = null;
       }
     } catch (err: any) {

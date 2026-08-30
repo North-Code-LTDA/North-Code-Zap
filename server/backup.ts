@@ -15,13 +15,8 @@ export interface BackupOptions {
 export class BackupService {
   private safeReadJson(filePath: string): any {
     if (!fs.existsSync(filePath)) return null;
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      return JSON.parse(content);
-    } catch (e) {
-      console.warn(`[BackupService] Failed to read JSON at ${filePath}`, e);
-      return null;
-    }
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return JSON.parse(content);
   }
 
   private isPathInside(root: string, candidate: string): boolean {
@@ -42,28 +37,17 @@ export class BackupService {
   private collectFiles(dirPath: string, allowedRoot: string, instanceId: string, filesArray: any[]) {
     const resolvedDir = path.resolve(dirPath);
     if (!this.isPathInside(allowedRoot, resolvedDir)) {
-      console.warn(`[BackupService] Path boundary violation: ${resolvedDir}`);
-      return;
+      throw new Error(`Path boundary violation: ${resolvedDir}`);
     }
 
     if (!fs.existsSync(resolvedDir)) return;
 
-    let stat;
-    try {
-      stat = fs.lstatSync(resolvedDir);
-    } catch {
-      return;
-    }
+    const stat = fs.lstatSync(resolvedDir);
     
     if (stat.isSymbolicLink()) return;
 
     if (stat.isDirectory()) {
-      let items;
-      try {
-         items = fs.readdirSync(resolvedDir);
-      } catch {
-         return;
-      }
+      const items = fs.readdirSync(resolvedDir);
       
       for (const item of items) {
         if (item === '.' || item === '..') continue;
@@ -71,33 +55,24 @@ export class BackupService {
         const itemPath = path.resolve(resolvedDir, item);
         
         if (!this.isPathInside(allowedRoot, itemPath)) {
-          continue;
+          throw new Error(`Path boundary violation: ${itemPath}`);
         }
         
-        let itemStat;
-        try {
-          itemStat = fs.lstatSync(itemPath);
-        } catch {
-          continue;
-        }
+        const itemStat = fs.lstatSync(itemPath);
 
         if (itemStat.isSymbolicLink()) continue; // ignore symlinks
 
         if (itemStat.isDirectory()) {
           this.collectFiles(itemPath, allowedRoot, instanceId, filesArray);
         } else if (itemStat.isFile()) {
-          try {
-            const content = fs.readFileSync(itemPath, 'base64');
-            const relativeToInstance = path.relative(allowedRoot, itemPath);
-            filesArray.push({
-              instanceId,
-              relativePath: relativeToInstance.replace(/\\/g, '/'), // normalize separators
-              encoding: 'base64',
-              content
-            });
-          } catch (e) {
-            console.warn(`[BackupService] Could not read file: ${itemPath}`, e);
-          }
+          const content = fs.readFileSync(itemPath, 'base64');
+          const relativeToInstance = path.relative(allowedRoot, itemPath);
+          filesArray.push({
+            instanceId,
+            relativePath: relativeToInstance.replace(/\\/g, '/'), // normalize separators
+            encoding: 'base64',
+            content
+          });
         }
       }
     }
