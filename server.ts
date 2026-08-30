@@ -859,7 +859,7 @@ async function startServer() {
       if (validation.valid === false) return res.status(400).json({ success: false, error: validation.error });
       if (validation.payload.media?.source === 'upload') {
         if (!runtime.media.fileExists(validation.payload.media.localPath)) {
-          return res.status(400).json({ success: false, error: 'A imagem deste rascunho não está mais disponível. Edite a campanha e envie a imagem novamente.' });
+          return res.status(400).json({ success: false, error: 'Mídia de upload inválida para esta instância.' });
         }
       }
       const schedule = schedulerService.create(req.params.instanceId, validation.payload);
@@ -1124,7 +1124,7 @@ async function startServer() {
       
       if (validation.payload.media?.source === 'upload') {
         if (!runtime.media.fileExists(validation.payload.media.localPath)) {
-          return res.status(400).json({ success: false, error: 'Mídia de upload inválida para esta instância.' });
+          return res.status(400).json({ success: false, error: 'A imagem deste rascunho não está mais disponível. Edite a campanha e envie a imagem novamente.' });
         }
       }
       
