@@ -114,12 +114,14 @@ export class RestoreService {
       
       for (const u of backup.data.auth.users) {
         if (!isUUID(u.id) || u.workspaceId !== wsId || typeof u.name !== 'string' || u.name.trim() === '') throw new Error('User field inválido');
-        if (typeof u.email !== 'string' || !u.email.includes('@')) throw new Error('User email inválido');
-        if (typeof u.passwordSalt !== 'string' || u.passwordSalt === '' || typeof u.passwordHash !== 'string' || u.passwordHash === '') throw new Error('User password field inválido');
+        if (typeof u.email !== 'string') throw new Error('User email inválido');
+        const normEmail = u.email.trim().toLowerCase();
+        if (!normEmail || !/^\S+@\S+\.\S+$/.test(normEmail)) throw new Error('User email inválido');
+        
+        if (typeof u.passwordSalt !== 'string' || !u.passwordSalt.trim() || typeof u.passwordHash !== 'string' || !u.passwordHash.trim()) throw new Error('User password field inválido');
         const isValidDateString = (d: any) => typeof d === 'string' && !isNaN(new Date(d).getTime());
         if (!isValidDateString(u.createdAt) || !isValidDateString(u.updatedAt)) throw new Error('User dates inválidas');
         
-        const normEmail = u.email.trim().toLowerCase();
         u.email = normEmail;
         if (backupEmailSet.has(normEmail)) throw new Error('Email duplicado no backup');
         backupEmailSet.add(normEmail);
@@ -277,6 +279,9 @@ export class RestoreService {
 
       const scheduleIds = new Set<string>();
       for (const s of backup.data.schedules) {
+        if (!this.schedulerService.validatePersistedSchedule(s)) {
+           throw new Error(`Schedule inválido: ${s?.id || 'unknown'}`);
+        }
         if (typeof s.id !== 'string' || s.id.trim() === '') throw new Error('Schedule ID inválido.');
         if (scheduleIds.has(s.id)) throw new Error('Schedule ID duplicado.');
         if (!instanceIds.has(s.instanceId)) throw new Error('Schedule aponta para instance ausente.');
