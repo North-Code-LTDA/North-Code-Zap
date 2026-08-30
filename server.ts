@@ -295,7 +295,7 @@ async function startServer() {
   // Auth Middleware
   
   const maintenanceMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (req.auth && restoreService.isRestoring(req.auth.workspace.id) && !req.path.startsWith('/api/backups')) {
+    if (req.auth && restoreService.isRestoring(req.auth.workspace.id) ) {
       return res.status(423).json({ error: 'Restauração em andamento.' });
     }
     next();
@@ -1284,11 +1284,11 @@ const backupUpload = multer({
       const buffer = req.file.buffer;
       const result = await restoreService.restoreBackup(req.auth!.workspace.id, req.auth!.user.id, buffer);
       
-      fs.unlinkSync(req.file.path);
+      
       res.json(result);
     } catch (e: any) {
       
-      res.status(e.message.includes('Aguarde') ? 409 : 500).json({ error: e.message || 'Erro no restore.' });
+      res.status(e.message.includes('Aguarde') || e.message.includes('andamento') || e.message.includes('lock') || e.message.includes('busy') ? 409 : 400).json({ error: e.message || 'Erro no restore.' });
     }
   });
 

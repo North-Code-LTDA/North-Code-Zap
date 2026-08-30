@@ -54,9 +54,7 @@ export class FlowRunner {
        // Add the loaded ones
        for (const ex of workspaceExecutions) {
           if (ex.status === 'running') {
-             // discard or treat as interrupted
-             ex.status = 'interrupted';
-             if (!ex.error) ex.error = 'Sistema reiniciado ou restaurado durante a execução';
+             continue; // Discard completely
           }
           this.executions.push(ex);
        }

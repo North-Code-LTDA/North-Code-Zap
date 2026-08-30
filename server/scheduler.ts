@@ -111,7 +111,9 @@ export class SchedulerService {
     for (const raw of allFromDisk) {
        const inst = this.instanceManager.get(raw.instanceId);
        if (inst && inst.metadata.workspaceId === workspaceId) {
-          validRestored.push(raw);
+          if (this.isValidSchedule(raw)) {
+            validRestored.push(raw);
+          }
        }
     }
 
@@ -122,7 +124,10 @@ export class SchedulerService {
     });
 
     this.schedules = [...otherWorkspaces, ...validRestored];
-    this.validateAndRepairOnStartup(); // applies standard cleanup only once more, to all.
+    this.validateAndRepairOnStartup(workspaceId);
+    if (validRestored.length > 0) {
+      this.saveSchedules();
+    }
   }
 
   private schedules: ScheduledMessage[] = [];
@@ -157,6 +162,40 @@ export class SchedulerService {
     }
   }
 
+  
+  private isValidSchedule(s: any): boolean {
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
+
+    const requiredFields = [
+      'id', 'instanceId', 'name', 'message', 'targets', 'scheduleType',
+      'scheduledAt', 'nextRunAt', 'dailyTimes', 'weeklyTimeSlots', 'media',
+      'fallbackName', 'deliveryOptions', 'status', 'createdAt', 'updatedAt',
+      'lastRunAt', 'lastResult'
+    ];
+
+    let hasAllFields = true;
+    for (const field of requiredFields) {
+      if (!Object.prototype.hasOwnProperty.call(s, field)) {
+        console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id || 'unknown'} reason=missing_${field}`);
+        hasAllFields = false;
+        break;
+      }
+    }
+    if (!hasAllFields) return false;
+
+    if (typeof s.id !== 'string' || s.id.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=unknown reason=invalid_id`); return false; }
+    if (typeof s.instanceId !== 'string' || s.instanceId.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_instanceId`); return false; }
+    if (typeof s.name !== 'string' || s.name.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_name`); return false; }
+    if (typeof s.message !== 'string') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_message`); return false; }
+    if (typeof s.fallbackName !== 'string' || s.fallbackName.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_fallbackName`); return false; }
+
+    if (!['once', 'daily', 'weekly'].includes(s.scheduleType)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_scheduleType`); return false; }
+    const validStatuses = ['active', 'paused', 'completed', 'error', 'running'];
+    if (!validStatuses.includes(s.status)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_status`); return false; }
+
+    return true;
+  }
+
   private loadSchedules() {
     try {
       if (!fs.existsSync(SCHEDULES_FILE)) return;
@@ -173,28 +212,7 @@ export class SchedulerService {
       ];
 
       for (const s of parsed) {
-        if (!s || typeof s !== 'object' || Array.isArray(s)) continue;
-
-        let hasAllFields = true;
-        for (const field of requiredFields) {
-          if (!Object.prototype.hasOwnProperty.call(s, field)) {
-            console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id || 'unknown'} reason=missing_${field}`);
-            hasAllFields = false;
-            break;
-          }
-        }
-        if (!hasAllFields) continue;
-
-        // Base strings
-        if (typeof s.id !== 'string' || s.id.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=unknown reason=invalid_id`); continue; }
-        if (typeof s.instanceId !== 'string' || s.instanceId.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_instanceId`); continue; }
-        if (typeof s.name !== 'string' || s.name.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_name`); continue; }
-        if (typeof s.message !== 'string') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_message`); continue; }
-        if (typeof s.fallbackName !== 'string' || s.fallbackName.trim() === '') { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_fallbackName`); continue; }
-
-        if (!['once', 'daily', 'weekly'].includes(s.scheduleType)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_scheduleType`); continue; }
-        const validStatuses = ['active', 'paused', 'completed', 'error', 'running'];
-        if (!validStatuses.includes(s.status)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_status`); continue; }
+        if (!this.isValidSchedule(s)) continue;
 
         // Dates
         if (!isValidDateString(s.createdAt)) { console.warn(`[Scheduler] invalid persisted schedule ignored id=${s.id} reason=invalid_createdAt`); continue; }
@@ -611,12 +629,16 @@ export class SchedulerService {
   /**
    * Startup verification: handles server restart, grace period, and missed schedules
    */
-  private validateAndRepairOnStartup() {
+  private validateAndRepairOnStartup(targetWorkspaceId?: string) {
     const now = Date.now();
     const graceMs = SCHEDULE_GRACE_MINUTES * 60 * 1000;
     let modified = false;
 
     for (const schedule of this.schedules) {
+      if (targetWorkspaceId) {
+        const inst = this.instanceManager.get(schedule.instanceId);
+        if (!inst || inst.metadata.workspaceId !== targetWorkspaceId) continue;
+      }
       if (schedule.status === 'running') {
         schedule.status = 'error';
         schedule.nextRunAt = null;
@@ -701,6 +723,10 @@ export class SchedulerService {
       if (isNaN(dueTime)) continue;
 
       if (dueTime <= now) {
+        const inst = this.instanceManager.get(schedule.instanceId);
+        if (inst && this.suspendedWorkspaces.has(inst.metadata.workspaceId)) {
+          continue;
+        }
         // Check if overdue beyond grace period
         const delay = now - dueTime;
         if (delay > graceMs) {
