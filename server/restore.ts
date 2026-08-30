@@ -96,6 +96,61 @@ export class RestoreService {
       const wsId = backup.manifest.workspaceId;
       if (!isUUID(wsId)) throw new Error('Workspace ID inválido no manifest.');
 
+      // Strict Array & Scopes check
+      if (backup.manifest.scopes.length !== 9 || new Set(backup.manifest.scopes).size !== 9) {
+         throw new Error('Manifest scopes array length must be 9 and unique.');
+      }
+      if (backup.data.auth.workspaces.length !== 1 || backup.data.auth.workspaces[0].id !== wsId) {
+         throw new Error('auth.workspaces must contain exactly 1 workspace corresponding to the backup manifest.');
+      }
+      
+      const ALL_USERS_FILE = path.join(DATA_DIR, 'auth', 'users.json');
+      let globalUsers = [];
+      if (fs.existsSync(ALL_USERS_FILE)) {
+         globalUsers = JSON.parse(fs.readFileSync(ALL_USERS_FILE, 'utf-8'));
+      }
+      for (const u of backup.data.auth.users) {
+        const existingId = globalUsers.find(x => x.id === u.id);
+        if (existingId && existingId.workspaceId !== wsId) throw new Error('Colisão de usuário com outro workspace.');
+        const existingEmail = globalUsers.find(x => x.email === u.email);
+        if (existingEmail && existingEmail.workspaceId !== wsId) throw new Error('Colisão de usuário com outro workspace.');
+      }
+      
+      const ALL_SESSIONS_FILE = path.join(DATA_DIR, 'auth', 'sessions.json');
+      let globalSessions = [];
+      if (fs.existsSync(ALL_SESSIONS_FILE)) {
+         globalSessions = JSON.parse(fs.readFileSync(ALL_SESSIONS_FILE, 'utf-8'));
+      }
+      for (const s of backup.data.auth.sessions) {
+         const existingSession = globalSessions.find(x => x.id === s.id);
+         if (existingSession) {
+            const eu = globalUsers.find(x => x.id === existingSession.userId);
+            if (eu && eu.workspaceId !== wsId) throw new Error('Colisão de sessão com outro workspace.');
+         }
+         const existingHash = globalSessions.find(x => x.tokenHash === s.tokenHash);
+         if (existingHash) {
+            const eu = globalUsers.find(x => x.id === existingHash.userId);
+            if (eu && eu.workspaceId !== wsId) throw new Error('Colisão de sessão com outro workspace.');
+         }
+      }
+
+      // Check structures of flows and flowExecutions
+      const { validateFlowStepsStructure } = require('./flows');
+      for (const f of backup.data.flows) {
+        if (!f.trigger || !f.trigger.type) throw new Error('Flow sem trigger struct');
+        if (f.trigger.type === 'contact_added_to_list' && !isUUID(f.trigger.listId)) throw new Error('Flow trigger listId inválido');
+        if (f.trigger.type === 'tag_added_to_contact' && !isUUID(f.trigger.tagId)) throw new Error('Flow trigger tagId inválido');
+        if (typeof f.name !== 'string' || typeof f.enabled !== 'boolean') throw new Error('Flow name ou enabled inválido');
+        if (!validateFlowStepsStructure(f.steps || [])) throw new Error('Flow steps malformados.');
+      }
+      for (const e of backup.data.flowExecutions) {
+        if (!isUUID(e.id) || !isUUID(e.workspaceId) || !isUUID(e.instanceId) || !isUUID(e.flowId)) throw new Error('FlowExecution com id UUID inválido');
+        if (typeof e.flowName !== 'string' || typeof e.jid !== 'string') throw new Error('FlowExecution string incorreta');
+        if (e.status !== 'waiting' && e.status !== 'running') throw new Error('FlowExecution status incorreto');
+        if (e.remainingSteps?.length > 0 && !validateFlowStepsStructure(e.remainingSteps)) throw new Error('FlowExecution steps malformados.');
+      }
+
+
       const userIds = new Set<string>();
       for (const u of backup.data.auth.users) {
         if (u.workspaceId !== wsId) throw new Error('User com workspaceId incompatível.');
@@ -282,16 +337,21 @@ export class RestoreService {
         const validListIds = new Set(Array.isArray(aud.lists) ? aud.lists.map((l: any) => l.id) : []);
 
         const checkStep = (step: any) => {
-          if (step.type === 'add_tag' || step.type === 'remove_tag' || step.type === 'has_tag') {
+          if (step.type === 'add_tag' || step.type === 'remove_tag') {
             if (!validTagIds.has(step.tagId)) throw new Error('Step referencia tag ausente.');
           }
-          if (step.type === 'add_to_list' || step.type === 'remove_from_list' || step.type === 'in_list') {
+          if (step.type === 'add_to_list' || step.type === 'remove_from_list') {
             if (!validListIds.has(step.listId)) throw new Error('Step referencia list ausente.');
           }
-          if (step.branches) {
-            for (const b of step.branches) {
-               for (const s of b.steps || []) checkStep(s);
-            }
+          if (step.type === 'condition') {
+             if (step.condition?.type === 'has_tag' && !validTagIds.has(step.condition.tagId)) {
+                throw new Error('Condition referencia tag ausente.');
+             }
+             if (step.condition?.type === 'in_list' && !validListIds.has(step.condition.listId)) {
+                throw new Error('Condition referencia list ausente.');
+             }
+             for (const s of step.ifTrue || []) checkStep(s);
+             for (const s of step.ifFalse || []) checkStep(s);
           }
         };
 
