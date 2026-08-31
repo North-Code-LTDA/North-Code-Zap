@@ -51,7 +51,7 @@ function normalizeMonthlySlots(
 ): any[] {
   if (Array.isArray(slots) && slots.length > 0) {
     return slots
-      .filter((s) => typeof s.day === 'number' && s.day >= 1 && s.day <= 31)
+      .filter((s) => typeof s.day === 'number' && Number.isInteger(s.day) && s.day >= 1 && s.day <= 31)
       .map((s) => ({
         day: s.day,
         times: normalizeTimeList(s.times),
@@ -823,26 +823,22 @@ export class SchedulerService {
              }
           }
           
-          if (shouldRepair && schedule.nextRunAt !== correctNextRunAt) {
+          if (shouldRepair && (schedule.nextRunAt !== correctNextRunAt || (!schedule.nextRunAt && !correctNextRunAt))) {
             if (!correctNextRunAt) {
-              if (schedule.nextRunAt && (now - new Date(schedule.nextRunAt).getTime()) > graceMs) {
-                schedule.status = 'error';
-                schedule.lastResult = {
-                  totalTargets: schedule.targets.length,
-                  sentCount: 0,
-                  failedCount: schedule.targets.length,
-                  skippedCount: schedule.targets.length,
-                  executedAt: new Date().toISOString(),
-                  details: schedule.targets.map((t) => ({
-                    targetJid: t.jid,
-                    targetLabel: t.label,
-                    status: 'skipped',
-                    error: 'Expirado fora da tolerância (servidor offline)',
-                  })),
-                };
-              } else {
-                schedule.status = 'completed';
-              }
+              schedule.status = 'error';
+              schedule.lastResult = {
+                totalTargets: schedule.targets.length,
+                sentCount: 0,
+                failedCount: schedule.targets.length,
+                skippedCount: schedule.targets.length,
+                executedAt: new Date().toISOString(),
+                details: schedule.targets.map((t) => ({
+                  targetJid: t.jid,
+                  targetLabel: t.label,
+                  status: 'skipped',
+                  error: 'Expirado fora da tolerância (servidor offline)',
+                })),
+              };
               schedule.nextRunAt = null;
               console.log(`[Scheduler] marked specific_dates schedule=${schedule.id} as ${schedule.status} on startup`);
             } else {

@@ -174,7 +174,7 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
     if (!Array.isArray(payload.monthlyTimeSlots) || payload.monthlyTimeSlots.length === 0) return { valid: false, error: 'monthlyTimeSlots inválido.' };
     const seenDays = new Set();
     for (const m of payload.monthlyTimeSlots) {
-      if (!m || typeof m.day !== 'number' || m.day < 1 || m.day > 31 || !Array.isArray(m.times) || m.times.length === 0 || !m.times.every(isValidTime)) return { valid: false, error: 'monthlyTimeSlots elemento inválido.' };
+      if (!m || typeof m.day !== 'number' || !Number.isInteger(m.day) || m.day < 1 || m.day > 31 || !Array.isArray(m.times) || m.times.length === 0 || !m.times.every(isValidTime)) return { valid: false, error: 'monthlyTimeSlots elemento inválido.' };
       if (seenDays.has(m.day)) return { valid: false, error: 'Dia duplicado monthly.' };
       seenDays.add(m.day);
       if (new Set(m.times).size !== m.times.length) return { valid: false, error: 'Horário duplicado monthly.' };
