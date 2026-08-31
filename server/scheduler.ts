@@ -715,34 +715,38 @@ export class SchedulerService {
       const slots = normalizeMonthlySlots(schedule.monthlyTimeSlots);
       if (slots.length === 0) return null;
 
-      // Check next 24 months as a safeguard
-      for (let offsetMonths = 0; offsetMonths <= 24; offsetMonths++) {
-        const candidateDate = new Date(fromDate);
-        candidateDate.setMonth(candidateDate.getMonth() + offsetMonths);
+      const baseYear = fromDate.getFullYear();
+      const baseMonth = fromDate.getMonth();
+
+      let bestCandidate = null;
+
+      for (let offset = 0; offset <= 24; offset++) {
+        const absoluteMonth = baseMonth + offset;
+        const year = baseYear + Math.floor(absoluteMonth / 12);
+        const month = absoluteMonth % 12;
 
         for (const slotForDay of slots) {
           const targetDay = slotForDay.day;
-          
-          // clone the date to set the day
-          const d = new Date(candidateDate.getFullYear(), candidateDate.getMonth(), 1);
-          // Check if this month has the targetDay
-          // If we set the day and the month changes, then the day does not exist in this month (e.g. Feb 31 -> Mar 3)
-          d.setDate(targetDay);
-          if (d.getMonth() !== candidateDate.getMonth()) {
-             // Day does not exist in this month, skip
-             continue;
-          }
+          if (slotForDay.times.length > 0) {
+            const sortedTimes = normalizeTimeList(slotForDay.times);
+            for (const timeStr of sortedTimes) {
+              const [hours, minutes] = timeStr.split(':').map((v) => parseInt(v, 10) || 0);
+              const candidate = new Date(year, month, targetDay, hours, minutes, 0, 0);
 
-          const sortedTimes = normalizeTimeList(slotForDay.times);
-          for (const timeStr of sortedTimes) {
-            const [hours, minutes] = timeStr.split(':').map(Number);
-            const candidate = new Date(d);
-            candidate.setHours(hours, minutes, 0, 0);
-
-            if (candidate.getTime() > nowTime) {
-              return candidate.toISOString();
+              if (candidate.getFullYear() === year &&
+                  candidate.getMonth() === month &&
+                  candidate.getDate() === targetDay &&
+                  candidate.getTime() > nowTime) {
+                
+                if (bestCandidate === null || candidate.getTime() < bestCandidate) {
+                  bestCandidate = candidate.getTime();
+                }
+              }
             }
           }
+        }
+        if (bestCandidate !== null) {
+          return new Date(bestCandidate).toISOString();
         }
       }
       return null;
@@ -809,20 +813,18 @@ export class SchedulerService {
       if (schedule.status === 'active') {
         const correctNextRunAt = this.calculateNextRunAt(schedule, new Date(now));
         
-        if (schedule.scheduleType !== 'once') {
+        if (schedule.scheduleType === 'specific_dates') {
           let shouldRepair = true;
           if (schedule.nextRunAt) {
              const currentTarget = new Date(schedule.nextRunAt).getTime();
              const delay = now - currentTarget;
-             // Se o agendamento já passou, mas ainda está dentro do grace period, preserva o nextRunAt atual para ser executado
              if (delay >= 0 && delay <= graceMs) {
                shouldRepair = false;
              }
           }
           
           if (shouldRepair && schedule.nextRunAt !== correctNextRunAt) {
-            // For specific_dates, if correctNextRunAt is null (no more slots), mark as completed
-            if (schedule.scheduleType === 'specific_dates' && !correctNextRunAt) {
+            if (!correctNextRunAt) {
               if (schedule.nextRunAt && (now - new Date(schedule.nextRunAt).getTime()) > graceMs) {
                 schedule.status = 'error';
                 schedule.lastResult = {
@@ -847,6 +849,12 @@ export class SchedulerService {
               console.log(`[Scheduler] repaired nextRunAt schedule=${schedule.id} timezone=${APP_TIMEZONE} nextRunAt=${correctNextRunAt}`);
               schedule.nextRunAt = correctNextRunAt;
             }
+            modified = true;
+          }
+        } else if (schedule.scheduleType !== 'once') {
+          if (schedule.nextRunAt !== correctNextRunAt) {
+            console.log(`[Scheduler] repaired nextRunAt schedule=${schedule.id} timezone=${APP_TIMEZONE} nextRunAt=${correctNextRunAt}`);
+            schedule.nextRunAt = correctNextRunAt;
             modified = true;
           }
         } else if (schedule.scheduledAt) {

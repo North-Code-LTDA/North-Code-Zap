@@ -1,0 +1,15 @@
+[
+  {
+    "id": "test-id",
+    "instanceId": "inst-1",
+    "status": "active",
+    "targets": [
+      {
+        "jid": "123",
+        "label": "test"
+      }
+    ],
+    "scheduleType": "monthly",
+    "nextRunAt": "2027-01-01T10:00:00.000Z"
+  }
+]

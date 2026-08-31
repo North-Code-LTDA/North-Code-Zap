@@ -177,6 +177,7 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
       if (!m || typeof m.day !== 'number' || m.day < 1 || m.day > 31 || !Array.isArray(m.times) || m.times.length === 0 || !m.times.every(isValidTime)) return { valid: false, error: 'monthlyTimeSlots elemento inválido.' };
       if (seenDays.has(m.day)) return { valid: false, error: 'Dia duplicado monthly.' };
       seenDays.add(m.day);
+      if (new Set(m.times).size !== m.times.length) return { valid: false, error: 'Horário duplicado monthly.' };
     }
   } else if (payload.scheduleType === 'specific_dates') {
     if (payload.scheduledAt !== null) return { valid: false, error: 'scheduledAt specific_dates inválido.' };
@@ -196,6 +197,7 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
       }
       if (seenDates.has(s.date)) return { valid: false, error: 'Data duplicada specific_dates.' };
       seenDates.add(s.date);
+      if (new Set(s.times).size !== s.times.length) return { valid: false, error: 'Horário duplicado specific_dates.' };
       for (const t of s.times) {
         const [y, m, d] = s.date.split('-').map(Number);
         const [h, min] = t.split(':').map(Number);
