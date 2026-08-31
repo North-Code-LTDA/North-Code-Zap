@@ -42,6 +42,8 @@ import type {
   DeliveryOptions,
   ScheduledMedia,
   WeeklyTimeSlot,
+  MonthlyTimeSlot,
+  SpecificDateTimeSlot,
 } from '../types';
 import { useSchedules } from '../hooks/useSchedules';
 import { useAudiences } from '../hooks/useAudiences';
@@ -137,6 +139,17 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
   ]);
   const [selectedWeeklyDayForTimes, setSelectedWeeklyDayForTimes] = useState<number>(1);
   const [newWeeklyTimeInput, setNewWeeklyTimeInput] = useState('14:00');
+
+  // Form Monthly Timing
+  const [formMonthlySlots, setFormMonthlySlots] = useState<MonthlyTimeSlot[]>([]);
+  const [selectedMonthlyDayForTimes, setSelectedMonthlyDayForTimes] = useState<number | null>(null);
+  const [newMonthlyTimeInput, setNewMonthlyTimeInput] = useState('08:00');
+
+  // Form Specific Dates Timing
+  const [formSpecificDateSlots, setFormSpecificDateSlots] = useState<SpecificDateTimeSlot[]>([]);
+  const [selectedSpecificDateForTimes, setSelectedSpecificDateForTimes] = useState<string | null>(null);
+  const [newSpecificTimeInput, setNewSpecificTimeInput] = useState('08:00');
+  const [newSpecificDateInput, setNewSpecificDateInput] = useState('');
 
   // Form Media State
   const [formMedia, setFormMedia] = useState<ScheduledMedia | null>(null);
@@ -269,6 +282,18 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     setTemplateToConfirm(null);
     setFormFallbackName(schedule.fallbackName || 'amigo(a)');
     setFormType(schedule.scheduleType);
+
+    if (schedule.monthlyTimeSlots) {
+      setFormMonthlySlots(JSON.parse(JSON.stringify(schedule.monthlyTimeSlots)));
+    } else {
+      setFormMonthlySlots([]);
+    }
+
+    if (schedule.specificDateTimeSlots) {
+      setFormSpecificDateSlots(JSON.parse(JSON.stringify(schedule.specificDateTimeSlots)));
+    } else {
+      setFormSpecificDateSlots([]);
+    }
 
     if (schedule.scheduledAt) {
       const dt = new Date(schedule.scheduledAt);
@@ -919,6 +944,8 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           scheduledAt,
           dailyTimes: payloadDailyTimes,
           weeklyTimeSlots: payloadWeeklySlots,
+          monthlyTimeSlots: formType === 'monthly' ? formMonthlySlots : [],
+          specificDateTimeSlots: formType === 'specific_dates' ? formSpecificDateSlots : [],
           media: formMedia,
           targets: formTargets,
           deliveryOptions,
@@ -1178,7 +1205,11 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                             ? 'Único'
                             : schedule.scheduleType === 'daily'
                             ? `Diário (${dailyTimesList.length}x)`
-                            : `Semanal (${weeklySlotsList.length} dias)`}
+                            : schedule.scheduleType === 'weekly'
+                            ? `Semanal (${weeklySlotsList.length} dias)`
+                            : schedule.scheduleType === 'monthly'
+                            ? 'Mensal'
+                            : 'Datas específicas'}
                         </span>
 
                         {/* Media Indicator Badge */}
@@ -2285,7 +2316,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                           : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:bg-neutral-800'
                       }`}
                     >
-                      {type === 'once' ? 'Único (Uma Vez)' : type === 'daily' ? 'Diário (Múltiplos)' : 'Semanal (Múltiplos)'}
+                      {type === 'once' ? 'Uma vez' : type === 'daily' ? 'Diário' : type === 'weekly' ? 'Semanal' : type === 'monthly' ? 'Mensal' : 'Datas específicas'}
                     </button>
                   ))}
                 </div>

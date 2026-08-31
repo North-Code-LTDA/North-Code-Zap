@@ -88,7 +88,7 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
   const hasOwn = (obj: object, prop: string) => Object.prototype.hasOwnProperty.call(obj, prop);
   const requiredFields = [
     'name', 'message', 'targets', 'scheduleType', 'scheduledAt',
-    'dailyTimes', 'weeklyTimeSlots', 'media', 'fallbackName', 'deliveryOptions'
+    'dailyTimes', 'weeklyTimeSlots', 'monthlyTimeSlots', 'specificDateTimeSlots', 'media', 'fallbackName', 'deliveryOptions'
   ];
 
   for (const field of requiredFields) {
@@ -134,7 +134,7 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
   if (typeof dOpt.batchSize !== 'number' || !Number.isInteger(dOpt.batchSize) || dOpt.batchSize < 1) return { valid: false, error: 'batchSize inválido.' };
   if (typeof dOpt.batchPauseMs !== 'number' || !Number.isFinite(dOpt.batchPauseMs) || dOpt.batchPauseMs < 60000) return { valid: false, error: 'batchPauseMs inválido.' };
 
-  if (!['once', 'daily', 'weekly'].includes(payload.scheduleType)) return { valid: false, error: 'ScheduleType inválido.' };
+  if (!['once', 'daily', 'weekly', 'monthly', 'specific_dates'].includes(payload.scheduleType)) return { valid: false, error: 'ScheduleType inválido.' };
   if (!Array.isArray(payload.dailyTimes)) return { valid: false, error: 'dailyTimes inválido.' };
   if (!Array.isArray(payload.weeklyTimeSlots)) return { valid: false, error: 'weeklyTimeSlots inválido.' };
 
@@ -160,6 +160,38 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
     for (const w of payload.weeklyTimeSlots) {
       if (!w || typeof w.day !== 'number' || w.day < 0 || w.day > 6 || !Array.isArray(w.times) || w.times.length === 0 || !w.times.every(isValidTime)) return { valid: false, error: 'weeklyTimeSlots inválido.' };
     }
+  } else if (payload.scheduleType === 'monthly') {
+    if (payload.scheduledAt !== null) return { valid: false, error: 'scheduledAt monthly inválido.' };
+    if (payload.dailyTimes.length > 0) return { valid: false, error: 'dailyTimes vazio monthly.' };
+    if (payload.weeklyTimeSlots.length > 0) return { valid: false, error: 'weeklyTimeSlots vazio monthly.' };
+    if (!Array.isArray(payload.monthlyTimeSlots) || payload.monthlyTimeSlots.length === 0) return { valid: false, error: 'monthlyTimeSlots inválido.' };
+    const seenDays = new Set();
+    for (const m of payload.monthlyTimeSlots) {
+      if (!m || typeof m.day !== 'number' || m.day < 1 || m.day > 31 || !Array.isArray(m.times) || m.times.length === 0 || !m.times.every(isValidTime)) return { valid: false, error: 'monthlyTimeSlots elemento inválido.' };
+      if (seenDays.has(m.day)) return { valid: false, error: 'Dia duplicado monthly.' };
+      seenDays.add(m.day);
+    }
+  } else if (payload.scheduleType === 'specific_dates') {
+    if (payload.scheduledAt !== null) return { valid: false, error: 'scheduledAt specific_dates inválido.' };
+    if (payload.dailyTimes.length > 0) return { valid: false, error: 'dailyTimes vazio specific_dates.' };
+    if (payload.weeklyTimeSlots.length > 0) return { valid: false, error: 'weeklyTimeSlots vazio specific_dates.' };
+    if (!Array.isArray(payload.specificDateTimeSlots) || payload.specificDateTimeSlots.length === 0) return { valid: false, error: 'specificDateTimeSlots inválido.' };
+    const seenDates = new Set();
+    let hasFuture = false;
+    const nowTime = Date.now();
+    for (const s of payload.specificDateTimeSlots) {
+      if (!s || typeof s.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s.date) || !Array.isArray(s.times) || s.times.length === 0 || !s.times.every(isValidTime)) return { valid: false, error: 'specificDateTimeSlots elemento inválido.' };
+      if (isNaN(new Date(s.date + 'T00:00:00').getTime())) return { valid: false, error: 'Data inexistente specific_dates.' };
+      if (seenDates.has(s.date)) return { valid: false, error: 'Data duplicada specific_dates.' };
+      seenDates.add(s.date);
+      for (const t of s.times) {
+        const [y, m, d] = s.date.split('-').map(Number);
+        const [h, min] = t.split(':').map(Number);
+        const cand = new Date(y, m - 1, d, h, min, 0, 0);
+        if (cand.getTime() > nowTime) hasFuture = true;
+      }
+    }
+    if (!hasFuture) return { valid: false, error: 'specific_dates deve ter pelo menos uma ocorrência no futuro.' };
   }
 
   return {
@@ -170,8 +202,10 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
       targets: payload.targets,
       scheduleType: payload.scheduleType,
       scheduledAt: parsedScheduledAt,
-      dailyTimes: payload.dailyTimes,
-      weeklyTimeSlots: payload.weeklyTimeSlots,
+      dailyTimes: payload.scheduleType === 'daily' ? payload.dailyTimes : [],
+      weeklyTimeSlots: payload.scheduleType === 'weekly' ? payload.weeklyTimeSlots : [],
+      monthlyTimeSlots: payload.scheduleType === 'monthly' ? payload.monthlyTimeSlots : [],
+      specificDateTimeSlots: payload.scheduleType === 'specific_dates' ? payload.specificDateTimeSlots : [],
       media: payload.media,
       fallbackName: payload.fallbackName.trim(),
       deliveryOptions: payload.deliveryOptions
@@ -1048,6 +1082,8 @@ async function startServer() {
           scheduledAt: null,
           dailyTimes: [],
           weeklyTimeSlots: [],
+          monthlyTimeSlots: [],
+          specificDateTimeSlots: [],
           deliveryOptions: {
             intervalBetweenMessagesMs: 5000,
             batchPauseEnabled: false,
@@ -1128,6 +1164,8 @@ async function startServer() {
         scheduledAt: c.schedule.scheduledAt,
         dailyTimes: c.schedule.dailyTimes,
         weeklyTimeSlots: c.schedule.weeklyTimeSlots,
+        monthlyTimeSlots: c.schedule.monthlyTimeSlots ?? [],
+        specificDateTimeSlots: c.schedule.specificDateTimeSlots ?? [],
         deliveryOptions: c.schedule.deliveryOptions,
         targets
       };

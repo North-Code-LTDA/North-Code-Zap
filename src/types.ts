@@ -29,7 +29,7 @@ export interface ReceivedMessage {
 
 export type ChatMessage = ReceivedMessage;
 
-export type ScheduleType = 'once' | 'daily' | 'weekly';
+export type ScheduleType = 'once' | 'daily' | 'weekly' | 'monthly' | 'specific_dates';
 
 export type ScheduleStatus =
   | 'active'
@@ -105,7 +105,19 @@ export interface ScheduleLastResult {
   details: ScheduleExecutionDetail[];
 }
 
+
+export interface MonthlyTimeSlot {
+  day: number;
+  times: string[];
+}
+
+export interface SpecificDateTimeSlot {
+  date: string;
+  times: string[];
+}
+
 export interface WeeklyTimeSlot {
+
   day: number; // 0=Dom, 1=Seg, 2=Ter, 3=Qua, 4=Qui, 5=Sex, 6=Sáb
   times: string[]; // ["08:00", "14:00"]
 }
@@ -128,6 +140,8 @@ export interface SchedulePayload {
   scheduledAt: string | null;
   dailyTimes: string[];
   weeklyTimeSlots: WeeklyTimeSlot[];
+  monthlyTimeSlots: MonthlyTimeSlot[];
+  specificDateTimeSlots: SpecificDateTimeSlot[];
   media: ScheduledMedia | null;
   fallbackName: string;
   deliveryOptions: DeliveryOptions;
@@ -144,6 +158,8 @@ export interface ScheduledMessage {
   nextRunAt: string | null; // ISO string or null
   dailyTimes: string[]; // ["08:00", "12:00", "18:00"]
   weeklyTimeSlots: WeeklyTimeSlot[];
+  monthlyTimeSlots: MonthlyTimeSlot[];
+  specificDateTimeSlots: SpecificDateTimeSlot[];
   media: ScheduledMedia | null;
   fallbackName: string; // "amigo(a)"
   deliveryOptions: DeliveryOptions;
@@ -232,6 +248,8 @@ export interface CampaignScheduleConfig {
   scheduledAt: string | null;
   dailyTimes: string[];
   weeklyTimeSlots: WeeklyTimeSlot[];
+  monthlyTimeSlots: MonthlyTimeSlot[];
+  specificDateTimeSlots: SpecificDateTimeSlot[];
   deliveryOptions: DeliveryOptions;
 }
 

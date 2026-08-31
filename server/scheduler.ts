@@ -45,6 +45,39 @@ function normalizeTimeList(times: string[] | undefined): string[] {
 /**
  * Utility to normalize weekly time slots
  */
+
+function normalizeMonthlySlots(
+  slots?: any[]
+): any[] {
+  if (Array.isArray(slots) && slots.length > 0) {
+    return slots
+      .filter((s) => typeof s.day === 'number' && s.day >= 1 && s.day <= 31)
+      .map((s) => ({
+        day: s.day,
+        times: normalizeTimeList(s.times),
+      }))
+      .filter((s) => s.times.length > 0)
+      .sort((a, b) => a.day - b.day);
+  }
+  return [];
+}
+
+function normalizeSpecificDateTimeSlots(
+  slots?: any[]
+): any[] {
+  if (Array.isArray(slots) && slots.length > 0) {
+    return slots
+      .filter((s) => typeof s.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.date) && !isNaN(new Date(s.date + 'T00:00:00').getTime()))
+      .map((s) => ({
+        date: s.date,
+        times: normalizeTimeList(s.times),
+      }))
+      .filter((s) => s.times.length > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+  return [];
+}
+
 function normalizeWeeklySlots(
   slots?: WeeklyTimeSlot[]
 ): WeeklyTimeSlot[] {
@@ -175,9 +208,13 @@ export class SchedulerService {
   public validatePersistedSchedule(s: any, options?: { requireExistingInstance?: boolean }): s is ScheduledMessage {
     if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
 
+    // Legacy compatibility normalization
+    if (!('monthlyTimeSlots' in s)) s.monthlyTimeSlots = [];
+    if (!('specificDateTimeSlots' in s)) s.specificDateTimeSlots = [];
+
     const requiredFields = [
       'id', 'instanceId', 'name', 'message', 'targets', 'scheduleType',
-      'scheduledAt', 'nextRunAt', 'dailyTimes', 'weeklyTimeSlots', 'media',
+      'scheduledAt', 'nextRunAt', 'dailyTimes', 'weeklyTimeSlots', 'monthlyTimeSlots', 'specificDateTimeSlots', 'media',
       'fallbackName', 'deliveryOptions', 'status', 'createdAt', 'updatedAt',
       'lastRunAt', 'lastResult'
     ];
@@ -194,7 +231,33 @@ export class SchedulerService {
     if (typeof s.message !== 'string') return false;
     if (typeof s.fallbackName !== 'string' || s.fallbackName.trim() === '') return false;
 
-    if (!['once', 'daily', 'weekly'].includes(s.scheduleType)) return false;
+    if (!['once', 'daily', 'weekly', 'monthly', 'specific_dates'].includes(s.scheduleType)) return false;
+    if (!Array.isArray(s.monthlyTimeSlots)) return false;
+    if (!Array.isArray(s.specificDateTimeSlots)) return false;
+
+    // Strict validation for monthly
+    if (s.scheduleType === 'monthly') {
+      if (s.monthlyTimeSlots.length === 0) return false;
+      for (const slot of s.monthlyTimeSlots) {
+        if (!slot || typeof slot !== 'object') return false;
+        if (!Number.isInteger(slot.day) || slot.day < 1 || slot.day > 31) return false;
+        if (!Array.isArray(slot.times) || slot.times.length === 0) return false;
+      }
+    }
+
+    // Strict validation for specific_dates
+    if (s.scheduleType === 'specific_dates') {
+      if (s.specificDateTimeSlots.length === 0) return false;
+      for (const slot of s.specificDateTimeSlots) {
+        if (!slot || typeof slot !== 'object') return false;
+        if (typeof slot.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(slot.date)) return false;
+        // check if date is real
+        const d = new Date(slot.date + 'T00:00:00');
+        if (isNaN(d.getTime())) return false;
+        if (!Array.isArray(slot.times) || slot.times.length === 0) return false;
+      }
+    }
+
     const validStatuses = ['active', 'paused', 'completed', 'error', 'running'];
     if (!validStatuses.includes(s.status)) return false;
 
@@ -371,10 +434,9 @@ export class SchedulerService {
         ? normalizeTimeList(data.dailyTimes)
         : [];
 
-    const normalizedWeeklySlots =
-      data.scheduleType === 'weekly'
-        ? normalizeWeeklySlots(data.weeklyTimeSlots)
-        : [];
+    const normalizedWeeklySlots = data.scheduleType === 'weekly' ? normalizeWeeklySlots(data.weeklyTimeSlots) : [];
+    const normalizedMonthlySlots = data.scheduleType === 'monthly' ? normalizeMonthlySlots(data.monthlyTimeSlots) : [];
+    const normalizedSpecificSlots = data.scheduleType === 'specific_dates' ? normalizeSpecificDateTimeSlots(data.specificDateTimeSlots) : [];
 
     const tempSchedule: ScheduledMessage = {
       id,
@@ -386,6 +448,8 @@ export class SchedulerService {
       nextRunAt: null,
       dailyTimes: normalizedDailyTimes,
       weeklyTimeSlots: normalizedWeeklySlots,
+      monthlyTimeSlots: normalizedMonthlySlots,
+      specificDateTimeSlots: normalizedSpecificSlots,
       media: data.media,
       fallbackName: data.fallbackName,
       deliveryOptions: data.deliveryOptions,
@@ -421,6 +485,8 @@ export class SchedulerService {
 
     const updatedDailyTimes = data.scheduleType === 'daily' ? normalizeTimeList(data.dailyTimes) : [];
     const updatedWeeklySlots = data.scheduleType === 'weekly' ? normalizeWeeklySlots(data.weeklyTimeSlots) : [];
+    const updatedMonthlySlots = data.scheduleType === 'monthly' ? normalizeMonthlySlots(data.monthlyTimeSlots) : [];
+    const updatedSpecificSlots = data.scheduleType === 'specific_dates' ? normalizeSpecificDateTimeSlots(data.specificDateTimeSlots) : [];
 
     const updated: ScheduledMessage = {
       id: current.id,
@@ -431,6 +497,8 @@ export class SchedulerService {
       scheduledAt: data.scheduleType === 'once' ? data.scheduledAt : null,
       dailyTimes: updatedDailyTimes,
       weeklyTimeSlots: updatedWeeklySlots,
+      monthlyTimeSlots: updatedMonthlySlots,
+      specificDateTimeSlots: updatedSpecificSlots,
       media: data.media,
       fallbackName: data.fallbackName,
       deliveryOptions: data.deliveryOptions,
@@ -509,8 +577,15 @@ export class SchedulerService {
     const schedule = this.schedules.find((s) => s.id === id && s.instanceId === instanceId);
     if (!schedule) return null;
 
-    schedule.status = 'active';
-    schedule.nextRunAt = this.calculateNextRunAt(schedule);
+    const next = this.calculateNextRunAt(schedule);
+    if (schedule.scheduleType === 'specific_dates' && !next) {
+      schedule.status = 'completed';
+      schedule.nextRunAt = null;
+    } else {
+      schedule.status = 'active';
+      schedule.nextRunAt = next;
+    }
+    
     schedule.updatedAt = new Date().toISOString();
     this.saveSchedules();
     this.emitUpdated();
@@ -601,8 +676,69 @@ export class SchedulerService {
       }
     }
 
+
+    if (schedule.scheduleType === 'monthly') {
+      const slots = normalizeMonthlySlots(schedule.monthlyTimeSlots);
+      if (slots.length === 0) return null;
+
+      // Check next 24 months as a safeguard
+      for (let offsetMonths = 0; offsetMonths <= 24; offsetMonths++) {
+        const candidateDate = new Date(fromDate);
+        candidateDate.setMonth(candidateDate.getMonth() + offsetMonths);
+
+        for (const slotForDay of slots) {
+          const targetDay = slotForDay.day;
+          
+          // clone the date to set the day
+          const d = new Date(candidateDate.getFullYear(), candidateDate.getMonth(), 1);
+          // Check if this month has the targetDay
+          // If we set the day and the month changes, then the day does not exist in this month (e.g. Feb 31 -> Mar 3)
+          d.setDate(targetDay);
+          if (d.getMonth() !== candidateDate.getMonth()) {
+             // Day does not exist in this month, skip
+             continue;
+          }
+
+          const sortedTimes = normalizeTimeList(slotForDay.times);
+          for (const timeStr of sortedTimes) {
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            const candidate = new Date(d);
+            candidate.setHours(hours, minutes, 0, 0);
+
+            if (candidate.getTime() > nowTime) {
+              return candidate.toISOString();
+            }
+          }
+        }
+      }
+      return null;
+    }
+
+    if (schedule.scheduleType === 'specific_dates') {
+      const slots = normalizeSpecificDateTimeSlots(schedule.specificDateTimeSlots);
+      if (slots.length === 0) return null;
+
+      for (const slot of slots) {
+        const [year, month, day] = slot.date.split('-').map(Number);
+        
+        const sortedTimes = normalizeTimeList(slot.times);
+        for (const timeStr of sortedTimes) {
+          const [hours, minutes] = timeStr.split(':').map(Number);
+          
+          // Need local timezone date
+          const candidate = new Date(year, month - 1, day, hours, minutes, 0, 0);
+          
+          if (candidate.getTime() > nowTime) {
+            return candidate.toISOString();
+          }
+        }
+      }
+      return null;
+    }
+
     return null;
   }
+
 
   /**
    * Startup verification: handles server restart, grace period, and missed schedules
@@ -728,6 +864,28 @@ export class SchedulerService {
                 error: 'Expirado fora da tolerância',
               })),
             };
+            schedule.nextRunAt = null;
+          } else if (schedule.scheduleType === 'specific_dates') {
+            const next = this.calculateNextRunAt(schedule, new Date(now));
+            if (next) {
+              schedule.nextRunAt = next;
+            } else {
+              schedule.status = 'error';
+              schedule.nextRunAt = null;
+              schedule.lastResult = {
+                totalTargets: schedule.targets.length,
+                sentCount: 0,
+                failedCount: schedule.targets.length,
+                skippedCount: schedule.targets.length,
+                executedAt: new Date().toISOString(),
+                details: schedule.targets.map((t) => ({
+                  targetJid: t.jid,
+                  targetLabel: t.label,
+                  status: 'skipped',
+                  error: 'Expirado fora da tolerância',
+                })),
+              };
+            }
           } else {
             schedule.nextRunAt = this.calculateNextRunAt(schedule, new Date(now));
           }
@@ -1110,6 +1268,15 @@ export class SchedulerService {
     if (schedule.scheduleType === 'once') {
       schedule.status = failedCount > 0 && sentCount === 0 ? 'error' : 'completed';
       schedule.nextRunAt = null;
+    } else if (schedule.scheduleType === 'specific_dates') {
+      const next = this.calculateNextRunAt(schedule);
+      if (next) {
+        schedule.status = 'active';
+        schedule.nextRunAt = next;
+      } else {
+        schedule.nextRunAt = null;
+        schedule.status = failedCount > 0 && sentCount === 0 ? 'error' : 'completed';
+      }
     } else {
       // Recurring schedule: calculate next run time from current time (preserving recurrence after run now)
       schedule.status = 'active';

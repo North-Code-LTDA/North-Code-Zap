@@ -9,7 +9,7 @@ import { useCampaigns } from '../hooks/useCampaigns';
 import { useCampaignHistory } from "../hooks/useCampaignHistory";
 import { useAudiences } from '../hooks/useAudiences';
 import { Button } from './ui/Button';
-import type { Campaign, CampaignScheduleConfig, DeliveryOptions, ScheduledMedia, ScheduleType, WeeklyTimeSlot } from '../types';
+import type { Campaign, CampaignScheduleConfig, DeliveryOptions, ScheduledMedia, ScheduleType, WeeklyTimeSlot, MonthlyTimeSlot, SpecificDateTimeSlot } from '../types';
 import { renderMessageTemplate } from '../utils/template';
 
 const WEEK_DAYS = [
@@ -87,6 +87,17 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
   ]);
   const [selectedWeeklyDayForTimes, setSelectedWeeklyDayForTimes] = useState<number>(1);
   const [newWeeklyTimeInput, setNewWeeklyTimeInput] = useState('14:00');
+
+  // Form Monthly Timing
+  const [formMonthlySlots, setFormMonthlySlots] = useState<MonthlyTimeSlot[]>([]);
+  const [selectedMonthlyDayForTimes, setSelectedMonthlyDayForTimes] = useState<number | null>(null);
+  const [newMonthlyTimeInput, setNewMonthlyTimeInput] = useState('08:00');
+
+  // Form Specific Dates Timing
+  const [formSpecificDateSlots, setFormSpecificDateSlots] = useState<SpecificDateTimeSlot[]>([]);
+  const [selectedSpecificDateForTimes, setSelectedSpecificDateForTimes] = useState<string | null>(null);
+  const [newSpecificTimeInput, setNewSpecificTimeInput] = useState('08:00');
+  const [newSpecificDateInput, setNewSpecificDateInput] = useState('');
 
   // Media
   const [formMedia, setFormMedia] = useState<ScheduledMedia | null>(null);
@@ -283,6 +294,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
         scheduledAt,
         dailyTimes: formType === 'daily' ? formDailyTimes : [],
         weeklyTimeSlots: formType === 'weekly' ? formWeeklySlots : [],
+        monthlyTimeSlots: formType === 'monthly' ? formMonthlySlots : [],
+        specificDateTimeSlots: formType === 'specific_dates' ? formSpecificDateSlots : [],
         deliveryOptions: {
           intervalBetweenMessagesMs: (formIntervalSeconds || 5) * 1000,
           batchPauseEnabled: formBatchPauseEnabled,
