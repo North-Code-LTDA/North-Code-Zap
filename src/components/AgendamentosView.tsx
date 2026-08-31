@@ -2897,7 +2897,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                 </label>
 
                 <div className="grid grid-cols-1 gap-3">
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs text-neutral-400 mb-1">
                         Intervalo mínimo (s):
