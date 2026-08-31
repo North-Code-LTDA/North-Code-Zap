@@ -78,6 +78,7 @@ export class CampaignService {
   }
 
   private validateCampaign(c: any) {
+
     if (!c || typeof c !== 'object') throw new Error('Invalid campaign object');
     
     if (typeof c.id !== 'string' || !this.isValidUuid(c.id)) throw new Error('Invalid campaign id');
@@ -119,6 +120,23 @@ export class CampaignService {
     if (!c.schedule || typeof c.schedule !== 'object') throw new Error('Invalid schedule');
     
     if (!['once', 'daily', 'weekly', 'monthly', 'specific_dates'].includes(c.schedule.scheduleType)) throw new Error('Invalid scheduleType');
+    
+    // Legacy normalization for missing arrays (before checking)
+    if (!('monthlyTimeSlots' in c.schedule)) c.schedule.monthlyTimeSlots = [];
+    if (!('specificDateTimeSlots' in c.schedule)) c.schedule.specificDateTimeSlots = [];
+
+    const sch = c.schedule;
+    if (sch.scheduleType === 'once') {
+      if (sch.dailyTimes.length > 0 || sch.weeklyTimeSlots.length > 0 || sch.monthlyTimeSlots.length > 0 || sch.specificDateTimeSlots.length > 0) throw new Error('once inválido');
+    } else if (sch.scheduleType === 'daily') {
+      if (sch.scheduledAt !== null || sch.dailyTimes.length === 0 || sch.weeklyTimeSlots.length > 0 || sch.monthlyTimeSlots.length > 0 || sch.specificDateTimeSlots.length > 0) throw new Error('daily inválido');
+    } else if (sch.scheduleType === 'weekly') {
+      if (sch.scheduledAt !== null || sch.dailyTimes.length > 0 || sch.weeklyTimeSlots.length === 0 || sch.monthlyTimeSlots.length > 0 || sch.specificDateTimeSlots.length > 0) throw new Error('weekly inválido');
+    } else if (sch.scheduleType === 'monthly') {
+      if (sch.scheduledAt !== null || sch.dailyTimes.length > 0 || sch.weeklyTimeSlots.length > 0 || sch.monthlyTimeSlots.length === 0 || sch.specificDateTimeSlots.length > 0) throw new Error('monthly inválido');
+    } else if (sch.scheduleType === 'specific_dates') {
+      if (sch.scheduledAt !== null || sch.dailyTimes.length > 0 || sch.weeklyTimeSlots.length > 0 || sch.monthlyTimeSlots.length > 0 || sch.specificDateTimeSlots.length === 0) throw new Error('specific_dates inválido');
+    }
     if (c.schedule.scheduledAt !== null && (typeof c.schedule.scheduledAt !== 'string' || isNaN(Date.parse(c.schedule.scheduledAt)))) throw new Error('Invalid scheduledAt');
     
     if (!Array.isArray(c.schedule.dailyTimes)) throw new Error('Invalid dailyTimes array');
@@ -154,7 +172,7 @@ export class CampaignService {
       if (!Number.isInteger(slot.day) || slot.day < 1 || slot.day > 31) throw new Error('Invalid day in monthlyTimeSlots');
       if (seenMonthlyDays.has(slot.day)) throw new Error('Duplicate day in monthlyTimeSlots');
       seenMonthlyDays.add(slot.day);
-      if (!Array.isArray(slot.times)) throw new Error('Invalid times in monthlyTimeSlots');
+      if (!Array.isArray(slot.times) || slot.times.length === 0) throw new Error('Invalid times in monthlyTimeSlots');
       const seenMTime = new Set<string>();
       for (const t of slot.times) {
         if (typeof t !== 'string' || !this.isValidTime(t)) throw new Error('Invalid time in monthlyTimeSlot');
@@ -168,10 +186,12 @@ export class CampaignService {
     for (const slot of c.schedule.specificDateTimeSlots) {
       if (!slot || typeof slot !== 'object') throw new Error('Invalid specificDateTimeSlot element');
       if (typeof slot.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(slot.date)) throw new Error('Invalid date in specificDateTimeSlots');
-      if (isNaN(new Date(slot.date + 'T00:00:00').getTime())) throw new Error('Invalid real date in specificDateTimeSlots');
+      const [vy, vm, vd] = slot.date.split('-').map(Number);
+      const vdt = new Date(vy, vm - 1, vd);
+      if (vdt.getFullYear() !== vy || vdt.getMonth() !== vm - 1 || vdt.getDate() !== vd) throw new Error('Invalid real date in specificDateTimeSlots');
       if (seenDates.has(slot.date)) throw new Error('Duplicate date in specificDateTimeSlots');
       seenDates.add(slot.date);
-      if (!Array.isArray(slot.times)) throw new Error('Invalid times in specificDateTimeSlots');
+      if (!Array.isArray(slot.times) || slot.times.length === 0) throw new Error('Invalid times in specificDateTimeSlots');
       const seenDTime = new Set<string>();
       for (const t of slot.times) {
         if (typeof t !== 'string' || !this.isValidTime(t)) throw new Error('Invalid time in specificDateTimeSlot');

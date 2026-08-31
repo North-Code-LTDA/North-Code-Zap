@@ -240,27 +240,55 @@ export class SchedulerService {
     if (!Array.isArray(s.monthlyTimeSlots)) return false;
     if (!Array.isArray(s.specificDateTimeSlots)) return false;
 
-    // Strict validation for monthly
-    if (s.scheduleType === 'monthly') {
+    if (s.scheduleType === 'once') {
+      if (typeof s.scheduledAt !== 'string' || isNaN(new Date(s.scheduledAt).getTime())) return false;
+      if (s.dailyTimes.length > 0 || s.weeklyTimeSlots.length > 0 || s.monthlyTimeSlots.length > 0 || s.specificDateTimeSlots.length > 0) return false;
+    } else if (s.scheduleType === 'daily') {
+      if (s.scheduledAt !== null) return false;
+      if (s.dailyTimes.length === 0) return false;
+      if (s.weeklyTimeSlots.length > 0 || s.monthlyTimeSlots.length > 0 || s.specificDateTimeSlots.length > 0) return false;
+    } else if (s.scheduleType === 'weekly') {
+      if (s.scheduledAt !== null) return false;
+      if (s.weeklyTimeSlots.length === 0) return false;
+      if (s.dailyTimes.length > 0 || s.monthlyTimeSlots.length > 0 || s.specificDateTimeSlots.length > 0) return false;
+    } else if (s.scheduleType === 'monthly') {
+      if (s.scheduledAt !== null) return false;
       if (s.monthlyTimeSlots.length === 0) return false;
+      if (s.dailyTimes.length > 0 || s.weeklyTimeSlots.length > 0 || s.specificDateTimeSlots.length > 0) return false;
+      const seenDays = new Set<number>();
       for (const slot of s.monthlyTimeSlots) {
         if (!slot || typeof slot !== 'object') return false;
         if (!Number.isInteger(slot.day) || slot.day < 1 || slot.day > 31) return false;
         if (!Array.isArray(slot.times) || slot.times.length === 0) return false;
+        if (seenDays.has(slot.day)) return false;
+        seenDays.add(slot.day);
+        const seenTimes = new Set<string>();
+        for (const t of slot.times) {
+          if (typeof t !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) return false;
+          if (seenTimes.has(t)) return false;
+          seenTimes.add(t);
+        }
       }
-    }
-
-    // Strict validation for specific_dates
-    if (s.scheduleType === 'specific_dates') {
+    } else if (s.scheduleType === 'specific_dates') {
+      if (s.scheduledAt !== null) return false;
       if (s.specificDateTimeSlots.length === 0) return false;
+      if (s.dailyTimes.length > 0 || s.weeklyTimeSlots.length > 0 || s.monthlyTimeSlots.length > 0) return false;
+      const seenDates = new Set<string>();
       for (const slot of s.specificDateTimeSlots) {
         if (!slot || typeof slot !== 'object') return false;
         if (typeof slot.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(slot.date)) return false;
-        // check if date is real
         const [y, m, d] = slot.date.split('-').map(Number);
         const dt = new Date(y, m - 1, d);
         if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d || isNaN(dt.getTime())) return false;
+        if (seenDates.has(slot.date)) return false;
+        seenDates.add(slot.date);
         if (!Array.isArray(slot.times) || slot.times.length === 0) return false;
+        const seenTimes = new Set<string>();
+        for (const t of slot.times) {
+          if (typeof t !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) return false;
+          if (seenTimes.has(t)) return false;
+          seenTimes.add(t);
+        }
       }
     }
 

@@ -311,6 +311,14 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
       if (formType === 'once' && formDate && formTime) {
         scheduledAt = `${formDate}T${formTime}:00`;
       }
+      if (formType === 'monthly') {
+        if (formMonthlySlots.length === 0) throw new Error('Adicione pelo menos um dia mensal.');
+        if (formMonthlySlots.some(s => s.times.length === 0)) throw new Error('Todos os dias mensais devem ter pelo menos um horário.');
+      }
+      if (formType === 'specific_dates') {
+        if (formSpecificDateSlots.length === 0) throw new Error('Adicione pelo menos uma data.');
+        if (formSpecificDateSlots.some(s => s.times.length === 0)) throw new Error('Todas as datas devem ter pelo menos um horário.');
+      }
 
       const scheduleConfig: CampaignScheduleConfig = {
         scheduleType: formType,
@@ -638,6 +646,12 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                       )}
                       {c.schedule.scheduleType === 'weekly' && (
                         `${c.schedule.weeklyTimeSlots.length} dias`
+                      )}
+                      {c.schedule.scheduleType === 'monthly' && (
+                        c.schedule.monthlyTimeSlots.map(s => `Dia ${s.day}: ${s.times.join(', ')}`).join(' • ').substring(0, 40) + (c.schedule.monthlyTimeSlots.map(s => `Dia ${s.day}: ${s.times.join(', ')}`).join(' • ').length > 40 ? '...' : '')
+                      )}
+                      {c.schedule.scheduleType === 'specific_dates' && (
+                        c.schedule.specificDateTimeSlots.map(s => `${s.date.split('-').reverse().slice(0,2).join('/')}: ${s.times.join(', ')}`).join(' • ').substring(0, 40) + (c.schedule.specificDateTimeSlots.map(s => `${s.date.split('-').reverse().slice(0,2).join('/')}: ${s.times.join(', ')}`).join(' • ').length > 40 ? '...' : '')
                       )}
                     </div>
                   </div>
@@ -1129,6 +1143,200 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                                   setFormWeeklySlots(prev => prev.map(s => {
                                     if (s.day === selectedWeeklyDayForTimes && !s.times.includes(newWeeklyTimeInput)) {
                                       return { ...s, times: [...s.times, newWeeklyTimeInput].sort() };
+                                    }
+                                    return s;
+                                  }));
+                                }
+                              }}
+                            >
+                              Adicionar
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {formType === 'monthly' && (
+                    <div className="space-y-3">
+                      <p className="text-xs text-neutral-400">Repete todos os meses nos dias e horários escolhidos.</p>
+                      <div className="flex gap-2">
+                        <select
+                          className="bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                          value=""
+                          onChange={(e) => {
+                            const d = Number(e.target.value);
+                            if (d > 0 && !formMonthlySlots.find(s => s.day === d)) {
+                              setFormMonthlySlots(prev => [...prev, { day: d, times: ['08:00'] }].sort((a,b) => a.day - b.day));
+                              setSelectedMonthlyDayForTimes(d);
+                            }
+                          }}
+                        >
+                          <option value="">Adicionar dia do mês...</option>
+                          {Array.from({length: 31}, (_, i) => i + 1).map(d => (
+                            <option key={d} value={d}>Dia {d}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {formMonthlySlots.length > 0 && (
+                        <div className="p-3 bg-neutral-900/50 border border-neutral-800 rounded-xl mt-2">
+                          <label className="block text-xs font-medium text-neutral-400 mb-2 flex items-center gap-2">
+                            Horários para:
+                            <select
+                              value={selectedMonthlyDayForTimes || formMonthlySlots[0]?.day}
+                              onChange={e => setSelectedMonthlyDayForTimes(Number(e.target.value))}
+                              className="bg-neutral-950 text-emerald-400 font-semibold focus:outline-none border border-neutral-800 rounded-md px-2 py-0.5 cursor-pointer"
+                            >
+                              {formMonthlySlots.map(s => (
+                                <option key={s.day} value={s.day}>Dia {s.day}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const activeDay = selectedMonthlyDayForTimes || formMonthlySlots[0]?.day;
+                                setFormMonthlySlots(prev => prev.filter(s => s.day !== activeDay));
+                                setSelectedMonthlyDayForTimes(0);
+                              }}
+                              className="text-rose-400 hover:text-rose-300 ml-auto"
+                              title="Remover este dia"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </label>
+                          <div className="flex flex-wrap gap-2 mb-3">
+                            {(formMonthlySlots.find(s => s.day === (selectedMonthlyDayForTimes || formMonthlySlots[0]?.day))?.times || []).map(t => (
+                              <span key={t} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-neutral-950 border border-emerald-500/30 text-emerald-300 font-mono text-xs">
+                                <Clock className="w-3 h-3 text-emerald-400" />
+                                {t}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const activeDay = selectedMonthlyDayForTimes || formMonthlySlots[0]?.day;
+                                    setFormMonthlySlots(prev => prev.map(s => s.day === activeDay ? { ...s, times: s.times.filter(time => time !== t) } : s));
+                                  }}
+                                  className="hover:text-rose-400 ml-1"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <input
+                              type="time"
+                              value={newMonthlyTimeInput}
+                              onChange={e => setNewMonthlyTimeInput(e.target.value)}
+                              className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]"
+                            />
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() => {
+                                if (newMonthlyTimeInput) {
+                                  const activeDay = selectedMonthlyDayForTimes || formMonthlySlots[0]?.day;
+                                  setFormMonthlySlots(prev => prev.map(s => {
+                                    if (s.day === activeDay && !s.times.includes(newMonthlyTimeInput)) {
+                                      return { ...s, times: [...s.times, newMonthlyTimeInput].sort() };
+                                    }
+                                    return s;
+                                  }));
+                                }
+                              }}
+                            >
+                              Adicionar
+                            </Button>
+                          </div>
+                          <p className="text-[10px] text-neutral-500 mt-2">Se o dia escolhido não existir em determinado mês, ele será ignorado naquele mês.</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {formType === 'specific_dates' && (
+                    <div className="space-y-3">
+                      <p className="text-xs text-neutral-400">Executa somente nas datas escolhidas e termina após a última.</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="date"
+                          value={newSpecificDateInput}
+                          onChange={e => setNewSpecificDateInput(e.target.value)}
+                          className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]"
+                        />
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => {
+                            if (newSpecificDateInput && !formSpecificDateSlots.find(s => s.date === newSpecificDateInput)) {
+                              setFormSpecificDateSlots(prev => [...prev, { date: newSpecificDateInput, times: ['08:00'] }].sort((a,b) => a.date.localeCompare(b.date)));
+                              setSelectedSpecificDateForTimes(newSpecificDateInput);
+                              setNewSpecificDateInput('');
+                            }
+                          }}
+                        >
+                          Adicionar Data
+                        </Button>
+                      </div>
+
+                      {formSpecificDateSlots.length > 0 && (
+                        <div className="p-3 bg-neutral-900/50 border border-neutral-800 rounded-xl mt-2">
+                          <label className="block text-xs font-medium text-neutral-400 mb-2 flex items-center gap-2">
+                            Horários para:
+                            <select
+                              value={selectedSpecificDateForTimes || formSpecificDateSlots[0]?.date}
+                              onChange={e => setSelectedSpecificDateForTimes(e.target.value)}
+                              className="bg-neutral-950 text-emerald-400 font-semibold focus:outline-none border border-neutral-800 rounded-md px-2 py-0.5 cursor-pointer"
+                            >
+                              {formSpecificDateSlots.map(s => (
+                                <option key={s.date} value={s.date}>{s.date.split('-').reverse().join('/')}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const activeDate = selectedSpecificDateForTimes || formSpecificDateSlots[0]?.date;
+                                setFormSpecificDateSlots(prev => prev.filter(s => s.date !== activeDate));
+                                setSelectedSpecificDateForTimes('');
+                              }}
+                              className="text-rose-400 hover:text-rose-300 ml-auto"
+                              title="Remover esta data"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </label>
+                          <div className="flex flex-wrap gap-2 mb-3">
+                            {(formSpecificDateSlots.find(s => s.date === (selectedSpecificDateForTimes || formSpecificDateSlots[0]?.date))?.times || []).map(t => (
+                              <span key={t} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-neutral-950 border border-emerald-500/30 text-emerald-300 font-mono text-xs">
+                                <Clock className="w-3 h-3 text-emerald-400" />
+                                {t}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const activeDate = selectedSpecificDateForTimes || formSpecificDateSlots[0]?.date;
+                                    setFormSpecificDateSlots(prev => prev.map(s => s.date === activeDate ? { ...s, times: s.times.filter(time => time !== t) } : s));
+                                  }}
+                                  className="hover:text-rose-400 ml-1"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <input
+                              type="time"
+                              value={newSpecificTimeInput}
+                              onChange={e => setNewSpecificTimeInput(e.target.value)}
+                              className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]"
+                            />
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() => {
+                                if (newSpecificTimeInput) {
+                                  const activeDate = selectedSpecificDateForTimes || formSpecificDateSlots[0]?.date;
+                                  setFormSpecificDateSlots(prev => prev.map(s => {
+                                    if (s.date === activeDate && !s.times.includes(newSpecificTimeInput)) {
+                                      return { ...s, times: [...s.times, newSpecificTimeInput].sort() };
                                     }
                                     return s;
                                   }));
