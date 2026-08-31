@@ -170,6 +170,15 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     setSelectedWeeklyDayForTimes(1);
     setNewWeeklyTimeInput('14:00');
 
+    setFormMonthlySlots([{ day: 1, times: ['08:00'] }]);
+    setSelectedMonthlyDayForTimes(1);
+    setNewMonthlyTimeInput('08:00');
+
+    setFormSpecificDateSlots([]);
+    setSelectedSpecificDateForTimes(null);
+    setNewSpecificTimeInput('08:00');
+    setNewSpecificDateInput('');
+
     setFormMedia(null);
     setMediaTab('upload');
     setMediaUrlInput('');
@@ -207,11 +216,25 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     }
     if (c.schedule.dailyTimes) setFormDailyTimes([...c.schedule.dailyTimes]);
     if (c.schedule.weeklyTimeSlots) {
-      setFormWeeklySlots([...c.schedule.weeklyTimeSlots]);
+      setFormWeeklySlots(JSON.parse(JSON.stringify(c.schedule.weeklyTimeSlots)));
       setFormWeeklyDays(c.schedule.weeklyTimeSlots.map(s => s.day));
       if (c.schedule.weeklyTimeSlots.length > 0) {
         setSelectedWeeklyDayForTimes(c.schedule.weeklyTimeSlots[0].day);
       }
+    }
+    if (c.schedule.monthlyTimeSlots && c.schedule.monthlyTimeSlots.length > 0) {
+      setFormMonthlySlots(JSON.parse(JSON.stringify(c.schedule.monthlyTimeSlots)));
+      setSelectedMonthlyDayForTimes(c.schedule.monthlyTimeSlots[0].day);
+    } else {
+      setFormMonthlySlots([]);
+      setSelectedMonthlyDayForTimes(null);
+    }
+    if (c.schedule.specificDateTimeSlots && c.schedule.specificDateTimeSlots.length > 0) {
+      setFormSpecificDateSlots(JSON.parse(JSON.stringify(c.schedule.specificDateTimeSlots)));
+      setSelectedSpecificDateForTimes(c.schedule.specificDateTimeSlots[0].date);
+    } else {
+      setFormSpecificDateSlots([]);
+      setSelectedSpecificDateForTimes(null);
     }
 
     if (c.media) {
@@ -604,7 +627,7 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                     <span className="text-neutral-500 font-medium uppercase tracking-wider text-[10px]">PROGRAMAÇÃO</span>
                     <div className="flex items-center gap-1.5 text-neutral-300">
                       <Clock className="w-3.5 h-3.5" />
-                      <span className="truncate">{c.schedule.scheduleType === 'once' ? 'Envio Único' : c.schedule.scheduleType === 'daily' ? 'Diário' : 'Semanal'}</span>
+                      <span className="truncate">{c.schedule.scheduleType === 'once' ? 'Envio Único' : c.schedule.scheduleType === 'daily' ? 'Diário' : c.schedule.scheduleType === 'weekly' ? 'Semanal' : c.schedule.scheduleType === 'monthly' ? 'Mensal' : 'Datas específicas'}</span>
                     </div>
                     <div className="text-neutral-500 truncate">
                       {c.schedule.scheduleType === 'once' && c.schedule.scheduledAt && (
@@ -923,6 +946,12 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   </button>
                   <button type="button" onClick={() => setFormType('weekly')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors ${formType === 'weekly' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}`}>
                     Semanal
+                  </button>
+                  <button type="button" onClick={() => setFormType('monthly')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors ${formType === 'monthly' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}`}>
+                    Mensal
+                  </button>
+                  <button type="button" onClick={() => setFormType('specific_dates')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-xl border transition-colors ${formType === 'specific_dates' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800'}`}>
+                    Datas específicas
                   </button>
                 </div>
 

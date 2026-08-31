@@ -67,7 +67,12 @@ function normalizeSpecificDateTimeSlots(
 ): any[] {
   if (Array.isArray(slots) && slots.length > 0) {
     return slots
-      .filter((s) => typeof s.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.date) && !isNaN(new Date(s.date + 'T00:00:00').getTime()))
+      .filter((s) => {
+        if (typeof s.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s.date)) return false;
+        const [y, m, d] = s.date.split('-').map(Number);
+        const dt = new Date(y, m - 1, d);
+        return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d && !isNaN(dt.getTime());
+      })
       .map((s) => ({
         date: s.date,
         times: normalizeTimeList(s.times),
@@ -252,8 +257,9 @@ export class SchedulerService {
         if (!slot || typeof slot !== 'object') return false;
         if (typeof slot.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(slot.date)) return false;
         // check if date is real
-        const d = new Date(slot.date + 'T00:00:00');
-        if (isNaN(d.getTime())) return false;
+        const [y, m, d] = slot.date.split('-').map(Number);
+        const dt = new Date(y, m - 1, d);
+        if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d || isNaN(dt.getTime())) return false;
         if (!Array.isArray(slot.times) || slot.times.length === 0) return false;
       }
     }
@@ -776,9 +782,43 @@ export class SchedulerService {
         const correctNextRunAt = this.calculateNextRunAt(schedule, new Date(now));
         
         if (schedule.scheduleType !== 'once') {
-          if (schedule.nextRunAt !== correctNextRunAt) {
-            console.log(`[Scheduler] repaired nextRunAt schedule=${schedule.id} timezone=${APP_TIMEZONE} nextRunAt=${correctNextRunAt}`);
-            schedule.nextRunAt = correctNextRunAt;
+          let shouldRepair = true;
+          if (schedule.nextRunAt) {
+             const currentTarget = new Date(schedule.nextRunAt).getTime();
+             const delay = now - currentTarget;
+             // Se o agendamento já passou, mas ainda está dentro do grace period, preserva o nextRunAt atual para ser executado
+             if (delay >= 0 && delay <= graceMs) {
+               shouldRepair = false;
+             }
+          }
+          
+          if (shouldRepair && schedule.nextRunAt !== correctNextRunAt) {
+            // For specific_dates, if correctNextRunAt is null (no more slots), mark as completed
+            if (schedule.scheduleType === 'specific_dates' && !correctNextRunAt) {
+              if (schedule.nextRunAt && (now - new Date(schedule.nextRunAt).getTime()) > graceMs) {
+                schedule.status = 'error';
+                schedule.lastResult = {
+                  totalTargets: schedule.targets.length,
+                  sentCount: 0,
+                  failedCount: schedule.targets.length,
+                  skippedCount: schedule.targets.length,
+                  executedAt: new Date().toISOString(),
+                  details: schedule.targets.map((t) => ({
+                    targetJid: t.jid,
+                    targetLabel: t.label,
+                    status: 'skipped',
+                    error: 'Expirado fora da tolerância (servidor offline)',
+                  })),
+                };
+              } else {
+                schedule.status = 'completed';
+              }
+              schedule.nextRunAt = null;
+              console.log(`[Scheduler] marked specific_dates schedule=${schedule.id} as ${schedule.status} on startup`);
+            } else {
+              console.log(`[Scheduler] repaired nextRunAt schedule=${schedule.id} timezone=${APP_TIMEZONE} nextRunAt=${correctNextRunAt}`);
+              schedule.nextRunAt = correctNextRunAt;
+            }
             modified = true;
           }
         } else if (schedule.scheduledAt) {

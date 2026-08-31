@@ -148,15 +148,21 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
     if (parsedDate.getTime() <= Date.now()) return { valid: false, error: 'Futuro obrigatório once.' };
     if (payload.dailyTimes.length > 0) return { valid: false, error: 'dailyTimes deve ser vazio once.' };
     if (payload.weeklyTimeSlots.length > 0) return { valid: false, error: 'weeklyTimeSlots deve ser vazio once.' };
+    if (payload.monthlyTimeSlots && payload.monthlyTimeSlots.length > 0) return { valid: false, error: 'monthlyTimeSlots vazio once.' };
+    if (payload.specificDateTimeSlots && payload.specificDateTimeSlots.length > 0) return { valid: false, error: 'specificDateTimeSlots vazio once.' };
     parsedScheduledAt = parsedDate.toISOString();
   } else if (payload.scheduleType === 'daily') {
     if (payload.scheduledAt !== null) return { valid: false, error: 'scheduledAt daily inválido.' };
     if (payload.dailyTimes.length === 0 || !payload.dailyTimes.every(isValidTime)) return { valid: false, error: 'dailyTimes inválido.' };
     if (payload.weeklyTimeSlots.length > 0) return { valid: false, error: 'weeklyTimeSlots vazio daily.' };
+    if (payload.monthlyTimeSlots && payload.monthlyTimeSlots.length > 0) return { valid: false, error: 'monthlyTimeSlots vazio daily.' };
+    if (payload.specificDateTimeSlots && payload.specificDateTimeSlots.length > 0) return { valid: false, error: 'specificDateTimeSlots vazio daily.' };
   } else if (payload.scheduleType === 'weekly') {
     if (payload.scheduledAt !== null) return { valid: false, error: 'scheduledAt weekly inválido.' };
     if (payload.dailyTimes.length > 0) return { valid: false, error: 'dailyTimes vazio weekly.' };
     if (payload.weeklyTimeSlots.length === 0) return { valid: false, error: 'weeklyTimeSlots vazio.' };
+    if (payload.monthlyTimeSlots && payload.monthlyTimeSlots.length > 0) return { valid: false, error: 'monthlyTimeSlots vazio weekly.' };
+    if (payload.specificDateTimeSlots && payload.specificDateTimeSlots.length > 0) return { valid: false, error: 'specificDateTimeSlots vazio weekly.' };
     for (const w of payload.weeklyTimeSlots) {
       if (!w || typeof w.day !== 'number' || w.day < 0 || w.day > 6 || !Array.isArray(w.times) || w.times.length === 0 || !w.times.every(isValidTime)) return { valid: false, error: 'weeklyTimeSlots inválido.' };
     }
@@ -164,6 +170,7 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
     if (payload.scheduledAt !== null) return { valid: false, error: 'scheduledAt monthly inválido.' };
     if (payload.dailyTimes.length > 0) return { valid: false, error: 'dailyTimes vazio monthly.' };
     if (payload.weeklyTimeSlots.length > 0) return { valid: false, error: 'weeklyTimeSlots vazio monthly.' };
+    if (payload.specificDateTimeSlots && payload.specificDateTimeSlots.length > 0) return { valid: false, error: 'specificDateTimeSlots vazio monthly.' };
     if (!Array.isArray(payload.monthlyTimeSlots) || payload.monthlyTimeSlots.length === 0) return { valid: false, error: 'monthlyTimeSlots inválido.' };
     const seenDays = new Set();
     for (const m of payload.monthlyTimeSlots) {
@@ -175,13 +182,18 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
     if (payload.scheduledAt !== null) return { valid: false, error: 'scheduledAt specific_dates inválido.' };
     if (payload.dailyTimes.length > 0) return { valid: false, error: 'dailyTimes vazio specific_dates.' };
     if (payload.weeklyTimeSlots.length > 0) return { valid: false, error: 'weeklyTimeSlots vazio specific_dates.' };
+    if (payload.monthlyTimeSlots && payload.monthlyTimeSlots.length > 0) return { valid: false, error: 'monthlyTimeSlots vazio specific_dates.' };
     if (!Array.isArray(payload.specificDateTimeSlots) || payload.specificDateTimeSlots.length === 0) return { valid: false, error: 'specificDateTimeSlots inválido.' };
     const seenDates = new Set();
     let hasFuture = false;
     const nowTime = Date.now();
     for (const s of payload.specificDateTimeSlots) {
       if (!s || typeof s.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s.date) || !Array.isArray(s.times) || s.times.length === 0 || !s.times.every(isValidTime)) return { valid: false, error: 'specificDateTimeSlots elemento inválido.' };
-      if (isNaN(new Date(s.date + 'T00:00:00').getTime())) return { valid: false, error: 'Data inexistente specific_dates.' };
+      const [vy, vm, vd] = s.date.split('-').map(Number);
+      const vdt = new Date(vy, vm - 1, vd);
+      if (vdt.getFullYear() !== vy || vdt.getMonth() !== vm - 1 || vdt.getDate() !== vd || isNaN(vdt.getTime())) {
+        return { valid: false, error: 'Data inexistente specific_dates.' };
+      }
       if (seenDates.has(s.date)) return { valid: false, error: 'Data duplicada specific_dates.' };
       seenDates.add(s.date);
       for (const t of s.times) {

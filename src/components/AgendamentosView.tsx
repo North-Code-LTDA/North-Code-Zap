@@ -257,6 +257,15 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     setFormWeeklySlots([{ day: 1, times: ['08:00'] }]);
     setSelectedWeeklyDayForTimes(1);
 
+    setFormMonthlySlots([{ day: 1, times: ['08:00'] }]);
+    setSelectedMonthlyDayForTimes(1);
+    setNewMonthlyTimeInput('08:00');
+
+    setFormSpecificDateSlots([]);
+    setSelectedSpecificDateForTimes(null);
+    setNewSpecificTimeInput('08:00');
+    setNewSpecificDateInput('');
+
     setFormMedia(null);
     setMediaUrlInput('');
     setMediaError(null);
@@ -283,16 +292,20 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     setFormFallbackName(schedule.fallbackName || 'amigo(a)');
     setFormType(schedule.scheduleType);
 
-    if (schedule.monthlyTimeSlots) {
+    if (schedule.monthlyTimeSlots && schedule.monthlyTimeSlots.length > 0) {
       setFormMonthlySlots(JSON.parse(JSON.stringify(schedule.monthlyTimeSlots)));
+      setSelectedMonthlyDayForTimes(schedule.monthlyTimeSlots[0].day);
     } else {
       setFormMonthlySlots([]);
+      setSelectedMonthlyDayForTimes(null);
     }
 
-    if (schedule.specificDateTimeSlots) {
+    if (schedule.specificDateTimeSlots && schedule.specificDateTimeSlots.length > 0) {
       setFormSpecificDateSlots(JSON.parse(JSON.stringify(schedule.specificDateTimeSlots)));
+      setSelectedSpecificDateForTimes(schedule.specificDateTimeSlots[0].date);
     } else {
       setFormSpecificDateSlots([]);
+      setSelectedSpecificDateForTimes(null);
     }
 
     if (schedule.scheduledAt) {
@@ -555,6 +568,90 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
         }
         return slot;
       });
+    });
+  };
+
+  const handleToggleMonthlyDay = (day: number) => {
+    setFormMonthlySlots((prev) => {
+      const exists = prev.find((s) => s.day === day);
+      if (exists) {
+        return prev.filter((s) => s.day !== day);
+      }
+      return [...prev, { day, times: [] }].sort((a, b) => a.day - b.day);
+    });
+  };
+
+  const handleAddMonthlyTime = (day: number) => {
+    if (!newMonthlyTimeInput) return;
+    setFormMonthlySlots((prev) => {
+      const copy = [...prev];
+      let slot = copy.find((s) => s.day === day);
+      if (!slot) {
+        slot = { day, times: [] };
+        copy.push(slot);
+        copy.sort((a, b) => a.day - b.day);
+      }
+      if (!slot.times.includes(newMonthlyTimeInput)) {
+        slot.times.push(newMonthlyTimeInput);
+        slot.times.sort();
+      }
+      return copy;
+    });
+    setNewMonthlyTimeInput('');
+  };
+
+  const handleRemoveMonthlyTime = (day: number, timeIndex: number) => {
+    setFormMonthlySlots((prev) => {
+      const copy = [...prev];
+      const slot = copy.find((s) => s.day === day);
+      if (slot) {
+        slot.times.splice(timeIndex, 1);
+        if (slot.times.length === 0) {
+          return copy.filter((s) => s.day !== day);
+        }
+      }
+      return copy;
+    });
+  };
+
+  const handleAddSpecificDate = () => {
+    if (!newSpecificDateInput) return;
+    setFormSpecificDateSlots((prev) => {
+      const exists = prev.find((s) => s.date === newSpecificDateInput);
+      if (exists) return prev;
+      return [...prev, { date: newSpecificDateInput, times: [] }].sort((a, b) => a.date.localeCompare(b.date));
+    });
+    setNewSpecificDateInput('');
+  };
+
+  const handleRemoveSpecificDate = (date: string) => {
+     setFormSpecificDateSlots(prev => prev.filter(s => s.date !== date));
+     if (selectedSpecificDateForTimes === date) setSelectedSpecificDateForTimes(null);
+  };
+
+  const handleAddSpecificTime = (date: string) => {
+    if (!newSpecificTimeInput) return;
+    setFormSpecificDateSlots((prev) => {
+      const copy = [...prev];
+      let slot = copy.find((s) => s.date === date);
+      if (!slot) return copy;
+      if (!slot.times.includes(newSpecificTimeInput)) {
+        slot.times.push(newSpecificTimeInput);
+        slot.times.sort();
+      }
+      return copy;
+    });
+    setNewSpecificTimeInput('');
+  };
+
+  const handleRemoveSpecificTime = (date: string, timeIndex: number) => {
+    setFormSpecificDateSlots((prev) => {
+      const copy = [...prev];
+      const slot = copy.find((s) => s.date === date);
+      if (slot) {
+        slot.times.splice(timeIndex, 1);
+      }
+      return copy;
     });
   };
 
@@ -930,6 +1027,28 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
         return;
       }
       payloadWeeklySlots = formWeeklySlots;
+    } else if (formType === 'monthly') {
+      if (formMonthlySlots.length === 0) {
+        setFormError('Adicione pelo menos um dia e horário mensal.');
+        return;
+      }
+      for (const slot of formMonthlySlots) {
+        if (slot.times.length === 0) {
+          setFormError(`O dia ${slot.day} precisa ter pelo menos um horário.`);
+          return;
+        }
+      }
+    } else if (formType === 'specific_dates') {
+      if (formSpecificDateSlots.length === 0) {
+        setFormError('Adicione pelo menos uma data e horário.');
+        return;
+      }
+      for (const slot of formSpecificDateSlots) {
+        if (slot.times.length === 0) {
+          setFormError(`A data ${slot.date} precisa ter pelo menos um horário.`);
+          return;
+        }
+      }
     }
 
     setIsSubmitting(true);
@@ -965,6 +1084,8 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
           scheduledAt,
           dailyTimes: payloadDailyTimes,
           weeklyTimeSlots: payloadWeeklySlots,
+          monthlyTimeSlots: formType === 'monthly' ? formMonthlySlots : [],
+          specificDateTimeSlots: formType === 'specific_dates' ? formSpecificDateSlots : [],
           media: formMedia,
           targets: formTargets,
           deliveryOptions,
@@ -2305,7 +2426,7 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
                 {/* Frequency selector buttons */}
                 <div className="grid grid-cols-3 gap-2">
-                  {(['once', 'daily', 'weekly'] as ScheduleType[]).map((type) => (
+                  {(['once', 'daily', 'weekly', 'monthly', 'specific_dates'] as ScheduleType[]).map((type) => (
                     <button
                       key={type}
                       type="button"
@@ -2512,6 +2633,232 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                           </div>
                         );
                       })()}
+                    </div>
+                  </div>
+                )}
+
+                {formType === 'monthly' && (
+                  <div className="space-y-4 pt-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-neutral-300 mb-1.5 uppercase tracking-wider">
+                        1. Selecione os Dias do Mês
+                      </label>
+                      <p className="text-[10px] text-neutral-500 mb-3 leading-relaxed">
+                        Se o dia escolhido não existir em determinado mês, ele será ignorado.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+                        {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => {
+                          const isSelected = formMonthlySlots.some((s) => s.day === d);
+                          return (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => handleToggleMonthlyDay(d)}
+                              className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors border ${
+                                isSelected
+                                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 font-bold'
+                                  : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:bg-neutral-700'
+                              }`}
+                            >
+                              {d}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {formMonthlySlots.length > 0 && (
+                      <div className="pt-4 border-t border-neutral-800/60">
+                        <label className="block text-xs font-semibold text-neutral-300 mb-3 uppercase tracking-wider">
+                          2. Configure os Horários por Dia
+                        </label>
+                        <div className="space-y-3">
+                          {formMonthlySlots.map((slot) => (
+                            <div key={slot.day} className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800/80 shadow-sm">
+                              <div className="flex items-center justify-between mb-3 pb-2 border-b border-neutral-800/50">
+                                <span className="text-sm font-semibold text-emerald-400 flex items-center gap-2">
+                                  <Calendar className="w-4 h-4" />
+                                  Dia {slot.day}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2 mb-4">
+                                {slot.times.length === 0 ? (
+                                  <span className="text-xs text-neutral-500 italic px-1">Nenhum horário configurado</span>
+                                ) : (
+                                  slot.times.map((t, idx) => (
+                                    <div key={idx} className="flex items-center gap-1.5 bg-neutral-800/80 px-2.5 py-1.5 rounded-lg border border-neutral-700/60">
+                                      <Clock className="w-3.5 h-3.5 text-neutral-400" />
+                                      <span className="text-xs text-neutral-200 font-medium">{t}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveMonthlyTime(slot.day, idx)}
+                                        className="ml-1 text-neutral-500 hover:text-red-400 transition-colors"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                              
+                              {selectedMonthlyDayForTimes === slot.day ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="time"
+                                    value={newMonthlyTimeInput}
+                                    onChange={(e) => setNewMonthlyTimeInput(e.target.value)}
+                                    className="w-32 bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      handleAddMonthlyTime(slot.day);
+                                      setSelectedMonthlyDayForTimes(null);
+                                    }}
+                                    className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-3 py-2 rounded-xl text-xs font-semibold transition-colors"
+                                  >
+                                    Adicionar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedMonthlyDayForTimes(null)}
+                                    className="text-xs text-neutral-400 hover:text-white px-2 py-2 transition-colors"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedMonthlyDayForTimes(slot.day);
+                                    setNewMonthlyTimeInput('08:00');
+                                  }}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-emerald-400 text-xs font-semibold transition-colors border border-neutral-700"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  Novo horário
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {formType === 'specific_dates' && (
+                  <div className="space-y-4 pt-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-neutral-300 mb-2 uppercase tracking-wider">
+                        Datas Específicas
+                      </label>
+                      <p className="text-[10px] text-neutral-500 mb-3 leading-relaxed">
+                        Escolha datas e horários específicos. Após o último envio, o agendamento será concluído.
+                      </p>
+                      <div className="flex flex-col sm:flex-row gap-3 sm:items-center mb-4">
+                        <input
+                          type="date"
+                          value={newSpecificDateInput}
+                          onChange={(e) => setNewSpecificDateInput(e.target.value)}
+                          min={new Date().toISOString().split('T')[0]}
+                          className="flex-1 max-w-[200px] bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddSpecificDate}
+                          disabled={!newSpecificDateInput}
+                          className="inline-flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Adicionar Data
+                        </button>
+                      </div>
+
+                      {formSpecificDateSlots.length > 0 && (
+                        <div className="space-y-3">
+                          {formSpecificDateSlots.map((slot) => {
+                            const [y, m, d] = slot.date.split('-');
+                            return (
+                            <div key={slot.date} className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800/80 shadow-sm">
+                              <div className="flex items-center justify-between mb-3 pb-2 border-b border-neutral-800/50">
+                                <span className="text-sm font-semibold text-emerald-400 flex items-center gap-2">
+                                  <Calendar className="w-4 h-4" />
+                                  {d}/{m}/{y}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveSpecificDate(slot.date)}
+                                  className="text-neutral-500 hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-red-500/10"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                              
+                              <div className="flex flex-wrap gap-2 mb-4">
+                                {slot.times.length === 0 ? (
+                                  <span className="text-xs text-neutral-500 italic px-1">Nenhum horário configurado</span>
+                                ) : (
+                                  slot.times.map((t, idx) => (
+                                    <div key={idx} className="flex items-center gap-1.5 bg-neutral-800/80 px-2.5 py-1.5 rounded-lg border border-neutral-700/60">
+                                      <Clock className="w-3.5 h-3.5 text-neutral-400" />
+                                      <span className="text-xs text-neutral-200 font-medium">{t}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveSpecificTime(slot.date, idx)}
+                                        className="ml-1 text-neutral-500 hover:text-red-400 transition-colors"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                              
+                              {selectedSpecificDateForTimes === slot.date ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="time"
+                                    value={newSpecificTimeInput}
+                                    onChange={(e) => setNewSpecificTimeInput(e.target.value)}
+                                    className="w-32 bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      handleAddSpecificTime(slot.date);
+                                      setSelectedSpecificDateForTimes(null);
+                                    }}
+                                    className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-3 py-2 rounded-xl text-xs font-semibold transition-colors"
+                                  >
+                                    Adicionar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedSpecificDateForTimes(null)}
+                                    className="text-xs text-neutral-400 hover:text-white px-2 py-2 transition-colors"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedSpecificDateForTimes(slot.date);
+                                    setNewSpecificTimeInput('08:00');
+                                  }}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-emerald-400 text-xs font-semibold transition-colors border border-neutral-700"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  Novo horário
+                                </button>
+                              )}
+                            </div>
+                          )})}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
