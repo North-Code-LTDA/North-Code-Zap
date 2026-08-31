@@ -80,10 +80,11 @@ export interface GroupParticipantsResponse {
 }
 
 export interface DeliveryOptions {
-  intervalBetweenMessagesMs: number; // e.g. 5000 ms
+  intervalBetweenMessagesMinMs: number;
+  intervalBetweenMessagesMaxMs: number;
   batchPauseEnabled: boolean;
-  batchSize: number; // e.g. 3
-  batchPauseMs: number; // e.g. 300000 ms (5 min)
+  batchSize: number;
+  batchPauseMs: number;
 }
 
 export interface ScheduleExecutionDetail {

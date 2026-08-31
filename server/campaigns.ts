@@ -200,7 +200,34 @@ export class CampaignService {
       }
     }
     if (!c.schedule.deliveryOptions || typeof c.schedule.deliveryOptions !== 'object') throw new Error('Invalid deliveryOptions');
-    if (typeof c.schedule.deliveryOptions.intervalBetweenMessagesMs !== 'number' || !Number.isFinite(c.schedule.deliveryOptions.intervalBetweenMessagesMs) || c.schedule.deliveryOptions.intervalBetweenMessagesMs < 0) throw new Error('Invalid intervalBetweenMessagesMs');
+    
+    // Legacy normalization
+    const dOpt = c.schedule.deliveryOptions;
+    if (
+      dOpt.intervalBetweenMessagesMinMs === undefined &&
+      dOpt.intervalBetweenMessagesMaxMs === undefined &&
+      dOpt.intervalBetweenMessagesMs !== undefined
+    ) {
+      if (typeof dOpt.intervalBetweenMessagesMs === 'number' && Number.isFinite(dOpt.intervalBetweenMessagesMs)) {
+        const canonicalLegacyInterval = Math.max(1000, dOpt.intervalBetweenMessagesMs);
+        dOpt.intervalBetweenMessagesMinMs = canonicalLegacyInterval;
+        dOpt.intervalBetweenMessagesMaxMs = canonicalLegacyInterval;
+        delete dOpt.intervalBetweenMessagesMs;
+      } else {
+        throw new Error('Invalid legacy intervalBetweenMessagesMs');
+      }
+    } else if (
+      (dOpt.intervalBetweenMessagesMinMs !== undefined && dOpt.intervalBetweenMessagesMaxMs === undefined) ||
+      (dOpt.intervalBetweenMessagesMaxMs !== undefined && dOpt.intervalBetweenMessagesMinMs === undefined) ||
+      (dOpt.intervalBetweenMessagesMinMs !== undefined && dOpt.intervalBetweenMessagesMaxMs !== undefined && dOpt.intervalBetweenMessagesMs !== undefined)
+    ) {
+      throw new Error('Ambiguous interval range');
+    }
+
+    if (!Number.isInteger(c.schedule.deliveryOptions.intervalBetweenMessagesMinMs) || c.schedule.deliveryOptions.intervalBetweenMessagesMinMs < 1000) throw new Error('Invalid intervalBetweenMessagesMinMs');
+    if (!Number.isInteger(c.schedule.deliveryOptions.intervalBetweenMessagesMaxMs) || c.schedule.deliveryOptions.intervalBetweenMessagesMaxMs < 1000) throw new Error('Invalid intervalBetweenMessagesMaxMs');
+    if (c.schedule.deliveryOptions.intervalBetweenMessagesMaxMs < c.schedule.deliveryOptions.intervalBetweenMessagesMinMs) throw new Error('intervalBetweenMessagesMaxMs must be >= MinMs');
+    
     if (typeof c.schedule.deliveryOptions.batchPauseEnabled !== 'boolean') throw new Error('Invalid batchPauseEnabled');
     if (!Number.isInteger(c.schedule.deliveryOptions.batchSize) || c.schedule.deliveryOptions.batchSize <= 0) throw new Error('Invalid batchSize');
     if (typeof c.schedule.deliveryOptions.batchPauseMs !== 'number' || !Number.isFinite(c.schedule.deliveryOptions.batchPauseMs) || c.schedule.deliveryOptions.batchPauseMs < 0) throw new Error('Invalid batchPauseMs');

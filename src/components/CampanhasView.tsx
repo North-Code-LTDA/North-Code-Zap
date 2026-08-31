@@ -109,7 +109,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Delivery Options
-  const [formIntervalSeconds, setFormIntervalSeconds] = useState(5);
+  const [formIntervalMinSeconds, setFormIntervalMinSeconds] = useState(5);
+  const [formIntervalMaxSeconds, setFormIntervalMaxSeconds] = useState(5);
   const [formBatchPauseEnabled, setFormBatchPauseEnabled] = useState(false);
   const [formBatchSize, setFormBatchSize] = useState(5);
   const [formBatchPauseMinutes, setFormBatchPauseMinutes] = useState(5);
@@ -184,7 +185,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     setMediaUrlInput('');
     setMediaError(null);
 
-    setFormIntervalSeconds(5);
+    setFormIntervalMinSeconds(5);
+    setFormIntervalMaxSeconds(5);
     setFormBatchPauseEnabled(false);
     setFormBatchSize(5);
     setFormBatchPauseMinutes(5);
@@ -246,7 +248,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     }
 
     if (c.schedule.deliveryOptions) {
-      setFormIntervalSeconds(c.schedule.deliveryOptions.intervalBetweenMessagesMs / 1000);
+      setFormIntervalMinSeconds((c.schedule.deliveryOptions.intervalBetweenMessagesMinMs || 5000) / 1000);
+      setFormIntervalMaxSeconds((c.schedule.deliveryOptions.intervalBetweenMessagesMaxMs || 5000) / 1000);
       setFormBatchPauseEnabled(c.schedule.deliveryOptions.batchPauseEnabled);
       setFormBatchSize(c.schedule.deliveryOptions.batchSize);
       setFormBatchPauseMinutes(c.schedule.deliveryOptions.batchPauseMs / 60000);
@@ -306,6 +309,9 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
     try {
       setActionError(null);
       if (!name.trim()) throw new Error('Nome é obrigatório');
+      if (!Number.isInteger(formIntervalMinSeconds) || formIntervalMinSeconds < 1) throw new Error('Intervalo mínimo deve ser inteiro >= 1');
+      if (!Number.isInteger(formIntervalMaxSeconds) || formIntervalMaxSeconds < 1) throw new Error('Intervalo máximo deve ser inteiro >= 1');
+      if (formIntervalMaxSeconds < formIntervalMinSeconds) throw new Error('O intervalo máximo não pode ser menor que o mínimo');
 
       let scheduledAt: string | null = null;
       if (formType === 'once' && formDate && formTime) {
@@ -328,7 +334,8 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
         monthlyTimeSlots: formType === 'monthly' ? formMonthlySlots : [],
         specificDateTimeSlots: formType === 'specific_dates' ? formSpecificDateSlots : [],
         deliveryOptions: {
-          intervalBetweenMessagesMs: (formIntervalSeconds || 5) * 1000,
+          intervalBetweenMessagesMinMs: (formIntervalMinSeconds || 5) * 1000,
+          intervalBetweenMessagesMaxMs: (formIntervalMaxSeconds || 5) * 1000,
           batchPauseEnabled: formBatchPauseEnabled,
           batchSize: formBatchSize || 5,
           batchPauseMs: (formBatchPauseMinutes || 5) * 60000
@@ -1359,15 +1366,36 @@ export function CampanhasView({ selectedInstanceId }: CampanhasViewProps) {
                   6. Opções de Entrega
                 </label>
                 <div className="space-y-4 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-400 mb-2">Intervalo entre mensagens (segundos)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={formIntervalSeconds}
-                      onChange={e => setFormIntervalSeconds(Number(e.target.value))}
-                      className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-neutral-400 mb-2">Intervalo mínimo (segundos)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={formIntervalMinSeconds}
+                        onChange={e => setFormIntervalMinSeconds(Number(e.target.value))}
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-neutral-400 mb-2">Intervalo máximo (segundos)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={formIntervalMaxSeconds}
+                        onChange={e => setFormIntervalMaxSeconds(Number(e.target.value))}
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-neutral-500 mt-2">
+                    {formIntervalMinSeconds < formIntervalMaxSeconds 
+                      ? `O intervalo entre cada mensagem será escolhido aleatoriamente entre ${formIntervalMinSeconds} e ${formIntervalMaxSeconds} segundos.`
+                      : formIntervalMinSeconds === formIntervalMaxSeconds
+                        ? `O intervalo será fixo em ${formIntervalMinSeconds} segundos.`
+                        : ''}
                   </div>
                   
                   <div className="pt-2 border-t border-neutral-800/50">

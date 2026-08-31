@@ -162,7 +162,8 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
   const [formTargets, setFormTargets] = useState<ScheduledTarget[]>([]);
 
   // Form Delivery Rhythm Options
-  const [formIntervalSeconds, setFormIntervalSeconds] = useState(5);
+  const [formIntervalMinSeconds, setFormIntervalMinSeconds] = useState(5);
+  const [formIntervalMaxSeconds, setFormIntervalMaxSeconds] = useState(5);
   const [formBatchPauseEnabled, setFormBatchPauseEnabled] = useState(false);
   const [formBatchSize, setFormBatchSize] = useState(5);
   const [formBatchPauseMinutes, setFormBatchPauseMinutes] = useState(5);
@@ -272,7 +273,8 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     setMediaTab('upload');
 
     setFormTargets([]);
-    setFormIntervalSeconds(5);
+    setFormIntervalMinSeconds(5);
+    setFormIntervalMaxSeconds(5);
     setFormBatchPauseEnabled(false);
     setFormBatchSize(5);
     setFormBatchPauseMinutes(5);
@@ -372,8 +374,11 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
 
     setFormTargets([...(schedule.targets || [])]);
 
-    setFormIntervalSeconds(
-      Math.round((schedule.deliveryOptions?.intervalBetweenMessagesMs || 5000) / 1000)
+    setFormIntervalMinSeconds(
+      Math.round((schedule.deliveryOptions?.intervalBetweenMessagesMinMs || 5000) / 1000)
+    );
+    setFormIntervalMaxSeconds(
+      Math.round((schedule.deliveryOptions?.intervalBetweenMessagesMaxMs || 5000) / 1000)
     );
     setFormBatchPauseEnabled(Boolean(schedule.deliveryOptions?.batchPauseEnabled));
     setFormBatchSize(schedule.deliveryOptions?.batchSize || 5);
@@ -974,8 +979,23 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
     }
 
     // Prepare Delivery Options
+    if (!Number.isInteger(formIntervalMinSeconds) || formIntervalMinSeconds < 1) {
+      setFormError('Intervalo mínimo deve ser inteiro maior ou igual a 1.');
+      return;
+    }
+    if (!Number.isInteger(formIntervalMaxSeconds) || formIntervalMaxSeconds < 1) {
+      setFormError('Intervalo máximo deve ser inteiro maior ou igual a 1.');
+      return;
+    }
+    if (formIntervalMaxSeconds < formIntervalMinSeconds) {
+      setFormError('O intervalo máximo não pode ser menor que o mínimo.');
+      return;
+    }
+
+    // Prepare Delivery Options
     const deliveryOptions: DeliveryOptions = {
-      intervalBetweenMessagesMs: Math.max(1000, formIntervalSeconds * 1000),
+      intervalBetweenMessagesMinMs: formIntervalMinSeconds * 1000,
+      intervalBetweenMessagesMaxMs: formIntervalMaxSeconds * 1000,
       batchPauseEnabled: formBatchPauseEnabled,
       batchSize: Math.max(1, formBatchSize),
       batchPauseMs: Math.max(60000, formBatchPauseMinutes * 60000),
@@ -1439,7 +1459,12 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                     {schedule.deliveryOptions && (
                       <div className="flex items-center gap-2 text-[11px] text-neutral-500 pt-0.5">
                         <Sliders className="w-3 h-3 text-neutral-600" />
-                        <span>Intervalo: {Math.round(schedule.deliveryOptions.intervalBetweenMessagesMs / 1000)}s</span>
+                        <span>
+                          Intervalo: {schedule.deliveryOptions.intervalBetweenMessagesMinMs === schedule.deliveryOptions.intervalBetweenMessagesMaxMs 
+                            ? `${Math.round(schedule.deliveryOptions.intervalBetweenMessagesMinMs / 1000)}s`
+                            : `${Math.round(schedule.deliveryOptions.intervalBetweenMessagesMinMs / 1000)}-${Math.round(schedule.deliveryOptions.intervalBetweenMessagesMaxMs / 1000)}s`
+                          }
+                        </span>
                         {schedule.deliveryOptions.batchPauseEnabled && (
                           <span>• Pausa: a cada {schedule.deliveryOptions.batchSize} msgs por {Math.round(schedule.deliveryOptions.batchPauseMs / 60000)} min</span>
                         )}
@@ -2871,22 +2896,42 @@ export function AgendamentosView({ whatsappState }: AgendamentosViewProps) {
                   6. Controle de Ritmo & Fila de Entrega
                 </label>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-neutral-400 mb-1">
-                      Intervalo entre mensagens (segundos):
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={60}
-                      value={formIntervalSeconds}
-                      onChange={(e) => setFormIntervalSeconds(parseInt(e.target.value, 10) || 5)}
-                      className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                    />
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-neutral-400 mb-1">
+                        Intervalo mínimo (s):
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={formIntervalMinSeconds}
+                        onChange={(e) => setFormIntervalMinSeconds(parseInt(e.target.value, 10) || 5)}
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-neutral-400 mb-1">
+                        Intervalo máximo (s):
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={formIntervalMaxSeconds}
+                        onChange={(e) => setFormIntervalMaxSeconds(parseInt(e.target.value, 10) || 5)}
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-neutral-500">
+                    {formIntervalMinSeconds < formIntervalMaxSeconds 
+                      ? `O intervalo entre cada mensagem será escolhido aleatoriamente entre ${formIntervalMinSeconds} e ${formIntervalMaxSeconds} segundos.`
+                      : formIntervalMinSeconds === formIntervalMaxSeconds
+                        ? `O intervalo será fixo em ${formIntervalMinSeconds} segundos.`
+                        : ''}
                   </div>
 
-                  <div className="flex flex-col justify-end">
+                  <div className="flex flex-col justify-end mt-2">
                     <label className="flex items-center gap-2 cursor-pointer pb-2">
                       <input
                         type="checkbox"

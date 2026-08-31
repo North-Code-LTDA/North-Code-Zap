@@ -129,7 +129,9 @@ function validateSchedulePayload(body: unknown): { valid: true; payload: Schedul
 
   const dOpt = payload.deliveryOptions;
   if (!dOpt || typeof dOpt !== 'object') return { valid: false, error: 'Delivery options inválido.' };
-  if (typeof dOpt.intervalBetweenMessagesMs !== 'number' || !Number.isFinite(dOpt.intervalBetweenMessagesMs) || dOpt.intervalBetweenMessagesMs < 1000) return { valid: false, error: 'Interval inválido.' };
+  if (!Number.isInteger(dOpt.intervalBetweenMessagesMinMs) || dOpt.intervalBetweenMessagesMinMs < 1000) return { valid: false, error: 'Intervalo mínimo inválido.' };
+  if (!Number.isInteger(dOpt.intervalBetweenMessagesMaxMs) || dOpt.intervalBetweenMessagesMaxMs < 1000) return { valid: false, error: 'Intervalo máximo inválido.' };
+  if (dOpt.intervalBetweenMessagesMaxMs < dOpt.intervalBetweenMessagesMinMs) return { valid: false, error: 'Intervalo máximo deve ser maior ou igual ao mínimo.' };
   if (typeof dOpt.batchPauseEnabled !== 'boolean') return { valid: false, error: 'batchPauseEnabled inválido.' };
   if (typeof dOpt.batchSize !== 'number' || !Number.isInteger(dOpt.batchSize) || dOpt.batchSize < 1) return { valid: false, error: 'batchSize inválido.' };
   if (typeof dOpt.batchPauseMs !== 'number' || !Number.isFinite(dOpt.batchPauseMs) || dOpt.batchPauseMs < 60000) return { valid: false, error: 'batchPauseMs inválido.' };
@@ -1099,7 +1101,8 @@ async function startServer() {
           monthlyTimeSlots: [],
           specificDateTimeSlots: [],
           deliveryOptions: {
-            intervalBetweenMessagesMs: 5000,
+            intervalBetweenMessagesMinMs: 5000,
+            intervalBetweenMessagesMaxMs: 5000,
             batchPauseEnabled: false,
             batchSize: 5,
             batchPauseMs: 300000

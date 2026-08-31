@@ -319,8 +319,32 @@ export class SchedulerService {
     }
 
     if (!s.deliveryOptions || typeof s.deliveryOptions !== 'object' || Array.isArray(s.deliveryOptions)) return false;
+
+    const dOpt = s.deliveryOptions as any;
+    if (
+      dOpt.intervalBetweenMessagesMinMs === undefined &&
+      dOpt.intervalBetweenMessagesMaxMs === undefined &&
+      dOpt.intervalBetweenMessagesMs !== undefined
+    ) {
+      if (typeof dOpt.intervalBetweenMessagesMs === 'number' && Number.isFinite(dOpt.intervalBetweenMessagesMs) && dOpt.intervalBetweenMessagesMs >= 1000) {
+        dOpt.intervalBetweenMessagesMinMs = dOpt.intervalBetweenMessagesMs;
+        dOpt.intervalBetweenMessagesMaxMs = dOpt.intervalBetweenMessagesMs;
+        delete dOpt.intervalBetweenMessagesMs;
+      } else {
+        return false;
+      }
+    } else if (
+      (dOpt.intervalBetweenMessagesMinMs !== undefined && dOpt.intervalBetweenMessagesMaxMs === undefined) ||
+      (dOpt.intervalBetweenMessagesMaxMs !== undefined && dOpt.intervalBetweenMessagesMinMs === undefined) ||
+      (dOpt.intervalBetweenMessagesMinMs !== undefined && dOpt.intervalBetweenMessagesMaxMs !== undefined && dOpt.intervalBetweenMessagesMs !== undefined)
+    ) {
+      return false;
+    }
+
     const d = s.deliveryOptions;
-    if (!Number.isFinite(d.intervalBetweenMessagesMs) || d.intervalBetweenMessagesMs < 1000) return false;
+    if (!Number.isInteger(d.intervalBetweenMessagesMinMs) || d.intervalBetweenMessagesMinMs < 1000) return false;
+    if (!Number.isInteger(d.intervalBetweenMessagesMaxMs) || d.intervalBetweenMessagesMaxMs < 1000) return false;
+    if (d.intervalBetweenMessagesMaxMs < d.intervalBetweenMessagesMinMs) return false;
     if (typeof d.batchPauseEnabled !== 'boolean') return false;
     if (!Number.isInteger(d.batchSize) || d.batchSize < 1) return false;
     if (!Number.isFinite(d.batchPauseMs) || d.batchPauseMs < 60000) return false;
@@ -1147,6 +1171,15 @@ export class SchedulerService {
     }
   }
 
+  private getMessageIntervalMs(deliveryOptions?: DeliveryOptions): number {
+    const minMs = Math.max(1000, deliveryOptions?.intervalBetweenMessagesMinMs ?? MIN_SEND_INTERVAL_MS);
+    const maxMs = Math.max(minMs, deliveryOptions?.intervalBetweenMessagesMaxMs ?? minMs);
+    
+    if (minMs === maxMs) return minMs;
+    
+    return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+  }
+
   private async executeSchedule(
     schedule: ScheduledMessage,
     isRunNow = false
@@ -1192,10 +1225,6 @@ export class SchedulerService {
     let failedCount = 0;
     let skippedCount = 0;
 
-    const intervalMs = Math.max(
-      1000,
-      schedule.deliveryOptions?.intervalBetweenMessagesMs ?? MIN_SEND_INTERVAL_MS
-    );
     const batchPauseEnabled = Boolean(schedule.deliveryOptions?.batchPauseEnabled);
     const batchSize = Math.max(1, schedule.deliveryOptions?.batchSize || 5);
     const batchPauseMs = Math.max(5000, schedule.deliveryOptions?.batchPauseMs || 300000);
@@ -1315,6 +1344,7 @@ export class SchedulerService {
           }
         } else {
           // Standard interval between individual messages
+          const intervalMs = this.getMessageIntervalMs(schedule.deliveryOptions);
           await new Promise((res) => setTimeout(res, intervalMs));
         }
       }
