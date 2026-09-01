@@ -197,6 +197,33 @@ export class ContactsService {
     return count;
   }
 
+  private getLatestTimestamp(...dates: (string | null | undefined)[]): string | null {
+    let latest: Date | null = null;
+    let latestStr: string | null = null;
+
+    for (const d of dates) {
+      if (d) {
+        const parsed = new Date(d);
+        if (!isNaN(parsed.getTime())) {
+          if (!latest || parsed > latest) {
+            latest = parsed;
+            latestStr = d;
+          }
+        }
+      }
+    }
+    return latestStr;
+  }
+
+  private getBestName(...names: (string | null | undefined)[]): string | null {
+    for (const n of names) {
+      if (n && n.trim().length > 0 && !n.includes('@') && !/^\+?\d+$/.test(n)) {
+        return n;
+      }
+    }
+    return null;
+  }
+
   public reconcileLidMapping(lidJid: string, pnJid: string, metadata?: { name?: string | null; lastSeenAt?: string | null }): KnownContact | null {
     if (!lidJid.includes('@lid')) return null;
     if (!pnJid.includes('@s.whatsapp.net')) return null;
@@ -205,7 +232,7 @@ export class ContactsService {
     if (!normalizedPn) return null;
     
     // Check if a false JID was created via the legacy bug
-    const lidDigits = lidJid.replace(/\D/g, '');
+    const lidDigits = lidJid.split('@')[0].split(':')[0];
     const legacyFakePn = `${lidDigits}@s.whatsapp.net`;
     const existingLegacy = this.contactsMap.get(legacyFakePn);
 
@@ -213,13 +240,23 @@ export class ContactsService {
     const existingLid = this.contactsMap.get(lidJid);
 
     // Merge names, picking the best
-    const bestName = metadata?.name || existingPn?.name || existingLegacy?.name || existingLid?.name || null;
-    const bestLastSeenAt = metadata?.lastSeenAt || existingPn?.lastSeenAt || existingLegacy?.lastSeenAt || existingLid?.lastSeenAt || null;
-    const bestSource = existingPn?.source || existingLegacy?.source || existingLid?.source || 'contact';
+    const bestName = this.getBestName(metadata?.name, existingPn?.name, existingLegacy?.name, existingLid?.name);
+    
+    // Pick the most recent timestamp
+    const bestLastSeenAt = this.getLatestTimestamp(metadata?.lastSeenAt, existingPn?.lastSeenAt, existingLegacy?.lastSeenAt, existingLid?.lastSeenAt);
+    
+    // Merge source
+    const sources = [existingPn?.source, existingLegacy?.source, existingLid?.source, 'contact'].filter(Boolean) as string[];
+    let bestSource: 'contact' | 'chat' | 'message' = 'message';
+    if (sources.includes('contact')) bestSource = 'contact';
+    else if (sources.includes('chat')) bestSource = 'chat';
 
-    // Remove the bad legacy records
+    // Remove the bad legacy records and the original LID record
     if (existingLegacy) {
       this.contactsMap.delete(legacyFakePn);
+    }
+    if (existingLid) {
+      this.contactsMap.delete(lidJid);
     }
     
     // Upsert to the correct PN
