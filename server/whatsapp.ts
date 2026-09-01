@@ -127,18 +127,20 @@ export class WhatsAppService {
 
   private async processContact(c: any, source: 'contact' | 'chat' | 'message' = 'contact') {
     if (!c?.id) return;
+    if (c.id.endsWith('@g.us') || c.id.includes('@broadcast')) return;
+
     const bestName = this.getBestContactName(c);
     const hasPhone = !!c.phoneNumber;
     const hasLid = !!c.lid;
     
-    if (bestName || hasPhone || hasLid) {
+    if (bestName || hasPhone || hasLid || source === 'chat') {
        const resolved = await this.resolvePrivateIdentity(c.id, {
          phoneNumber: c.phoneNumber,
          lid: c.lid
        });
        
-       if (resolved.canonicalJid.includes('@s.whatsapp.net') && c.id.includes('@lid')) {
-         this.contactsService.reconcileLidMapping(c.id, resolved.canonicalJid, { name: bestName });
+       if (resolved.canonicalJid.includes('@s.whatsapp.net') && resolved.lid?.includes('@lid')) {
+         this.contactsService.reconcileLidMapping(resolved.lid, resolved.canonicalJid, { name: bestName, source });
        } else {
          this.contactsService.upsertContact({
            jid: resolved.canonicalJid,
@@ -184,18 +186,27 @@ export class WhatsAppService {
     // 2. Check for phoneNumber hint
     if (hints?.phoneNumber) {
       let pnClean = hints.phoneNumber;
-      if (pnClean.includes('@s.whatsapp.net')) {
-        pnClean = pnClean.split('@')[0].split(':')[0];
+      let isValidDomain = false;
+
+      if (pnClean.includes('@')) {
+        if (pnClean.includes('@s.whatsapp.net')) {
+          pnClean = pnClean.split('@')[0].split(':')[0];
+          isValidDomain = true;
+        }
+      } else {
+        isValidDomain = true;
       }
-      // If it has digits, we extract them
-      const digitsOnly = pnClean.replace(/\D/g, '');
-      if (digitsOnly.length > 0) {
-        const pn = `${digitsOnly}@s.whatsapp.net`;
-        return {
-          canonicalJid: pn,
-          number: digitsOnly,
-          lid: primaryJid
-        };
+
+      if (isValidDomain) {
+        const digitsOnly = pnClean.replace(/\D/g, '');
+        if (digitsOnly.length >= 10) {
+          const pn = `${digitsOnly}@s.whatsapp.net`;
+          return {
+            canonicalJid: pn,
+            number: digitsOnly,
+            lid: primaryJid
+          };
+        }
       }
     }
 
@@ -781,7 +792,8 @@ export class WhatsAppService {
           if (finalRemoteJid !== remoteJid && remoteJid.includes('@lid')) {
             this.contactsService.reconcileLidMapping(remoteJid, finalRemoteJid, {
               name: pushName,
-              lastSeenAt: new Date(timestamp).toISOString()
+              lastSeenAt: new Date(timestamp).toISOString(),
+              source: 'message'
             });
           } else {
             this.contactsService.upsertContact({
@@ -842,13 +854,7 @@ export class WhatsAppService {
 
       if (Array.isArray(histChats)) {
         for (const ch of histChats) {
-          if (ch?.id && !ch.id.endsWith('@g.us') && !ch.id.includes('@broadcast')) {
-            this.contactsService.upsertContact({
-              jid: ch.id,
-              name: ch.name || null,
-              source: 'chat',
-            });
-          }
+          await this.processContact(ch, 'chat');
         }
       }
     });

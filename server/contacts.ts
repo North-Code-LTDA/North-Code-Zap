@@ -224,7 +224,7 @@ export class ContactsService {
     return null;
   }
 
-  public reconcileLidMapping(lidJid: string, pnJid: string, metadata?: { name?: string | null; lastSeenAt?: string | null }): KnownContact | null {
+  public reconcileLidMapping(lidJid: string, pnJid: string, metadata?: { name?: string | null; lastSeenAt?: string | null; source?: 'message' | 'chat' | 'contact' }): KnownContact | null {
     if (!lidJid.includes('@lid')) return null;
     if (!pnJid.includes('@s.whatsapp.net')) return null;
 
@@ -246,7 +246,7 @@ export class ContactsService {
     const bestLastSeenAt = this.getLatestTimestamp(metadata?.lastSeenAt, existingPn?.lastSeenAt, existingLegacy?.lastSeenAt, existingLid?.lastSeenAt);
     
     // Merge source
-    const sources = [existingPn?.source, existingLegacy?.source, existingLid?.source, 'contact'].filter(Boolean) as string[];
+    const sources = [existingPn?.source, existingLegacy?.source, existingLid?.source, metadata?.source].filter(Boolean) as string[];
     let bestSource: 'contact' | 'chat' | 'message' = 'message';
     if (sources.includes('contact')) bestSource = 'contact';
     else if (sources.includes('chat')) bestSource = 'chat';
