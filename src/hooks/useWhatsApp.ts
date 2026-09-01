@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { socket } from '../lib/socket';
 import type { WhatsAppAccountInfo, ReceivedMessage } from '../types';
 
@@ -181,10 +181,27 @@ export function useWhatsApp(instanceId: string | null) {
     [instanceId, addLog]
   );
 
+  const incomingChatsCount = useMemo(() => {
+    const chats = new Set<string>();
+
+    for (const message of messages) {
+      if (message.direction === 'outgoing') continue;
+      
+      if (!message.remoteJid) continue;
+      if (message.remoteJid.endsWith('@g.us')) continue;
+      if (message.remoteJid.includes('@broadcast')) continue;
+
+      chats.add(message.remoteJid);
+    }
+
+    return chats.size;
+  }, [messages]);
+
   return {
     state,
     messages,
     messagesCount: messages.length,
+    incomingChatsCount,
     socketConnected,
     loading,
     logs,

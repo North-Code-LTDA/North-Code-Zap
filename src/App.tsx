@@ -45,7 +45,7 @@ import type { NavigationTab } from './types';
 function AppContent() {
   const { identity, logout } = useAuth();
   const { selectedInstanceId } = useInstances();
-  const { state, messages, messagesCount, socketConnected, loading, logs, connect, disconnect, sendMessage } = useWhatsApp(selectedInstanceId);
+  const { state, messages, messagesCount, incomingChatsCount, socketConnected, loading, logs, connect, disconnect, sendMessage } = useWhatsApp(selectedInstanceId);
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -58,7 +58,7 @@ function AppContent() {
   }> = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, isReal: true },
     { id: 'whatsapp', label: 'WhatsApp', icon: Smartphone, isReal: true },
-    { id: 'conversas', label: 'Conversas', icon: MessageSquare, badge: messagesCount > 0 ? messagesCount : undefined, isReal: true },
+    { id: 'conversas', label: 'Conversas', icon: MessageSquare, badge: incomingChatsCount > 0 ? incomingChatsCount : undefined, isReal: true },
     { id: 'agendamentos', label: 'Agendamentos', icon: Calendar, isReal: true },
     { id: 'contatos', label: 'Contatos', icon: Users, isReal: true },
     { id: 'templates', label: 'Templates', icon: FileText, isReal: true },
