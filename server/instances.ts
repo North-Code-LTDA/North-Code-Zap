@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { WhatsAppService } from './whatsapp.ts';
 import { ContactsService } from './contacts.ts';
+import { ChatService } from './chats.ts';
 import { AudienceService } from './audiences.ts';
 import { MediaService } from './media.ts';
 import type { Server as SocketIOServer } from 'socket.io';
@@ -31,6 +32,7 @@ export interface InstanceRuntime {
   metadata: InstanceMetadata;
   whatsapp: WhatsAppService;
   contacts: ContactsService;
+  chats: ChatService;
   audiences: AudienceService;
   media: MediaService;
 }
@@ -40,6 +42,7 @@ export class InstanceManager {
     for (const runtime of this.runtimes.values()) {
       if (runtime.metadata.workspaceId === workspaceId) {
         runtime.contacts.flushPendingSave();
+        runtime.chats.flushPendingSave();
       }
     }
   }
@@ -265,10 +268,12 @@ export class InstanceManager {
 
     const contactsFile = path.join(recipientsDir, 'contacts.json');
     const contacts = new ContactsService(contactsFile);
+    const chatsFile = path.join(recipientsDir, 'chats.json');
+    const chats = new ChatService(chatsFile);
     const audiencesFile = path.join(recipientsDir, 'audiences.json');
     const audiences = new AudienceService(audiencesFile);
     const media = new MediaService(mediaDir);
-    const whatsapp = new WhatsAppService(meta.id, authDir, contacts);
+    const whatsapp = new WhatsAppService(meta.id, authDir, contacts, chats);
     
     if (this.io) {
       whatsapp.setSocketIO(this.io);
@@ -278,6 +283,7 @@ export class InstanceManager {
       metadata: meta,
       whatsapp,
       contacts,
+      chats,
       audiences,
       media
     };

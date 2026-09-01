@@ -509,6 +509,12 @@ async function startServer() {
     res.json(runtime.whatsapp.getMessages());
   });
 
+  app.get('/api/instances/:instanceId/whatsapp/chats', (req, res) => {
+    const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
+    if (!runtime) return res.status(404).json({ error: 'Not found' });
+    res.json(runtime.chats.getAll());
+  });
+
   app.get('/api/instances/:instanceId/contacts', (req, res) => {
     const runtime = instanceManager.getForWorkspace(req.params.instanceId, req.auth!.workspace.id);
     if (!runtime) return res.status(404).json({ error: 'Not found' });

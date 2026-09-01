@@ -57,6 +57,22 @@ export interface ScheduledTarget {
   source: 'directory' | 'manual' | 'import' | 'group_member' | 'group';
 }
 
+export interface KnownChat {
+  id: string;
+  addressJid: string;
+  type: 'private' | 'group';
+  phoneJid: string | null;
+  lidJid: string | null;
+  number: string | null;
+  name: string | null;
+  archived: boolean;
+  unreadCount: number | null;
+  participantsCount: number | null;
+  lastMessageAt: string | null;
+  lastMessagePreview: string | null;
+  updatedAt: string;
+}
+
 export interface KnownContact {
   jid: string;
   number: string | null;

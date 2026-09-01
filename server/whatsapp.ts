@@ -10,6 +10,7 @@ import path from 'path';
 import QRCode from 'qrcode';
 import type { Server as SocketIOServer } from 'socket.io';
 import { type ContactsService } from './contacts';
+import { type ChatService } from './chats';
 import type {
   GroupParticipant,
   GroupParticipantsResponse,
@@ -51,6 +52,11 @@ export class WhatsAppService {
           oldSock.ev.removeAllListeners('contacts.upsert');
           oldSock.ev.removeAllListeners('contacts.update');
           oldSock.ev.removeAllListeners('messaging-history.set');
+          oldSock.ev.removeAllListeners('chats.upsert');
+          oldSock.ev.removeAllListeners('chats.update');
+          oldSock.ev.removeAllListeners('chats.delete');
+          oldSock.ev.removeAllListeners('groups.upsert');
+          oldSock.ev.removeAllListeners('groups.update');
         } catch (e) {
           console.warn('[WhatsApp] error removing listeners:', e);
         }
@@ -95,11 +101,13 @@ export class WhatsAppService {
   public instanceId: string;
   private authDir: string;
   private contactsService: ContactsService;
+  private chatService: ChatService;
 
-  constructor(instanceId: string, authDir: string, contactsService: ContactsService) {
+  constructor(instanceId: string, authDir: string, contactsService: ContactsService, chatService: ChatService) {
     this.instanceId = instanceId;
     this.authDir = authDir;
     this.contactsService = contactsService;
+    this.chatService = chatService;
     this.ensureAuthDir();
   }
 
@@ -125,6 +133,39 @@ export class WhatsAppService {
     return null;
   }
 
+  private async processChat(ch: any) {
+    if (!ch?.id) return;
+    if (ch.id.includes('@broadcast')) return;
+
+    const isGroup = ch.id.endsWith('@g.us');
+    let catalogJid = ch.id;
+    let catalogNumber: string | null = null;
+    let lidJid: string | undefined = undefined;
+    let phoneJid: string | undefined = undefined;
+    
+    if (!isGroup) {
+       const resolved = await this.resolvePrivateIdentity(ch.id);
+       catalogJid = resolved.canonicalJid;
+       catalogNumber = resolved.number || null;
+       if (ch.id.includes('@lid')) lidJid = ch.id;
+       if (catalogJid.includes('@s.whatsapp.net')) phoneJid = catalogJid;
+    }
+    
+    const bestName = this.getBestContactName(ch);
+
+    this.chatService.upsert({
+      id: catalogJid,
+      addressJid: ch.id,
+      type: isGroup ? 'group' : 'private',
+      name: bestName,
+      number: catalogNumber,
+      lidJid,
+      phoneJid,
+      archived: ch.archived !== undefined ? !!ch.archived : undefined,
+      unreadCount: ch.unreadCount !== undefined ? ch.unreadCount : undefined,
+    });
+  }
+
   private async processContact(c: any, source: 'contact' | 'chat' | 'message' = 'contact') {
     if (!c?.id) return;
     if (c.id.endsWith('@g.us') || c.id.includes('@broadcast')) return;
@@ -141,6 +182,7 @@ export class WhatsAppService {
        
        if (resolved.canonicalJid.includes('@s.whatsapp.net') && resolved.lid?.includes('@lid')) {
          this.contactsService.reconcileLidMapping(resolved.lid, resolved.canonicalJid, { name: bestName, source });
+         this.chatService.enrichIdentity(resolved.lid, { name: bestName, phoneJid: resolved.canonicalJid, lidJid: resolved.lid });
        } else {
          this.contactsService.upsertContact({
            jid: resolved.canonicalJid,
@@ -149,6 +191,7 @@ export class WhatsAppService {
            lid: resolved.lid,
            number: resolved.number
          });
+         this.chatService.enrichIdentity(resolved.canonicalJid, { name: bestName, lidJid: resolved.lid || undefined });
        }
     }
   }
@@ -323,6 +366,23 @@ export class WhatsAppService {
         });
       }
 
+      if (!targetJid.includes('@broadcast')) {
+        const catalogJid = isGroupTarget ? targetJid : (await this.resolvePrivateIdentity(targetJid)).canonicalJid;
+        const catalogNumber = isGroupTarget ? null : (catalogJid.includes('@s.whatsapp.net') ? catalogJid.split('@')[0].split(':')[0] : null);
+        
+        this.chatService.upsert({
+          id: catalogJid,
+          addressJid: targetJid,
+          type: isGroupTarget ? 'group' : 'private',
+          name: targetPushName,
+          number: catalogNumber,
+          lidJid: (!isGroupTarget && targetJid.includes('@lid')) ? targetJid : undefined,
+          phoneJid: (!isGroupTarget && catalogJid.includes('@s.whatsapp.net')) ? catalogJid : undefined,
+          lastMessageAt: new Date(timestamp).toISOString(),
+          lastMessagePreview: trimmedText
+        });
+      }
+
       // Log after sending: [WhatsApp] message sent to=5593... id=...
       console.log(`[WhatsApp] message sent to=${rawNumber || targetJid} id=${messageId}`);
 
@@ -424,6 +484,23 @@ export class WhatsAppService {
           name: targetPushName,
           source: 'message',
           lastSeenAt: new Date().toISOString(),
+        });
+      }
+
+      if (!targetJid.includes('@broadcast')) {
+        const catalogJid = isGroupTarget ? targetJid : (await this.resolvePrivateIdentity(targetJid)).canonicalJid;
+        const catalogNumber = isGroupTarget ? null : (catalogJid.includes('@s.whatsapp.net') ? catalogJid.split('@')[0].split(':')[0] : null);
+        
+        this.chatService.upsert({
+          id: catalogJid,
+          addressJid: targetJid,
+          type: isGroupTarget ? 'group' : 'private',
+          name: targetPushName,
+          number: catalogNumber,
+          lidJid: (!isGroupTarget && targetJid.includes('@lid')) ? targetJid : undefined,
+          phoneJid: (!isGroupTarget && catalogJid.includes('@s.whatsapp.net')) ? catalogJid : undefined,
+          lastMessageAt: new Date(timestamp).toISOString(),
+          lastMessagePreview: trimmedCaption || '[Imagem]'
         });
       }
 
@@ -644,6 +721,14 @@ export class WhatsAppService {
         this.sock.ev.removeAllListeners('creds.update');
         this.sock.ev.removeAllListeners('connection.update');
         this.sock.ev.removeAllListeners('messages.upsert');
+        this.sock.ev.removeAllListeners('contacts.upsert');
+        this.sock.ev.removeAllListeners('contacts.update');
+        this.sock.ev.removeAllListeners('messaging-history.set');
+        this.sock.ev.removeAllListeners('chats.upsert');
+        this.sock.ev.removeAllListeners('chats.update');
+        this.sock.ev.removeAllListeners('chats.delete');
+        this.sock.ev.removeAllListeners('groups.upsert');
+        this.sock.ev.removeAllListeners('groups.update');
       } catch {}
       this.sock = null;
     }
@@ -810,6 +895,21 @@ export class WhatsAppService {
         // Required diagnostic log: [WhatsApp] message received from=5593... type=text
         console.log(`[WhatsApp] message received from=${finalNumber || finalRemoteJid} type=${messageType}${isGroupMessage ? ' (group)' : ''}`);
 
+        // Update Chat Catalog
+        if (!finalRemoteJid.includes('@broadcast')) {
+          this.chatService.upsert({
+             id: isGroupMessage ? finalRemoteJid : (finalRemoteJid !== remoteJid && remoteJid.includes('@lid') ? finalRemoteJid : finalRemoteJid),
+             addressJid: isGroupMessage ? finalRemoteJid : remoteJid,
+             type: isGroupMessage ? 'group' : 'private',
+             name: pushName,
+             number: isGroupMessage ? null : (finalNumber || null),
+             lidJid: (!isGroupMessage && remoteJid.includes('@lid')) ? remoteJid : undefined,
+             phoneJid: (!isGroupMessage && finalRemoteJid.includes('@s.whatsapp.net')) ? finalRemoteJid : undefined,
+             lastMessageAt: new Date(timestamp).toISOString(),
+             lastMessagePreview: text
+          });
+        }
+
         // Emit to frontend via Socket.IO ONLY if private chat
         if (this.io && !isGroupMessage && !finalRemoteJid.includes('@broadcast')) {
           this.io.to(`instance:${this.instanceId}`).emit('whatsapp:message', receivedMessage);
@@ -855,6 +955,65 @@ export class WhatsAppService {
       if (Array.isArray(histChats)) {
         for (const ch of histChats) {
           await this.processContact(ch, 'chat');
+          await this.processChat(ch);
+        }
+      }
+    });
+
+    this.sock.ev.on('chats.upsert', async (newChats: any[]) => {
+      if (Array.isArray(newChats)) {
+        for (const ch of newChats) {
+          await this.processChat(ch);
+        }
+      }
+    });
+
+    this.sock.ev.on('chats.update', async (updates: any[]) => {
+      if (Array.isArray(updates)) {
+        for (const ch of updates) {
+           await this.processChat(ch);
+        }
+      }
+    });
+
+    this.sock.ev.on('chats.delete', async (deletedIds: string[]) => {
+       if (Array.isArray(deletedIds)) {
+         for (const id of deletedIds) {
+           this.chatService.remove(id);
+         }
+       }
+    });
+
+    this.sock.ev.on('groups.upsert', async (newGroups: any[]) => {
+      if (Array.isArray(newGroups)) {
+        for (const g of newGroups) {
+           if (g && g.id) {
+             const participantsCount = Array.isArray(g.participants) ? g.participants.length : (g.size || undefined);
+             this.chatService.upsert({
+                id: g.id,
+                addressJid: g.id,
+                type: 'group',
+                name: g.subject || undefined,
+                participantsCount
+             });
+           }
+        }
+      }
+    });
+
+    this.sock.ev.on('groups.update', async (updates: any[]) => {
+      if (Array.isArray(updates)) {
+        for (const g of updates) {
+           if (g && g.id) {
+             const participantsCount = Array.isArray(g.participants) ? g.participants.length : (g.size || undefined);
+             this.chatService.upsert({
+                id: g.id,
+                addressJid: g.id,
+                type: 'group',
+                name: g.subject || undefined,
+                participantsCount
+             });
+           }
         }
       }
     });
@@ -923,6 +1082,23 @@ export class WhatsAppService {
 
         this.updateStatus('connected', { qrCode: null, error: null });
         this.startConnectionSupervisor();
+        
+        // Seed groups non-blocking
+        this.getGroups().then(groups => {
+          if (Array.isArray(groups)) {
+             for (const g of groups) {
+                this.chatService.upsert({
+                   id: g.id,
+                   addressJid: g.id,
+                   type: 'group',
+                   name: g.subject,
+                   participantsCount: g.participantsCount
+                });
+             }
+          }
+        }).catch(err => {
+           console.warn(`[WhatsApp] failed to seed groups on connect: ${err?.message}`);
+        });
       }
 
       if (connection === 'close') {
