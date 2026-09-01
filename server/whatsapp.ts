@@ -112,7 +112,70 @@ export class WhatsAppService {
 
   public setSocketIO(io: SocketIOServer) {
     this.io = io;
+  }
+
+  private async resolvePrivateIdentity(
+    primaryJid: string,
+    hints?: { remoteJidAlt?: string; phoneNumber?: string; lid?: string }
+  ): Promise<{ canonicalJid: string; number: string | null; lid: string | null }> {
+    const isLid = primaryJid.includes('@lid');
     
+    if (!isLid) {
+      // It's already a PN or group or broadcast, just return it as is.
+      // If it's a standard PN:
+      if (primaryJid.includes('@s.whatsapp.net')) {
+        return {
+          canonicalJid: primaryJid,
+          number: primaryJid.split('@')[0].split(':')[0],
+          lid: hints?.lid || null
+        };
+      }
+      return { canonicalJid: primaryJid, number: null, lid: null };
+    }
+
+    // It's a LID
+    // 1. Check for remoteJidAlt
+    if (hints?.remoteJidAlt && hints.remoteJidAlt.includes('@s.whatsapp.net')) {
+      const pn = hints.remoteJidAlt;
+      return {
+        canonicalJid: pn,
+        number: pn.split('@')[0].split(':')[0],
+        lid: primaryJid
+      };
+    }
+
+    // 2. Check for phoneNumber hint
+    if (hints?.phoneNumber) {
+      const pn = `${hints.phoneNumber}@s.whatsapp.net`;
+      return {
+        canonicalJid: pn,
+        number: hints.phoneNumber,
+        lid: primaryJid
+      };
+    }
+
+    // 3. Fallback to Baileys signalRepository
+    if (this.sock?.signalRepository?.lidMapping?.getPNForLID) {
+      try {
+        const pnFromRepo = await this.sock.signalRepository.lidMapping.getPNForLID(primaryJid);
+        if (pnFromRepo) {
+          return {
+            canonicalJid: pnFromRepo,
+            number: pnFromRepo.split('@')[0].split(':')[0],
+            lid: primaryJid
+          };
+        }
+      } catch (err) {
+        console.warn(`[WhatsApp] Error resolving PN for LID ${primaryJid}:`, err);
+      }
+    }
+
+    // 4. No mapping found
+    return {
+      canonicalJid: primaryJid,
+      number: null,
+      lid: primaryJid
+    };
   }
 
   
@@ -591,8 +654,19 @@ export class WhatsAppService {
           continue;
         }
 
-        // Extract sender phone number from remoteJid (handles standard and group participants if available)
-        const rawNumber = remoteJid.split('@')[0].split(':')[0];
+        // Resolve private identity
+        const isGroupTarget = remoteJid.endsWith('@g.us');
+        let finalRemoteJid = remoteJid;
+        let finalNumber = remoteJid.split('@')[0].split(':')[0];
+
+        if (!isGroupTarget) {
+          const resolved = await this.resolvePrivateIdentity(remoteJid, {
+            remoteJidAlt: msg.key?.remoteJidAlt
+          });
+          finalRemoteJid = resolved.canonicalJid;
+          finalNumber = resolved.number || '';
+        }
+        
         const pushName = msg.pushName || null;
 
         // Extract text and determine message type
@@ -641,8 +715,8 @@ export class WhatsAppService {
 
         const receivedMessage: ReceivedMessage = {
           id: messageId,
-          remoteJid,
-          number: rawNumber || null,
+          remoteJid: finalRemoteJid,
+          number: finalNumber || null,
           pushName,
           text,
           type: messageType,
@@ -650,29 +724,30 @@ export class WhatsAppService {
           direction: 'incoming',
         };
 
-        const isGroupMessage = remoteJid.endsWith('@g.us');
+        const isGroupMessage = finalRemoteJid.endsWith('@g.us');
 
         // Add to memory list ONLY if private chat
-        if (!isGroupMessage && !remoteJid.includes('@broadcast')) {
+        if (!isGroupMessage && !finalRemoteJid.includes('@broadcast')) {
           this.messages = [receivedMessage, ...this.messages].slice(0, MAX_MESSAGES_IN_MEMORY);
         }
 
         // Record contact in Contacts Directory
-        if (!isGroupMessage && !remoteJid.includes('@broadcast')) {
+        if (!isGroupMessage && !finalRemoteJid.includes('@broadcast')) {
           this.contactsService.upsertContact({
-            jid: remoteJid,
-            number: rawNumber || null,
+            jid: finalRemoteJid,
+            number: finalNumber || null,
             name: pushName,
             source: 'message',
             lastSeenAt: new Date(timestamp).toISOString(),
+            lid: remoteJid.includes('@lid') ? remoteJid : undefined
           });
         }
 
         // Required diagnostic log: [WhatsApp] message received from=5593... type=text
-        console.log(`[WhatsApp] message received from=${rawNumber || remoteJid} type=${messageType}${isGroupMessage ? ' (group)' : ''}`);
+        console.log(`[WhatsApp] message received from=${finalNumber || finalRemoteJid} type=${messageType}${isGroupMessage ? ' (group)' : ''}`);
 
         // Emit to frontend via Socket.IO ONLY if private chat
-        if (this.io && !isGroupMessage && !remoteJid.includes('@broadcast')) {
+        if (this.io && !isGroupMessage && !finalRemoteJid.includes('@broadcast')) {
           this.io.to(`instance:${this.instanceId}`).emit('whatsapp:message', receivedMessage);
         }
       }
@@ -682,12 +757,19 @@ export class WhatsAppService {
     this.sock.ev.on('contacts.upsert', (newContacts: any[]) => {
       if (Array.isArray(newContacts)) {
         for (const c of newContacts) {
-          if (c?.id && typeof c.name === 'string' && c.name.trim().length > 0) {
-            this.contactsService.upsertContact({
-              jid: c.id,
-              name: c.name,
-              source: 'contact',
-            });
+          if (c?.id) {
+            const hasName = typeof c.name === 'string' && c.name.trim().length > 0;
+            const hasPhone = !!c.phoneNumber;
+            const hasLid = !!c.lid;
+            if (hasName || hasPhone || hasLid) {
+              this.contactsService.upsertContact({
+                jid: c.id,
+                name: hasName ? c.name : null,
+                source: 'contact',
+                lid: c.lid || null,
+                number: c.phoneNumber || null
+              });
+            }
           }
         }
       }
@@ -696,27 +778,51 @@ export class WhatsAppService {
     this.sock.ev.on('contacts.update', (updates: any[]) => {
       if (Array.isArray(updates)) {
         for (const c of updates) {
-          if (c?.id && typeof c.name === 'string' && c.name.trim().length > 0) {
-            this.contactsService.upsertContact({
-              jid: c.id,
-              name: c.name,
-              source: 'contact',
-            });
+          if (c?.id) {
+            const hasName = typeof c.name === 'string' && c.name.trim().length > 0;
+            const hasPhone = !!c.phoneNumber;
+            const hasLid = !!c.lid;
+            if (hasName || hasPhone || hasLid) {
+              this.contactsService.upsertContact({
+                jid: c.id,
+                name: hasName ? c.name : null,
+                source: 'contact',
+                lid: c.lid || null,
+                number: c.phoneNumber || null
+              });
+            }
           }
         }
       }
     });
 
     // Handle messaging-history.set (Initial sync of contacts and chats)
-    this.sock.ev.on('messaging-history.set', ({ contacts: histContacts, chats: histChats }: any) => {
+    this.sock.ev.on('messaging-history.set', (payload: any) => {
+      const { contacts: histContacts, chats: histChats, lidPnMappings } = payload;
+      
+      if (Array.isArray(lidPnMappings)) {
+        for (const mapping of lidPnMappings) {
+          if (mapping.lid && mapping.pn) {
+            this.contactsService.reconcileLidMapping(mapping.lid, mapping.pn);
+          }
+        }
+      }
+      
       if (Array.isArray(histContacts)) {
         for (const c of histContacts) {
-          if (c?.id && typeof c.name === 'string' && c.name.trim().length > 0) {
-            this.contactsService.upsertContact({
-              jid: c.id,
-              name: c.name,
-              source: 'contact',
-            });
+          if (c?.id) {
+            const hasName = typeof c.name === 'string' && c.name.trim().length > 0;
+            const hasPhone = !!c.phoneNumber;
+            const hasLid = !!c.lid;
+            if (hasName || hasPhone || hasLid) {
+              this.contactsService.upsertContact({
+                jid: c.id,
+                name: hasName ? c.name : null,
+                source: 'contact',
+                lid: c.lid || null,
+                number: c.phoneNumber || null
+              });
+            }
           }
         }
       }

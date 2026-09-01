@@ -63,6 +63,7 @@ export interface KnownContact {
   name: string | null;
   source: 'message' | 'contact' | 'chat';
   lastSeenAt?: string | null;
+  lid?: string | null;
 }
 
 export interface GroupParticipant {
