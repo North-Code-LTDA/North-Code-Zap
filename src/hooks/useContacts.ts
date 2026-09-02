@@ -1,10 +1,18 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef, useLayoutEffect } from 'react';
 import type { KnownContact } from '../types';
 
 export function useContacts(instanceId: string | null) {
   const [contacts, setContacts] = useState<KnownContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const activeInstanceRef = useRef<string | null>(instanceId);
+  const requestSeqRef = useRef(0);
+
+  useLayoutEffect(() => {
+    activeInstanceRef.current = instanceId;
+    requestSeqRef.current += 1;
+  }, [instanceId]);
 
   const fetchContacts = useCallback(async () => {
     if (!instanceId) return;

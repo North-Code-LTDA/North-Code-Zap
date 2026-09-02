@@ -54,9 +54,11 @@ export function ConversasView({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastFetchedInstanceRef = useRef<string | null>(null);
   const activeInstanceRef = useRef<string | null>(selectedInstanceId);
+  const chatsRequestSeqRef = useRef(0);
 
   useLayoutEffect(() => {
     activeInstanceRef.current = selectedInstanceId;
+    chatsRequestSeqRef.current += 1;
   }, [selectedInstanceId]);
 
   const isConnected = state.status === 'connected';
@@ -69,6 +71,8 @@ export function ConversasView({
       return;
     }
 
+    const requestSeq = ++chatsRequestSeqRef.current;
+
     setChatsLoading(true);
     setChatsError(null);
     try {
@@ -78,7 +82,7 @@ export function ConversasView({
       }
       const data = await res.json();
       
-      if (activeInstanceRef.current !== instanceIdForFetch) return;
+      if (activeInstanceRef.current !== instanceIdForFetch || chatsRequestSeqRef.current !== requestSeq) return;
 
       if (Array.isArray(data)) {
         setKnownChats(data);
@@ -87,10 +91,10 @@ export function ConversasView({
         setChatsError('Formato de dados inválido.');
       }
     } catch (err: any) {
-      if (activeInstanceRef.current !== instanceIdForFetch) return;
+      if (activeInstanceRef.current !== instanceIdForFetch || chatsRequestSeqRef.current !== requestSeq) return;
       setChatsError(err.message || 'Erro ao carregar o catálogo de chats.');
     } finally {
-      if (activeInstanceRef.current === instanceIdForFetch) {
+      if (activeInstanceRef.current === instanceIdForFetch && chatsRequestSeqRef.current === requestSeq) {
         setChatsLoading(false);
       }
     }

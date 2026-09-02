@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { socket } from '../lib/socket';
 import type { WhatsAppAccountInfo, ReceivedMessage } from '../types';
 
@@ -14,6 +14,14 @@ const INITIAL_STATE: WhatsAppAccountInfo = {
 
 export function useWhatsApp(instanceId: string | null) {
   const [state, setState] = useState<WhatsAppAccountInfo>(INITIAL_STATE);
+
+  const activeInstanceRef = useRef<string | null>(instanceId);
+  const instanceGenerationRef = useRef(0);
+
+  useLayoutEffect(() => {
+    activeInstanceRef.current = instanceId;
+    instanceGenerationRef.current += 1;
+  }, [instanceId]);
   const [messages, setMessages] = useState<ReceivedMessage[]>([]);
   const [socketConnected, setSocketConnected] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
@@ -33,9 +41,12 @@ export function useWhatsApp(instanceId: string | null) {
     setLoading(false);
     
     if (!instanceId) return;
-    
 
-    
+    const instanceIdForEffect = instanceId;
+    const generation = instanceGenerationRef.current;
+    const isCurrentGeneration = () => 
+      activeInstanceRef.current === instanceIdForEffect && 
+      instanceGenerationRef.current === generation;
 
     const onConnect = () => {
       setSocketConnected(true);
@@ -82,11 +93,13 @@ export function useWhatsApp(instanceId: string | null) {
     fetch(`/api/instances/${instanceId}/whatsapp/status`)
       .then((res) => res.json())
       .then((data: WhatsAppAccountInfo) => {
+        if (!isCurrentGeneration()) return;
         if (data && data.status) {
           setState(data);
         }
       })
       .catch((err) => {
+        if (!isCurrentGeneration()) return;
         console.error('Failed to fetch initial status:', err);
       });
 
@@ -94,11 +107,13 @@ export function useWhatsApp(instanceId: string | null) {
     fetch(`/api/instances/${instanceId}/whatsapp/messages`)
       .then((res) => res.json())
       .then((data: ReceivedMessage[]) => {
+        if (!isCurrentGeneration()) return;
         if (Array.isArray(data)) {
           setMessages(data);
         }
       })
       .catch((err) => {
+        if (!isCurrentGeneration()) return;
         console.error('Failed to fetch initial messages:', err);
       });
 

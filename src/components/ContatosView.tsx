@@ -65,8 +65,11 @@ export function ContatosView() {
   const [chatsError, setChatsError] = useState<string | null>(null);
 
   const activeInstanceRef = useRef<string | null>(selectedInstanceId);
+  const chatsRequestSeqRef = useRef(0);
+  
   useLayoutEffect(() => {
     activeInstanceRef.current = selectedInstanceId;
+    chatsRequestSeqRef.current += 1;
   }, [selectedInstanceId]);
 
   const fetchKnownChats = async () => {
@@ -74,21 +77,22 @@ export function ContatosView() {
     if (!instanceIdForFetch) return;
     if (activeInstanceRef.current !== instanceIdForFetch) return;
 
+    const requestSeq = ++chatsRequestSeqRef.current;
+
     setChatsLoading(true);
     setChatsError(null);
     try {
       const res = await fetch(`/api/instances/${instanceIdForFetch}/whatsapp/chats`);
       if (!res.ok) throw new Error('Falha ao carregar conversas');
       const data = await res.json();
-      if (activeInstanceRef.current === instanceIdForFetch) {
-        setKnownChats(data);
-      }
+      
+      if (activeInstanceRef.current !== instanceIdForFetch || chatsRequestSeqRef.current !== requestSeq) return;
+      setKnownChats(data);
     } catch (e: any) {
-      if (activeInstanceRef.current === instanceIdForFetch) {
-        setChatsError(e.message || 'Erro ao carregar conversas');
-      }
+      if (activeInstanceRef.current !== instanceIdForFetch || chatsRequestSeqRef.current !== requestSeq) return;
+      setChatsError(e.message || 'Erro ao carregar conversas');
     } finally {
-      if (activeInstanceRef.current === instanceIdForFetch) {
+      if (activeInstanceRef.current === instanceIdForFetch && chatsRequestSeqRef.current === requestSeq) {
         setChatsLoading(false);
       }
     }
