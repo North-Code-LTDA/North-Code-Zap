@@ -988,7 +988,7 @@ export class WhatsAppService {
       if (Array.isArray(newGroups)) {
         for (const g of newGroups) {
            if (g && g.id) {
-             const participantsCount = Array.isArray(g.participants) ? g.participants.length : (g.size || undefined);
+             const participantsCount = Array.isArray(g.participants) ? g.participants.length : (typeof g.size === 'number' ? g.size : undefined);
              this.chatService.upsert({
                 id: g.id,
                 addressJid: g.id,
@@ -1005,7 +1005,7 @@ export class WhatsAppService {
       if (Array.isArray(updates)) {
         for (const g of updates) {
            if (g && g.id) {
-             const participantsCount = Array.isArray(g.participants) ? g.participants.length : (g.size || undefined);
+             const participantsCount = Array.isArray(g.participants) ? g.participants.length : (typeof g.size === 'number' ? g.size : undefined);
              this.chatService.upsert({
                 id: g.id,
                 addressJid: g.id,

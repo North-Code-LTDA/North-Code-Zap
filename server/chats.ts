@@ -75,131 +75,186 @@ export class ChatService {
     }
   }
 
+  private findPrivateMatches(aliases: Array<string | null | undefined>): KnownChat[] {
+    const knownKeys = aliases.filter(Boolean) as string[];
+    const matches: KnownChat[] = [];
+    for (const [, chat] of this.chatsMap.entries()) {
+      if (
+        knownKeys.includes(chat.id) ||
+        (chat.addressJid && knownKeys.includes(chat.addressJid)) ||
+        (chat.phoneJid && knownKeys.includes(chat.phoneJid)) ||
+        (chat.lidJid && knownKeys.includes(chat.lidJid))
+      ) {
+        if (!matches.find(e => e.id === chat.id)) {
+          matches.push(chat);
+        }
+      }
+    }
+    return matches;
+  }
+
   public upsert(chatData: Partial<KnownChat> & { id: string, addressJid?: string, type?: 'private' | 'group' }): KnownChat {
-    // Determine type
     const isGroup = chatData.type === 'group' || chatData.id.endsWith('@g.us');
     const type = isGroup ? 'group' : 'private';
 
-    let mergedExisting: KnownChat | null = null;
+    let baseRecord: KnownChat | null = null;
     let existingMatches: KnownChat[] = [];
 
-    // Find existing records
     if (type === 'private') {
-      const knownKeys = [chatData.id, chatData.addressJid, chatData.phoneJid, chatData.lidJid].filter(Boolean) as string[];
-      for (const [, chat] of this.chatsMap.entries()) {
-        if (
-          knownKeys.includes(chat.id) ||
-          (chat.addressJid && knownKeys.includes(chat.addressJid)) ||
-          (chat.phoneJid && knownKeys.includes(chat.phoneJid)) ||
-          (chat.lidJid && knownKeys.includes(chat.lidJid))
-        ) {
-          if (!existingMatches.find(e => e.id === chat.id)) {
-            existingMatches.push(chat);
-          }
-        }
-      }
+      existingMatches = this.findPrivateMatches([chatData.id, chatData.addressJid, chatData.phoneJid, chatData.lidJid]);
     } else {
       const existing = this.chatsMap.get(chatData.id);
       if (existing) existingMatches.push(existing);
     }
 
-    // Merge existing records if multiple are found
     if (existingMatches.length > 0) {
-      mergedExisting = existingMatches[0];
+      // Find deterministic base record for general metadata
+      let bestBase = existingMatches[0];
       for (let i = 1; i < existingMatches.length; i++) {
-        const next = existingMatches[i];
+        const candidate = existingMatches[i];
         
-        const timeMerged = mergedExisting.lastMessageAt ? new Date(mergedExisting.lastMessageAt).getTime() : 0;
-        const timeNext = next.lastMessageAt ? new Date(next.lastMessageAt).getTime() : 0;
-        
-        const keepMergedPreview = timeMerged >= timeNext;
+        const timeBest = bestBase.updatedAt ? new Date(bestBase.updatedAt).getTime() : 0;
+        const timeCandidate = candidate.updatedAt ? new Date(candidate.updatedAt).getTime() : 0;
 
-        mergedExisting = {
-          ...mergedExisting,
-          id: mergedExisting.id.includes('@s.whatsapp.net') ? mergedExisting.id : (next.id.includes('@s.whatsapp.net') ? next.id : mergedExisting.id),
-          phoneJid: mergedExisting.phoneJid || next.phoneJid,
-          lidJid: mergedExisting.lidJid || next.lidJid,
-          number: mergedExisting.number || next.number,
-          name: (mergedExisting.name && mergedExisting.name.trim() !== '') ? mergedExisting.name : next.name,
-          archived: next.archived !== undefined ? next.archived : mergedExisting.archived, // Just taking the most recent or merged one's
-          unreadCount: next.unreadCount !== undefined ? next.unreadCount : mergedExisting.unreadCount,
-          participantsCount: next.participantsCount !== undefined ? next.participantsCount : mergedExisting.participantsCount,
-          lastMessageAt: timeMerged >= timeNext ? mergedExisting.lastMessageAt : next.lastMessageAt,
-          lastMessagePreview: keepMergedPreview ? mergedExisting.lastMessagePreview : next.lastMessagePreview,
-        };
+        if (timeCandidate > timeBest) {
+          bestBase = candidate;
+        } else if (timeCandidate === timeBest) {
+          const msgBest = bestBase.lastMessageAt ? new Date(bestBase.lastMessageAt).getTime() : 0;
+          const msgCandidate = candidate.lastMessageAt ? new Date(candidate.lastMessageAt).getTime() : 0;
+          
+          if (msgCandidate > msgBest) {
+            bestBase = candidate;
+          } else if (msgCandidate === msgBest) {
+            if (candidate.id.includes('@s.whatsapp.net') && !bestBase.id.includes('@s.whatsapp.net')) {
+              bestBase = candidate;
+            } else if (candidate.id > bestBase.id) { // stable fallback
+              bestBase = candidate;
+            }
+          }
+        }
       }
+      baseRecord = bestBase;
     }
 
-    // Determine final ID for private
+    // Canonical ID
     let finalId = chatData.id;
     if (type === 'private') {
-      const mergedPhoneJid = chatData.phoneJid || mergedExisting?.phoneJid;
-      if (mergedPhoneJid && mergedPhoneJid.includes('@s.whatsapp.net')) {
-        finalId = mergedPhoneJid;
+      const allPhones = [chatData.phoneJid, ...existingMatches.map(m => m.phoneJid), ...existingMatches.map(m => m.id)];
+      const pn = allPhones.find(p => p && p.includes('@s.whatsapp.net'));
+      if (pn) {
+        finalId = pn;
       }
     }
+
+    // AddressJid
+    let finalAddressJid = finalId;
+    if (chatData.addressJid !== undefined) {
+      finalAddressJid = chatData.addressJid;
+    } else if (existingMatches.length > 0) {
+      const lidMatches = existingMatches.filter(m => m.addressJid?.includes('@lid'));
+      if (lidMatches.length > 0) {
+        lidMatches.sort((a, b) => {
+          const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+          const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+          return tb - ta;
+        });
+        finalAddressJid = lidMatches[0].addressJid!;
+      } else if (baseRecord?.addressJid) {
+         finalAddressJid = baseRecord.addressJid;
+      }
+    }
+
+    // Time and preview
+    let finalLastMessageAt: string | null = null;
+    let finalPreview: string | null = null;
+
+    if (existingMatches.length > 0) {
+      let maxMsgTime = 0;
+      for (const m of existingMatches) {
+        const t = m.lastMessageAt ? new Date(m.lastMessageAt).getTime() : 0;
+        if (t >= maxMsgTime && m.lastMessageAt) {
+          maxMsgTime = t;
+          finalLastMessageAt = m.lastMessageAt;
+          finalPreview = m.lastMessagePreview ?? null;
+        }
+      }
+    }
+
+    if (chatData.lastMessageAt) {
+      const timeNew = new Date(chatData.lastMessageAt).getTime();
+      const timeOld = finalLastMessageAt ? new Date(finalLastMessageAt).getTime() : 0;
+      if (timeNew >= timeOld) {
+        finalLastMessageAt = chatData.lastMessageAt;
+        if (chatData.lastMessagePreview !== undefined) {
+          finalPreview = chatData.lastMessagePreview;
+        }
+      }
+    }
+
+    // Name merge
+    let finalName: string | null = null;
+    if (chatData.name && chatData.name.trim() !== '') {
+      finalName = chatData.name.trim();
+    } else if (baseRecord?.name && baseRecord.name.trim() !== '') {
+      finalName = baseRecord.name.trim();
+    } else {
+      const alternate = existingMatches.find(m => m.name && m.name.trim() !== '');
+      if (alternate && alternate.name) finalName = alternate.name.trim();
+    }
+
+    // Derived aliases
+    let finalPhoneJid = chatData.phoneJid || null;
+    let finalLidJid = chatData.lidJid || null;
+    for (const m of existingMatches) {
+      if (!finalPhoneJid && m.phoneJid) finalPhoneJid = m.phoneJid;
+      if (!finalLidJid && m.lidJid) finalLidJid = m.lidJid;
+    }
+
+    // Number derived
+    let finalNumber = chatData.number || null;
+    if (!finalNumber) {
+      for (const m of existingMatches) {
+         if (m.number) {
+            finalNumber = m.number;
+            break;
+         }
+      }
+    }
+    if (!finalNumber && finalPhoneJid && finalPhoneJid.includes('@s.whatsapp.net')) {
+      const extracted = finalPhoneJid.split('@')[0].split(':')[0];
+      if (extracted && /^\d+$/.test(extracted)) {
+         finalNumber = extracted;
+      }
+    } else if (!finalNumber && finalId.includes('@s.whatsapp.net')) {
+      const extracted = finalId.split('@')[0].split(':')[0];
+      if (extracted && /^\d+$/.test(extracted)) {
+         finalNumber = extracted;
+      }
+    }
+
+    // archived
+    const finalArchived = chatData.archived !== undefined ? chatData.archived : (baseRecord?.archived ?? false);
+
+    // unreadCount
+    const finalUnreadCount = chatData.unreadCount !== undefined ? chatData.unreadCount : (baseRecord?.unreadCount ?? null);
+
+    // participantsCount
+    const finalParticipantsCount = chatData.participantsCount !== undefined ? chatData.participantsCount : (baseRecord?.participantsCount ?? null);
 
     // Delete old IDs from map before setting the new one
     for (const match of existingMatches) {
       this.chatsMap.delete(match.id);
     }
 
-    // Name merge
-    const mergedName = (chatData.name && chatData.name.trim() !== '') ? chatData.name : (mergedExisting?.name || null);
-    
-    // Time and preview
-    let finalLastMessageAt = mergedExisting?.lastMessageAt || null;
-    let finalPreview = mergedExisting?.lastMessagePreview || null;
-
-    if (chatData.lastMessageAt) {
-      const timeNew = new Date(chatData.lastMessageAt).getTime();
-      const timeOld = mergedExisting?.lastMessageAt ? new Date(mergedExisting.lastMessageAt).getTime() : 0;
-      if (timeNew >= timeOld) {
-        finalLastMessageAt = chatData.lastMessageAt;
-        if (chatData.lastMessagePreview !== undefined) {
-          finalPreview = chatData.lastMessagePreview;
-        }
-      } else {
-        if (!finalLastMessageAt) {
-           finalLastMessageAt = chatData.lastMessageAt;
-           if (chatData.lastMessagePreview !== undefined) {
-              finalPreview = chatData.lastMessagePreview;
-           }
-        }
-      }
-    }
-
-    // Unread count
-    let finalUnreadCount = mergedExisting?.unreadCount !== undefined ? mergedExisting.unreadCount : null;
-    if (chatData.unreadCount !== undefined) {
-       finalUnreadCount = chatData.unreadCount;
-    }
-
-    // Participants count
-    let finalParticipantsCount = mergedExisting?.participantsCount !== undefined ? mergedExisting.participantsCount : null;
-    if (chatData.participantsCount !== undefined) {
-       finalParticipantsCount = chatData.participantsCount;
-    }
-
-    // Number
-    let finalPhoneJid = chatData.phoneJid || mergedExisting?.phoneJid || null;
-    let finalNumber = chatData.number || mergedExisting?.number || null;
-    if (!finalNumber && finalPhoneJid && finalPhoneJid.includes('@s.whatsapp.net')) {
-      const extracted = finalPhoneJid.split('@')[0].split(':')[0];
-      if (extracted) {
-         finalNumber = extracted;
-      }
-    }
-
     const updated: KnownChat = {
       id: finalId,
-      addressJid: chatData.addressJid || mergedExisting?.addressJid || finalId,
+      addressJid: finalAddressJid,
       type,
       phoneJid: finalPhoneJid,
-      lidJid: chatData.lidJid || mergedExisting?.lidJid || null,
+      lidJid: finalLidJid,
       number: finalNumber,
-      name: mergedName,
-      archived: chatData.archived !== undefined ? chatData.archived : (mergedExisting?.archived || false),
+      name: finalName,
+      archived: finalArchived,
       unreadCount: finalUnreadCount,
       participantsCount: finalParticipantsCount,
       lastMessageAt: finalLastMessageAt,
@@ -230,6 +285,9 @@ export class ChatService {
   }
 
   public enrichIdentity(jidOrLid: string, updates: { name?: string | null; phoneJid?: string; lidJid?: string }) {
+    const matches = this.findPrivateMatches([jidOrLid, updates.phoneJid, updates.lidJid]);
+    if (matches.length === 0) return;
+
     this.upsert({
        id: jidOrLid,
        type: 'private',
