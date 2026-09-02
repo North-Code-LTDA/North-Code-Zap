@@ -1,0 +1,77 @@
+--- server/whatsapp.ts
++++ server/whatsapp.ts
+@@ -317,9 +317,14 @@
+ 
+     const trimmedText = text.trim();
+     const targetJid = remoteJid.trim();
+-    const rawNumber = targetJid.split('@')[0].split(':')[0];
++    const isGroupTarget = targetJid.endsWith('@g.us');
++    
++    let resolvedIdentity: { canonicalJid: string, number: string | null, lid: string | null } | null = null;
++    if (!isGroupTarget && !targetJid.includes('@broadcast')) {
++      resolvedIdentity = await this.resolvePrivateIdentity(targetJid);
++    }
+ 
+-    // Log before sending: [WhatsApp] sending message to=5593...
+-    console.log(`[WhatsApp] sending message to=${rawNumber || targetJid}`);
++    // Log before sending: [WhatsApp] sending message to=...
++    console.log(`[WhatsApp] sending message to=${targetJid}`);
+ 
+     try {
+@@ -334,7 +339,7 @@
+       const outgoingMessage: ReceivedMessage = {
+         id: messageId,
+         remoteJid: targetJid,
+-        number: rawNumber || null,
++        number: resolvedIdentity ? resolvedIdentity.number : null,
+         pushName: targetPushName,
+         text: trimmedText,
+         type: 'text',
+         timestamp,
+         direction: 'outgoing',
+       };
+-      const isGroupTarget = targetJid.endsWith('@g.us');
+ 
+       // Add to in-memory list ONLY if private chat (limit to 100)
+       if (!isGroupTarget) {
+@@ -344,14 +349,20 @@
+       // Save to contacts directory if private chat
+       if (!isGroupTarget && !targetJid.includes('@broadcast')) {
+-        this.contactsService.upsertContact({
+-          jid: targetJid,
+-          number: rawNumber || null,
+-          name: targetPushName,
+-          source: 'message',
+-          lastSeenAt: new Date().toISOString(),
+-          
+-        });
++        if (resolvedIdentity && resolvedIdentity.canonicalJid.includes('@s.whatsapp.net') && resolvedIdentity.lid?.includes('@lid')) {
++          this.contactsService.reconcileLidMapping(resolvedIdentity.lid, resolvedIdentity.canonicalJid, { 
++            name: targetPushName, 
++            source: 'message',
++            lastSeenAt: new Date(timestamp).toISOString()
++          });
++        } else if (resolvedIdentity) {
++          this.contactsService.upsertContact({
++            jid: resolvedIdentity.canonicalJid,
++            number: resolvedIdentity.number,
++            name: targetPushName,
++            source: 'message',
++            lastSeenAt: new Date(timestamp).toISOString(),
++            lid: resolvedIdentity.lid
++          });
++        }
+       }
+ 
+       if (!targetJid.includes('@broadcast')) {
+-        const catalogJid = isGroupTarget ? targetJid : (await this.resolvePrivateIdentity(targetJid)).canonicalJid;
++        const catalogJid = isGroupTarget ? targetJid : resolvedIdentity!.canonicalJid;
+         const catalogNumber = isGroupTarget ? null : (catalogJid.includes('@s.whatsapp.net') ? catalogJid.split('@')[0].split(':')[0] : null);
+         
+         this.chatService.upsert({
+@@ -370,5 +381,5 @@
+       // Log after sending: [WhatsApp] message sent to=5593... id=...
+-      console.log(`[WhatsApp] message sent to=${rawNumber || targetJid} id=${messageId}`);
++      console.log(`[WhatsApp] message sent to=${targetJid} id=${messageId}`);
+ 
+       // Emit to frontend via Socket.IO ONLY if private chat

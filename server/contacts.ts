@@ -52,7 +52,7 @@ export class ContactsService {
                 const isLid = normalizedJid.includes('@lid');
                 this.contactsMap.set(normalizedJid, {
                   jid: normalizedJid,
-                  number: item.number || (isLid ? null : normalizedJid.split('@')[0].split(':')[0]),
+                  number: isLid ? null : normalizedJid.split('@')[0].split(':')[0],
                   name: item.name || null,
                   source: item.source,
                   lastSeenAt: item.lastSeenAt || null,
@@ -139,9 +139,11 @@ export class ContactsService {
     const existing = this.contactsMap.get(normalizedJid);
     const isLid = normalizedJid.includes('@lid');
 
-    let rawNumber = contact.number;
-    if (rawNumber === undefined) {
-      rawNumber = isLid ? (existing?.number || null) : normalizedJid.split('@')[0].split(':')[0];
+    let rawNumber = null;
+    if (isLid) {
+      rawNumber = null;
+    } else if (normalizedJid.includes('@s.whatsapp.net')) {
+      rawNumber = normalizedJid.split('@')[0].split(':')[0];
     }
 
     // Resolve best name: explicit name -> existing name -> number
@@ -167,7 +169,7 @@ export class ContactsService {
 
     const updated: KnownContact = {
       jid: normalizedJid,
-      number: rawNumber || existing?.number || null,
+      number: rawNumber,
       name: chosenName,
       source: resolvedSource,
       lastSeenAt: contact.lastSeenAt ?? existing?.lastSeenAt ?? null,
@@ -227,26 +229,35 @@ export class ContactsService {
   public reconcileLidMapping(lidJid: string, pnJid: string, metadata?: { name?: string | null; lastSeenAt?: string | null; source?: 'message' | 'chat' | 'contact' }): KnownContact | null {
     if (!lidJid.includes('@lid')) return null;
     if (!pnJid.includes('@s.whatsapp.net')) return null;
-
-    const normalizedPn = this.normalizeJid(pnJid);
-    if (!normalizedPn) return null;
     
+    const normalizedLid = this.normalizeJid(lidJid);
+    const normalizedPn = this.normalizeJid(pnJid);
+    if (!normalizedLid || !normalizedPn) return null;
+        
     // Check if a false JID was created via the legacy bug
-    const lidDigits = lidJid.split('@')[0].split(':')[0];
+    const lidDigits = normalizedLid.split('@')[0].split(':')[0];
     const legacyFakePn = `${lidDigits}@s.whatsapp.net`;
     const existingLegacy = this.contactsMap.get(legacyFakePn);
-
     const existingPn = this.contactsMap.get(normalizedPn);
-    const existingLid = this.contactsMap.get(lidJid);
+    const existingLid = this.contactsMap.get(normalizedLid);
+
+    // Find any contact whose .lid property matches normalizedLid
+    let existingAlias: KnownContact | undefined;
+    for (const c of this.contactsMap.values()) {
+      if (c.lid === normalizedLid && c.jid !== normalizedPn) {
+        existingAlias = c;
+        break;
+      }
+    }
 
     // Merge names, picking the best
-    const bestName = this.getBestName(metadata?.name, existingPn?.name, existingLegacy?.name, existingLid?.name);
-    
+    const bestName = this.getBestName(metadata?.name, existingPn?.name, existingLegacy?.name, existingLid?.name, existingAlias?.name);
+        
     // Pick the most recent timestamp
-    const bestLastSeenAt = this.getLatestTimestamp(metadata?.lastSeenAt, existingPn?.lastSeenAt, existingLegacy?.lastSeenAt, existingLid?.lastSeenAt);
-    
+    const bestLastSeenAt = this.getLatestTimestamp(metadata?.lastSeenAt, existingPn?.lastSeenAt, existingLegacy?.lastSeenAt, existingLid?.lastSeenAt, existingAlias?.lastSeenAt);
+        
     // Merge source
-    const sources = [existingPn?.source, existingLegacy?.source, existingLid?.source, metadata?.source].filter(Boolean) as string[];
+    const sources = [existingPn?.source, existingLegacy?.source, existingLid?.source, existingAlias?.source, metadata?.source].filter(Boolean) as string[];
     let bestSource: 'contact' | 'chat' | 'message' = 'message';
     if (sources.includes('contact')) bestSource = 'contact';
     else if (sources.includes('chat')) bestSource = 'chat';
@@ -256,7 +267,10 @@ export class ContactsService {
       this.contactsMap.delete(legacyFakePn);
     }
     if (existingLid) {
-      this.contactsMap.delete(lidJid);
+      this.contactsMap.delete(normalizedLid);
+    }
+    if (existingAlias) {
+      this.contactsMap.delete(existingAlias.jid);
     }
     
     // Upsert to the correct PN
@@ -266,7 +280,7 @@ export class ContactsService {
       name: bestName,
       source: bestSource,
       lastSeenAt: bestLastSeenAt,
-      lid: lidJid
+      lid: normalizedLid
     });
 
     return updatedPn;

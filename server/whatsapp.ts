@@ -174,7 +174,8 @@ export class WhatsAppService {
     const hasPhone = !!c.phoneNumber;
     const hasLid = !!c.lid;
     
-    if (bestName || hasPhone || hasLid || source === 'chat') {
+    const isPn = c.id.includes('@s.whatsapp.net');
+    if (bestName || hasPhone || hasLid || isPn) {
        const resolved = await this.resolvePrivateIdentity(c.id, {
          phoneNumber: c.phoneNumber,
          lid: c.lid
@@ -317,10 +318,14 @@ export class WhatsAppService {
 
     const trimmedText = text.trim();
     const targetJid = remoteJid.trim();
-    const rawNumber = targetJid.split('@')[0].split(':')[0];
+    const isGroupTarget = targetJid.endsWith('@g.us');
+    
+    let resolvedIdentity: { canonicalJid: string, number: string | null, lid: string | null } | null = null;
+    if (!isGroupTarget && !targetJid.includes('@broadcast')) {
+      resolvedIdentity = await this.resolvePrivateIdentity(targetJid);
+    }
 
-    // Log before sending: [WhatsApp] sending message to=5593...
-    console.log(`[WhatsApp] sending message to=${rawNumber || targetJid}`);
+    console.log(`[WhatsApp] sending message to=${targetJid}`);
 
     try {
       // Look up previous pushName from conversation if available
@@ -339,7 +344,7 @@ export class WhatsAppService {
       const outgoingMessage: ReceivedMessage = {
         id: messageId,
         remoteJid: targetJid,
-        number: rawNumber || null,
+        number: resolvedIdentity ? resolvedIdentity.number : null,
         pushName: targetPushName,
         text: trimmedText,
         type: 'text',
@@ -347,7 +352,6 @@ export class WhatsAppService {
         direction: 'outgoing',
       };
 
-      const isGroupTarget = targetJid.endsWith('@g.us');
 
       // Add to in-memory list ONLY if private chat (limit to 100)
       if (!isGroupTarget) {
@@ -356,18 +360,26 @@ export class WhatsAppService {
 
       // Save to contacts directory if private chat
       if (!isGroupTarget && !targetJid.includes('@broadcast')) {
-        this.contactsService.upsertContact({
-          jid: targetJid,
-          number: rawNumber || null,
-          name: targetPushName,
-          source: 'message',
-          lastSeenAt: new Date().toISOString(),
-          
-        });
+        if (resolvedIdentity && resolvedIdentity.canonicalJid.includes('@s.whatsapp.net') && resolvedIdentity.lid?.includes('@lid')) {
+          this.contactsService.reconcileLidMapping(resolvedIdentity.lid, resolvedIdentity.canonicalJid, { 
+            name: targetPushName, 
+            source: 'message',
+            lastSeenAt: new Date(timestamp).toISOString()
+          });
+        } else if (resolvedIdentity) {
+          this.contactsService.upsertContact({
+            jid: resolvedIdentity.canonicalJid,
+            number: resolvedIdentity.number,
+            name: targetPushName,
+            source: 'message',
+            lastSeenAt: new Date(timestamp).toISOString(),
+            lid: resolvedIdentity.lid
+          });
+        }
       }
 
       if (!targetJid.includes('@broadcast')) {
-        const catalogJid = isGroupTarget ? targetJid : (await this.resolvePrivateIdentity(targetJid)).canonicalJid;
+        const catalogJid = isGroupTarget ? targetJid : resolvedIdentity!.canonicalJid;
         const catalogNumber = isGroupTarget ? null : (catalogJid.includes('@s.whatsapp.net') ? catalogJid.split('@')[0].split(':')[0] : null);
         
         this.chatService.upsert({
@@ -384,7 +396,7 @@ export class WhatsAppService {
       }
 
       // Log after sending: [WhatsApp] message sent to=5593... id=...
-      console.log(`[WhatsApp] message sent to=${rawNumber || targetJid} id=${messageId}`);
+      console.log(`[WhatsApp] message sent to=${targetJid} id=${messageId}`);
 
       // Emit to frontend via Socket.IO ONLY if private chat
       if (this.io && !isGroupTarget) {
@@ -394,7 +406,7 @@ export class WhatsAppService {
       return { success: true, message: outgoingMessage };
     } catch (err: any) {
       const errorMsg = err?.message || 'Erro ao enviar mensagem pelo Baileys';
-      console.log(`[WhatsApp] send error to=${rawNumber || targetJid} reason=${errorMsg}`);
+      console.log(`[WhatsApp] send error to=${targetJid} reason=${errorMsg}`);
       return { success: false, error: errorMsg };
     }
   }
@@ -417,10 +429,16 @@ export class WhatsAppService {
     }
 
     const targetJid = remoteJid.trim();
-    const rawNumber = targetJid.split('@')[0].split(':')[0];
+    const isGroupTarget = targetJid.endsWith('@g.us');
+    
+    let resolvedIdentity: { canonicalJid: string, number: string | null, lid: string | null } | null = null;
+    if (!isGroupTarget && !targetJid.includes('@broadcast')) {
+      resolvedIdentity = await this.resolvePrivateIdentity(targetJid);
+    }
+    
     const trimmedCaption = caption ? caption.trim() : undefined;
 
-    console.log(`[WhatsApp] sending image to=${rawNumber || targetJid}`);
+    console.log(`[WhatsApp] sending image to=${targetJid}`);
 
     try {
       let imagePayload: any;
@@ -461,7 +479,7 @@ export class WhatsAppService {
       const outgoingMessage: ReceivedMessage = {
         id: messageId,
         remoteJid: targetJid,
-        number: rawNumber || null,
+        number: resolvedIdentity ? resolvedIdentity.number : null,
         pushName: targetPushName,
         text: trimmedCaption || '[Imagem]',
         type: 'image',
@@ -469,7 +487,6 @@ export class WhatsAppService {
         direction: 'outgoing',
       };
 
-      const isGroupTarget = targetJid.endsWith('@g.us');
 
       // Add to in-memory list ONLY if private chat (limit to 100)
       if (!isGroupTarget) {
@@ -478,17 +495,26 @@ export class WhatsAppService {
 
       // Save to contacts directory if private chat
       if (!isGroupTarget && !targetJid.includes('@broadcast')) {
-        this.contactsService.upsertContact({
-          jid: targetJid,
-          number: rawNumber || null,
-          name: targetPushName,
-          source: 'message',
-          lastSeenAt: new Date().toISOString(),
-        });
+        if (resolvedIdentity && resolvedIdentity.canonicalJid.includes('@s.whatsapp.net') && resolvedIdentity.lid?.includes('@lid')) {
+          this.contactsService.reconcileLidMapping(resolvedIdentity.lid, resolvedIdentity.canonicalJid, { 
+            name: targetPushName, 
+            source: 'message',
+            lastSeenAt: new Date(timestamp).toISOString()
+          });
+        } else if (resolvedIdentity) {
+          this.contactsService.upsertContact({
+            jid: resolvedIdentity.canonicalJid,
+            number: resolvedIdentity.number,
+            name: targetPushName,
+            source: 'message',
+            lastSeenAt: new Date(timestamp).toISOString(),
+            lid: resolvedIdentity.lid
+          });
+        }
       }
 
       if (!targetJid.includes('@broadcast')) {
-        const catalogJid = isGroupTarget ? targetJid : (await this.resolvePrivateIdentity(targetJid)).canonicalJid;
+        const catalogJid = isGroupTarget ? targetJid : resolvedIdentity!.canonicalJid;
         const catalogNumber = isGroupTarget ? null : (catalogJid.includes('@s.whatsapp.net') ? catalogJid.split('@')[0].split(':')[0] : null);
         
         this.chatService.upsert({
@@ -504,7 +530,7 @@ export class WhatsAppService {
         });
       }
 
-      console.log(`[WhatsApp] image sent to=${rawNumber || targetJid} id=${messageId}`);
+      console.log(`[WhatsApp] image sent to=${targetJid} id=${messageId}`);
 
       // Emit to frontend via Socket.IO ONLY if private chat
       if (this.io && !isGroupTarget) {
@@ -514,7 +540,7 @@ export class WhatsAppService {
       return { success: true, message: outgoingMessage };
     } catch (err: any) {
       const errorMsg = err?.message || 'Erro ao enviar imagem pelo Baileys';
-      console.log(`[WhatsApp] send image error to=${rawNumber || targetJid} reason=${errorMsg}`);
+      console.log(`[WhatsApp] send image error to=${targetJid} reason=${errorMsg}`);
       return { success: false, error: errorMsg };
     }
   }
