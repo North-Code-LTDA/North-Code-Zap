@@ -93,6 +93,36 @@ export class ChatService {
     return matches;
   }
 
+
+  private toComparableTimestamp(value: string | null | undefined): number {
+    if (!value) return Number.NEGATIVE_INFINITY;
+    const timestamp = new Date(value).getTime();
+    return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+  }
+
+  private isPreferredRecord(candidate: KnownChat, current: KnownChat): boolean {
+    const timeCandidate = this.toComparableTimestamp(candidate.updatedAt);
+    const timeCurrent = this.toComparableTimestamp(current.updatedAt);
+
+    if (timeCandidate !== timeCurrent) {
+      return timeCandidate > timeCurrent;
+    }
+
+    const msgCandidate = this.toComparableTimestamp(candidate.lastMessageAt);
+    const msgCurrent = this.toComparableTimestamp(current.lastMessageAt);
+
+    if (msgCandidate !== msgCurrent) {
+      return msgCandidate > msgCurrent;
+    }
+
+    const candidateIsPN = candidate.id.includes('@s.whatsapp.net');
+    const currentIsPN = current.id.includes('@s.whatsapp.net');
+    if (candidateIsPN && !currentIsPN) return true;
+    if (!candidateIsPN && currentIsPN) return false;
+
+    return candidate.id > current.id;
+  }
+
   public upsert(chatData: Partial<KnownChat> & { id: string, addressJid?: string, type?: 'private' | 'group' }): KnownChat {
     const isGroup = chatData.type === 'group' || chatData.id.endsWith('@g.us');
     const type = isGroup ? 'group' : 'private';
@@ -112,25 +142,8 @@ export class ChatService {
       let bestBase = existingMatches[0];
       for (let i = 1; i < existingMatches.length; i++) {
         const candidate = existingMatches[i];
-        
-        const timeBest = bestBase.updatedAt ? new Date(bestBase.updatedAt).getTime() : 0;
-        const timeCandidate = candidate.updatedAt ? new Date(candidate.updatedAt).getTime() : 0;
-
-        if (timeCandidate > timeBest) {
+        if (this.isPreferredRecord(candidate, bestBase)) {
           bestBase = candidate;
-        } else if (timeCandidate === timeBest) {
-          const msgBest = bestBase.lastMessageAt ? new Date(bestBase.lastMessageAt).getTime() : 0;
-          const msgCandidate = candidate.lastMessageAt ? new Date(candidate.lastMessageAt).getTime() : 0;
-          
-          if (msgCandidate > msgBest) {
-            bestBase = candidate;
-          } else if (msgCandidate === msgBest) {
-            if (candidate.id.includes('@s.whatsapp.net') && !bestBase.id.includes('@s.whatsapp.net')) {
-              bestBase = candidate;
-            } else if (candidate.id > bestBase.id) { // stable fallback
-              bestBase = candidate;
-            }
-          }
         }
       }
       baseRecord = bestBase;
@@ -153,12 +166,13 @@ export class ChatService {
     } else if (existingMatches.length > 0) {
       const lidMatches = existingMatches.filter(m => m.addressJid?.includes('@lid'));
       if (lidMatches.length > 0) {
-        lidMatches.sort((a, b) => {
-          const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-          const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-          return tb - ta;
-        });
-        finalAddressJid = lidMatches[0].addressJid!;
+        let bestLid = lidMatches[0];
+        for (let i = 1; i < lidMatches.length; i++) {
+          if (this.isPreferredRecord(lidMatches[i], bestLid)) {
+            bestLid = lidMatches[i];
+          }
+        }
+        finalAddressJid = bestLid.addressJid!;
       } else if (baseRecord?.addressJid) {
          finalAddressJid = baseRecord.addressJid;
       }
@@ -169,24 +183,40 @@ export class ChatService {
     let finalPreview: string | null = null;
 
     if (existingMatches.length > 0) {
-      let maxMsgTime = 0;
+      let bestMsgRecord: KnownChat | null = null;
       for (const m of existingMatches) {
-        const t = m.lastMessageAt ? new Date(m.lastMessageAt).getTime() : 0;
-        if (t >= maxMsgTime && m.lastMessageAt) {
-          maxMsgTime = t;
-          finalLastMessageAt = m.lastMessageAt;
-          finalPreview = m.lastMessagePreview ?? null;
+        if (!m.lastMessageAt) continue;
+        const msgTime = this.toComparableTimestamp(m.lastMessageAt);
+        if (msgTime === Number.NEGATIVE_INFINITY) continue;
+
+        if (!bestMsgRecord) {
+          bestMsgRecord = m;
+        } else {
+          const bestTime = this.toComparableTimestamp(bestMsgRecord.lastMessageAt);
+          if (msgTime > bestTime) {
+            bestMsgRecord = m;
+          } else if (msgTime === bestTime) {
+            if (this.isPreferredRecord(m, bestMsgRecord)) {
+              bestMsgRecord = m;
+            }
+          }
         }
+      }
+      if (bestMsgRecord) {
+        finalLastMessageAt = bestMsgRecord.lastMessageAt;
+        finalPreview = bestMsgRecord.lastMessagePreview ?? null;
       }
     }
 
     if (chatData.lastMessageAt) {
-      const timeNew = new Date(chatData.lastMessageAt).getTime();
-      const timeOld = finalLastMessageAt ? new Date(finalLastMessageAt).getTime() : 0;
-      if (timeNew >= timeOld) {
-        finalLastMessageAt = chatData.lastMessageAt;
-        if (chatData.lastMessagePreview !== undefined) {
-          finalPreview = chatData.lastMessagePreview;
+      const timeNew = this.toComparableTimestamp(chatData.lastMessageAt);
+      if (timeNew !== Number.NEGATIVE_INFINITY) {
+        const timeOld = this.toComparableTimestamp(finalLastMessageAt);
+        if (timeNew >= timeOld) {
+          finalLastMessageAt = chatData.lastMessageAt;
+          if (chatData.lastMessagePreview !== undefined) {
+            finalPreview = chatData.lastMessagePreview;
+          }
         }
       }
     }
