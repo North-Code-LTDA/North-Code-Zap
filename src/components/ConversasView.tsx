@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, type KeyboardEvent } from 'react';
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, type KeyboardEvent } from 'react';
 import {
   MessageSquare,
   Search,
@@ -55,15 +55,19 @@ export function ConversasView({
   const lastFetchedInstanceRef = useRef<string | null>(null);
   const activeInstanceRef = useRef<string | null>(selectedInstanceId);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeInstanceRef.current = selectedInstanceId;
   }, [selectedInstanceId]);
 
   const isConnected = state.status === 'connected';
 
   const fetchKnownChats = async () => {
-    if (!selectedInstanceId) return;
     const instanceIdForFetch = selectedInstanceId;
+    if (!instanceIdForFetch) return;
+
+    if (activeInstanceRef.current !== instanceIdForFetch) {
+      return;
+    }
 
     setChatsLoading(true);
     setChatsError(null);
