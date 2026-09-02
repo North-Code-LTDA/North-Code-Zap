@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
 import { 
   Users, RefreshCw, Search, Loader2, UserCircle2, 
   MessageSquare, UserPlus, MessageCircle, Tag, List, Trash2, Plus, Edit2, X, CheckSquare, Square, Check
@@ -7,7 +7,7 @@ import { useContacts } from '../hooks/useContacts';
 import { useInstances } from '../contexts/InstancesContext';
 import { useAudiences } from '../hooks/useAudiences';
 import { Button } from './ui/Button';
-import type { KnownContact } from '../types';
+import type { KnownContact, KnownChat } from '../types';
 
 function formatBrazilianNumber(number: string | null): string {
   if (!number) return '';
@@ -56,9 +56,52 @@ export function ContatosView() {
   const { contacts, loading: contactsLoading, error: contactsError, fetchContacts } = useContacts(selectedInstanceId);
   const { 
     state: audiences, loading: audiencesLoading, error: audiencesError, fetchAudiences, 
-    createTag, renameTag, deleteTag, addTagToContacts, removeTagFromContacts, 
-    createList, renameList, deleteList, updateListContacts
+    createTag, renameTag, deleteTag, addTagToContacts, removeTagFromContacts,
+    createList, renameList, deleteList, updateListContacts 
   } = useAudiences(selectedInstanceId);
+
+  const [knownChats, setKnownChats] = useState<KnownChat[]>([]);
+  const [chatsLoading, setChatsLoading] = useState(false);
+  const [chatsError, setChatsError] = useState<string | null>(null);
+
+  const activeInstanceRef = useRef<string | null>(selectedInstanceId);
+  useLayoutEffect(() => {
+    activeInstanceRef.current = selectedInstanceId;
+  }, [selectedInstanceId]);
+
+  const fetchKnownChats = async () => {
+    const instanceIdForFetch = selectedInstanceId;
+    if (!instanceIdForFetch) return;
+    if (activeInstanceRef.current !== instanceIdForFetch) return;
+
+    setChatsLoading(true);
+    setChatsError(null);
+    try {
+      const res = await fetch(`/api/instances/${instanceIdForFetch}/whatsapp/chats`);
+      if (!res.ok) throw new Error('Falha ao carregar conversas');
+      const data = await res.json();
+      if (activeInstanceRef.current === instanceIdForFetch) {
+        setKnownChats(data);
+      }
+    } catch (e: any) {
+      if (activeInstanceRef.current === instanceIdForFetch) {
+        setChatsError(e.message || 'Erro ao carregar conversas');
+      }
+    } finally {
+      if (activeInstanceRef.current === instanceIdForFetch) {
+        setChatsLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    setKnownChats([]);
+    setChatsError(null);
+    setSelectedJids(new Set());
+    setAudienceActionError(null);
+    setCurrentPage(1);
+    fetchKnownChats();
+  }, [selectedInstanceId]);
 
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -67,7 +110,6 @@ export function ContatosView() {
   const [selectedSource, setSelectedSource] = useState<string>('');
   const [selectedTag, setSelectedTag] = useState<string>('');
   const [selectedList, setSelectedList] = useState<string>('');
-
   const [selectedJids, setSelectedJids] = useState<Set<string>>(new Set());
 
   const [tagInput, setTagInput] = useState('');
@@ -85,37 +127,67 @@ export function ContatosView() {
 
   const [audienceActionError, setAudienceActionError] = useState<string | null>(null);
 
-  // Clear selections on instance change
-  useEffect(() => {
-    setSelectedJids(new Set());
-    setAudienceActionError(null);
-  }, [selectedInstanceId]);
+  const conversationAliases = useMemo(() => {
+    const aliases = new Set<string>();
+    for (const chat of knownChats) {
+      if (chat.type !== 'private') continue;
+      [chat.id, chat.addressJid, chat.phoneJid, chat.lidJid].filter(Boolean).forEach(alias => {
+        aliases.add(alias as string);
+      });
+    }
+    return aliases;
+  }, [knownChats]);
+
+  const hasConversation = (contact: KnownContact) => {
+    return [contact.jid, contact.lid].filter(Boolean).some(alias => conversationAliases.has(alias as string));
+  };
+
+  const presentableContacts = useMemo(() => {
+    return contacts.filter(c => Boolean(c.name?.trim()) || Boolean(c.number));
+  }, [contacts]);
 
   const metrics = useMemo(() => {
     let withName = 0; let withoutName = 0; let recentActive = 0;
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    contacts.forEach(c => {
+
+    presentableContacts.forEach(c => {
       if (c.name?.trim()) withName++; else withoutName++;
       if (c.lastSeenAt) {
         const d = new Date(c.lastSeenAt);
         if (!isNaN(d.getTime()) && d >= sevenDaysAgo) recentActive++;
       }
     });
-    return { total: contacts.length, withName, withoutName, recentActive };
-  }, [contacts]);
 
-  const sources = useMemo(() => Array.from(new Set(contacts.map(c => c.source))), [contacts]);
+    return { total: presentableContacts.length, withName, withoutName, recentActive };
+  }, [presentableContacts]);
+
+  const sources = ["Todas Origens", "Contatos", "Conversas", "Mensagens"];
 
   const filteredContacts = useMemo(() => {
-    let filtered = contacts;
+    let filtered = presentableContacts;
+
     if (search.trim()) {
       const q = search.toLowerCase();
-      filtered = filtered.filter(c => c.name?.toLowerCase().includes(q) || c.number?.includes(q));
+      const queryDigits = search.replace(/\D/g, '');
+      
+      filtered = filtered.filter(c => {
+        const nameMatch = c.name?.toLowerCase().includes(q);
+        const numberMatch = queryDigits ? c.number?.replace(/\D/g, '').includes(queryDigits) : false;
+        return nameMatch || numberMatch;
+      });
     }
+
     if (selectedSource) {
-      filtered = filtered.filter(c => c.source === selectedSource);
+      if (selectedSource === 'Contatos') {
+        filtered = filtered.filter(c => c.source === 'contact');
+      } else if (selectedSource === 'Conversas') {
+        filtered = filtered.filter(c => hasConversation(c));
+      } else if (selectedSource === 'Mensagens') {
+        filtered = filtered.filter(c => c.source === 'message');
+      }
     }
+
     if (selectedTag && audiences) {
       filtered = filtered.filter(c => audiences.contactTags[c.jid]?.includes(selectedTag));
     }
@@ -126,12 +198,29 @@ export function ContatosView() {
         filtered = filtered.filter(c => set.has(c.jid));
       }
     }
-    return filtered.sort((a, b) => {
+
+    return [...filtered].sort((a, b) => {
+      if (!selectedSource || selectedSource === 'Todas Origens') {
+        const prioA = a.source === 'contact' ? 0 : (hasConversation(a) ? 1 : 2);
+        const prioB = b.source === 'contact' ? 0 : (hasConversation(b) ? 1 : 2);
+        if (prioA !== prioB) return prioA - prioB;
+      }
+      
       const dA = a.lastSeenAt ? new Date(a.lastSeenAt).getTime() : 0;
       const dB = b.lastSeenAt ? new Date(b.lastSeenAt).getTime() : 0;
-      return dB - dA;
+      if (dB !== dA) return dB - dA;
+      
+      const nameA = a.name?.toLowerCase() || '';
+      const nameB = b.name?.toLowerCase() || '';
+      if (nameA !== nameB) return nameA.localeCompare(nameB);
+      
+      const numA = a.number || '';
+      const numB = b.number || '';
+      if (numA !== numB) return numA.localeCompare(numB);
+      
+      return a.jid.localeCompare(b.jid);
     });
-  }, [contacts, search, selectedSource, selectedTag, selectedList, audiences]);
+  }, [presentableContacts, search, selectedSource, selectedTag, selectedList, audiences, conversationAliases]);
 
   const totalPages = Math.ceil(filteredContacts.length / itemsPerPage) || 1;
   const paginatedContacts = filteredContacts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -252,8 +341,8 @@ export function ContatosView() {
     }
   };
 
-  const loading = contactsLoading || audiencesLoading;
-  const error = contactsError || audiencesError;
+  const loading = contactsLoading || audiencesLoading || chatsLoading;
+  const error = contactsError || audiencesError || chatsError;
 
   if (!selectedInstanceId) {
     return (
@@ -280,7 +369,7 @@ export function ContatosView() {
               <p className="text-sm text-neutral-400 mt-1">Diretório de contatos reconhecidos e organizados em tags e listas.</p>
             </div>
           </div>
-          <Button variant="secondary" onClick={() => { fetchContacts(); fetchAudiences(); }} disabled={loading} className="shrink-0">
+          <Button variant="secondary" onClick={() => { fetchContacts(); fetchAudiences(); fetchKnownChats(); }} disabled={loading} className="shrink-0">
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Atualizar
           </Button>
@@ -428,10 +517,16 @@ export function ContatosView() {
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
               <input type="text" placeholder="Buscar por nome ou número..." value={search} onChange={e => { setSearch(e.target.value); setCurrentPage(1); }} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors placeholder:text-neutral-600" />
             </div>
-            <select value={selectedSource} onChange={e => { setSelectedSource(e.target.value); setCurrentPage(1); }} className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-300 focus:outline-none focus:border-emerald-500 appearance-none min-w-[140px]">
-              <option value="">Todas Origens</option>
-              {sources.map(s => <option key={s} value={s}>{getSourceLabel(s)}</option>)}
-            </select>
+            <select 
+            value={selectedSource}
+            onChange={(e) => { setSelectedSource(e.target.value); setCurrentPage(1); }}
+            className="w-full sm:w-auto min-w-[160px] bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 appearance-none shadow-sm"
+          >
+            <option value="">Todas Origens</option>
+            <option value="Contatos">Contatos</option>
+            <option value="Conversas">Conversas</option>
+            <option value="Mensagens">Mensagens</option>
+          </select>
             <select value={selectedTag} onChange={e => { setSelectedTag(e.target.value); setCurrentPage(1); }} className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-300 focus:outline-none focus:border-emerald-500 appearance-none min-w-[120px]">
               <option value="">Todas Tags</option>
               {audiences?.tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
