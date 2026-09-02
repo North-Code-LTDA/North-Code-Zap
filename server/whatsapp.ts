@@ -133,7 +133,7 @@ export class WhatsAppService {
     return null;
   }
 
-  private async processChat(ch: any) {
+  private async processChat(ch: any, isUpdate: boolean = false) {
     if (!ch?.id) return;
     if (ch.id.includes('@broadcast')) return;
 
@@ -155,7 +155,7 @@ export class WhatsAppService {
 
     this.chatService.upsert({
       id: catalogJid,
-      addressJid: ch.id,
+      addressJid: isUpdate ? undefined : ch.id,
       type: isGroup ? 'group' : 'private',
       name: bestName,
       number: catalogNumber,
@@ -901,7 +901,7 @@ export class WhatsAppService {
              id: isGroupMessage ? finalRemoteJid : (finalRemoteJid !== remoteJid && remoteJid.includes('@lid') ? finalRemoteJid : finalRemoteJid),
              addressJid: isGroupMessage ? finalRemoteJid : remoteJid,
              type: isGroupMessage ? 'group' : 'private',
-             name: pushName,
+             name: isGroupMessage ? undefined : pushName,
              number: isGroupMessage ? null : (finalNumber || null),
              lidJid: (!isGroupMessage && remoteJid.includes('@lid')) ? remoteJid : undefined,
              phoneJid: (!isGroupMessage && finalRemoteJid.includes('@s.whatsapp.net')) ? finalRemoteJid : undefined,
@@ -971,7 +971,7 @@ export class WhatsAppService {
     this.sock.ev.on('chats.update', async (updates: any[]) => {
       if (Array.isArray(updates)) {
         for (const ch of updates) {
-           await this.processChat(ch);
+           await this.processChat(ch, true);
         }
       }
     });
