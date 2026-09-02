@@ -242,35 +242,61 @@ export class ContactsService {
     const existingLid = this.contactsMap.get(normalizedLid);
 
     // Find any contact whose .lid property matches normalizedLid
-    let existingAlias: KnownContact | undefined;
-    for (const c of this.contactsMap.values()) {
-      if (c.lid === normalizedLid && c.jid !== normalizedPn) {
-        existingAlias = c;
-        break;
-      }
-    }
+    const existingAliases = Array.from(this.contactsMap.values()).filter(c => {
+      const normalizedAliasLid = c.lid ? this.normalizeJid(c.lid) : null;
+      return normalizedAliasLid === normalizedLid && c.jid !== normalizedPn;
+    });
+
+    const sortedAliases = [...existingAliases].sort((a, b) => a.jid.localeCompare(b.jid));
 
     // Merge names, picking the best
-    const bestName = this.getBestName(metadata?.name, existingPn?.name, existingLegacy?.name, existingLid?.name, existingAlias?.name);
+    const bestName = this.getBestName(
+      metadata?.name,
+      existingPn?.name,
+      existingLegacy?.name,
+      existingLid?.name,
+      ...sortedAliases.map(a => a.name)
+    );
         
     // Pick the most recent timestamp
-    const bestLastSeenAt = this.getLatestTimestamp(metadata?.lastSeenAt, existingPn?.lastSeenAt, existingLegacy?.lastSeenAt, existingLid?.lastSeenAt, existingAlias?.lastSeenAt);
+    const bestLastSeenAt = this.getLatestTimestamp(
+      metadata?.lastSeenAt,
+      existingPn?.lastSeenAt,
+      existingLegacy?.lastSeenAt,
+      existingLid?.lastSeenAt,
+      ...sortedAliases.map(a => a.lastSeenAt)
+    );
         
     // Merge source
-    const sources = [existingPn?.source, existingLegacy?.source, existingLid?.source, existingAlias?.source, metadata?.source].filter(Boolean) as string[];
+    const sources = [
+      existingPn?.source,
+      existingLegacy?.source,
+      existingLid?.source,
+      ...sortedAliases.map(a => a.source),
+      metadata?.source
+    ].filter(Boolean) as string[];
+    
     let bestSource: 'contact' | 'chat' | 'message' = 'message';
     if (sources.includes('contact')) bestSource = 'contact';
     else if (sources.includes('chat')) bestSource = 'chat';
 
     // Remove the bad legacy records and the original LID record
-    if (existingLegacy) {
-      this.contactsMap.delete(legacyFakePn);
-    }
+    const keysToDelete = new Set<string>();
     if (existingLid) {
-      this.contactsMap.delete(normalizedLid);
+      keysToDelete.add(existingLid.jid);
     }
-    if (existingAlias) {
-      this.contactsMap.delete(existingAlias.jid);
+    if (existingLegacy && existingLegacy.jid !== normalizedPn) {
+      keysToDelete.add(existingLegacy.jid);
+    }
+    for (const alias of existingAliases) {
+      if (alias.jid !== normalizedPn) {
+        keysToDelete.add(alias.jid);
+      }
+    }
+    keysToDelete.delete(normalizedPn);
+    
+    for (const jid of keysToDelete) {
+      this.contactsMap.delete(jid);
     }
     
     // Upsert to the correct PN

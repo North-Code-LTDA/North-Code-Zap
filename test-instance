@@ -2,9 +2,17 @@
   {
     "jid": "5591999999999@s.whatsapp.net",
     "number": "5591999999999",
-    "name": ".",
+    "name": "João",
+    "source": "contact",
+    "lastSeenAt": "2025-01-01T00:00:00.000Z",
+    "lid": "123@lid"
+  },
+  {
+    "jid": "999@s.whatsapp.net",
+    "number": "999",
+    "name": "Outro contato",
     "source": "chat",
     "lastSeenAt": null,
-    "lid": null
+    "lid": "DIFFERENT@lid"
   }
 ]
