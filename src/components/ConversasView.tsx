@@ -53,6 +53,11 @@ export function ConversasView({
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastFetchedInstanceRef = useRef<string | null>(null);
+  const activeInstanceRef = useRef<string | null>(selectedInstanceId);
+
+  useEffect(() => {
+    activeInstanceRef.current = selectedInstanceId;
+  }, [selectedInstanceId]);
 
   const isConnected = state.status === 'connected';
 
@@ -69,20 +74,19 @@ export function ConversasView({
       }
       const data = await res.json();
       
-      if (instanceIdForFetch === selectedInstanceId) {
-        if (Array.isArray(data)) {
-          setKnownChats(data);
-        } else {
-          setKnownChats([]);
-          setChatsError('Formato de dados inválido.');
-        }
+      if (activeInstanceRef.current !== instanceIdForFetch) return;
+
+      if (Array.isArray(data)) {
+        setKnownChats(data);
+      } else {
+        setKnownChats([]);
+        setChatsError('Formato de dados inválido.');
       }
     } catch (err: any) {
-      if (instanceIdForFetch === selectedInstanceId) {
-        setChatsError(err.message || 'Erro ao carregar o catálogo de chats.');
-      }
+      if (activeInstanceRef.current !== instanceIdForFetch) return;
+      setChatsError(err.message || 'Erro ao carregar o catálogo de chats.');
     } finally {
-      if (instanceIdForFetch === selectedInstanceId) {
+      if (activeInstanceRef.current === instanceIdForFetch) {
         setChatsLoading(false);
       }
     }
