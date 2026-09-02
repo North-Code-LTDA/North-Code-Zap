@@ -1,20 +1,30 @@
-import { useState, useCallback, useEffect, useRef, useLayoutEffect } from 'react';
-import type { KnownContact } from '../types';
+const fs = require('fs');
 
-export function useContacts(instanceId: string | null) {
-  const [contacts, setContacts] = useState<KnownContact[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+let code = fs.readFileSync('src/hooks/useContacts.ts', 'utf8');
 
-  const activeInstanceRef = useRef<string | null>(instanceId);
-  const requestSeqRef = useRef(0);
+code = code.replace(
+  `  const fetchContacts = useCallback(async () => {
+    if (!instanceId) return;
 
-  useLayoutEffect(() => {
-    activeInstanceRef.current = instanceId;
-    requestSeqRef.current += 1;
-  }, [instanceId]);
-
-  const fetchContacts = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch(\`/api/instances/\${instanceId}/contacts\`);
+      if (!res.ok) {
+        throw new Error('Falha ao carregar contatos');
+      }
+      const data = await res.json();
+      if (!Array.isArray(data)) {
+        throw new Error('Formato de resposta inválido');
+      }
+      setContacts(data);
+    } catch (err: any) {
+      setError(err.message || 'Erro desconhecido');
+    } finally {
+      setLoading(false);
+    }
+  }, [instanceId]);`,
+  `  const fetchContacts = useCallback(async () => {
     const instanceIdForFetch = instanceId;
     if (!instanceIdForFetch) {
       return;
@@ -30,7 +40,7 @@ export function useContacts(instanceId: string | null) {
     setError(null);
 
     try {
-      const res = await fetch(`/api/instances/${instanceIdForFetch}/contacts`);
+      const res = await fetch(\`/api/instances/\${instanceIdForFetch}/contacts\`);
       if (!res.ok) {
         throw new Error('Falha ao carregar contatos');
       }
@@ -54,17 +64,8 @@ export function useContacts(instanceId: string | null) {
         setLoading(false);
       }
     }
-  }, [instanceId]);
+  }, [instanceId]);`
+);
 
-  useEffect(() => {
-    setContacts([]);
-    setError(null);
-    if (!instanceId) {
-      setLoading(false);
-      return;
-    }
-    fetchContacts();
-  }, [fetchContacts, instanceId]);
-
-  return { contacts, loading, error, fetchContacts };
-}
+fs.writeFileSync('src/hooks/useContacts.ts', code);
+console.log('useContacts patched!');
